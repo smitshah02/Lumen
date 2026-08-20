@@ -1,0 +1,352 @@
+{
+  "_meta": {
+    "model": "qwen2.5:14b",
+    "threshold": 2,
+    "top_k": 5
+  },
+  "configs": {
+    "BM25 Only": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 20,
+        "precision": 1.0,
+        "recall": 0.25,
+        "mrr": 1.0,
+        "ndcg": 0.6343169226155623,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 1.0,
+        "recall": 0.21739130434782608,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 26,
+        "precision": 1.0,
+        "recall": 0.19230769230769232,
+        "mrr": 1.0,
+        "ndcg": 0.622377260156352,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          2,
+          2
+        ]
+      }
+    ],
+    "Vector Only (MedCPT)": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 20,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.0,
+        "binary": [],
+        "graded": []
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 0.6,
+        "recall": 0.13043478260869565,
+        "mrr": 1.0,
+        "ndcg": 0.4649106712342586,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 26,
+        "precision": 1.0,
+        "recall": 0.19230769230769232,
+        "mrr": 1.0,
+        "ndcg": 0.4285714285714285,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      }
+    ],
+    "Hybrid RRF": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 20,
+        "precision": 1.0,
+        "recall": 0.25,
+        "mrr": 1.0,
+        "ndcg": 0.5254743443638903,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 0.6,
+        "recall": 0.13043478260869565,
+        "mrr": 1.0,
+        "ndcg": 0.4649106712342586,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 26,
+        "precision": 1.0,
+        "recall": 0.19230769230769232,
+        "mrr": 1.0,
+        "ndcg": 0.4285714285714285,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      }
+    ],
+    "Hybrid + BGE Reranker": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 20,
+        "precision": 1.0,
+        "recall": 0.25,
+        "mrr": 1.0,
+        "ndcg": 0.8027478044303603,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 1.0,
+        "recall": 0.21739130434782608,
+        "mrr": 1.0,
+        "ndcg": 0.7808192186449511,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 26,
+        "precision": 1.0,
+        "recall": 0.19230769230769232,
+        "mrr": 1.0,
+        "ndcg": 0.7192801759488138,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          2,
+          2
+        ]
+      }
+    ],
+    "Hybrid + MedCPT Cross-Enc": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 20,
+        "precision": 0.6,
+        "recall": 0.15,
+        "mrr": 0.5,
+        "ndcg": 0.5091154798932425,
+        "binary": [
+          0,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          1,
+          3,
+          3,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 1.0,
+        "recall": 0.21739130434782608,
+        "mrr": 1.0,
+        "ndcg": 0.7446551257189392,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 26,
+        "precision": 1.0,
+        "recall": 0.19230769230769232,
+        "mrr": 1.0,
+        "ndcg": 0.6089419728454368,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          3,
+          2
+        ]
+      }
+    ]
+  }
+}

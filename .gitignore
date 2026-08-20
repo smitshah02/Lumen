@@ -1,0 +1,57 @@
+# Environment variables
+.env
+API_keys.docx
+API_keys.pages
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Models (too large for git)
+models/
+
+# Data (sensitive + large)
+data/
+
+# MIMIC-derived training data (contains raw note text, ~9GB)
+src/reranker/reranker_training_data/
+
+# MIMIC-derived exports and run artifacts
+*.xlsx
+*.csv
+disease_flow/
+pooled.json
+pooled_smoke.json
+sweep_*.json
+indexing_log.txt
+
+# Eval outputs containing raw note excerpts
+evals/retrieval_results.json
+mimic_profile_report.json
+
+# Caches
+.cache/
+.overlap_cache/
+.deepeval/
+
+# Personal / reference material (not code)
+docs/
+Lumen.pdf
+Smit_Shah_Resume.docx
+Each phase outputs.pages
+*.png
+
+# Local tool settings
+.claude/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+langfuse/
