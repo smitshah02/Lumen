@@ -17,14 +17,21 @@ data/
 # MIMIC-derived training data (contains raw note text, ~9GB)
 src/reranker/reranker_training_data/
 
-# MIMIC-derived exports and run artifacts
+# MIMIC-derived exports and run artifacts.
+# Glob, not exact names: these files embed raw note text and real subject_ids,
+# so a new variant (pooled_v2.json, sweep_run3.json) must never slip through
+# just because it was not listed here by name.
 *.xlsx
 *.csv
 disease_flow/
-pooled.json
-pooled_smoke.json
-sweep_*.json
+pooled*.json
+sweep*.json
+*_answers.json
 indexing_log.txt
+
+# Smoke-run eval output — a 3-query subset. results.json (the full 28-query run)
+# is the committed one; keeping both invites citing the wrong table.
+results_smoke.json
 
 # Eval outputs containing raw note excerpts
 evals/retrieval_results.json
