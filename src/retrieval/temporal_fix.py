@@ -1,152 +1,69 @@
 """
-Self-contained validation of the MIMIC-correct temporal logic.
-The functions below are EXACTLY what goes into hybrid_retriever_v2.py
-(with the real RetrievalResult). Minimal stand-in here so it runs alone.
+Regression test for the MIMIC-correct temporal logic.
+======================================================
+Proves that anchoring recency to each patient's OWN latest record beats
+anchoring to a global wall-clock, which is the single correctness fix that
+makes temporal retrieval work at all on MIMIC-IV.
+
+Why this exists: MIMIC-IV shifts every patient's dates into 2100-2200 with a
+*per-patient* offset. Absolute dates are meaningless across patients, but
+intervals WITHIN one patient are real. Code that picks any fixed "now" is
+wrong for every patient simultaneously — and wrong silently, because it still
+returns plausible-looking results.
+
+The live implementation is imported from hybrid_retriever_v2 — this file holds
+no copy of it, so the two cannot drift. `old_apply` below is a deliberately
+frozen replica of the pre-fix behaviour, kept only as the contrast baseline
+the assertions measure against. Do not "fix" it.
+
+No DB, no models, no network — synthetic dates only.
+
+Usage:
+    python -m src.retrieval.temporal_fix           # run assertions
+    python -m src.retrieval.temporal_fix --show    # + side-by-side old/new output
 """
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+import argparse
+from datetime import datetime, timedelta
+
+from src.retrieval.hybrid_retriever_v2 import (
+    RetrievalResult,
+    apply_temporal_filter,
+    detect_temporal_mode,
+    _parse_charttime,
+)
 
 
-@dataclass
-class RetrievalResult:  # minimal stand-in for the test
-    chunk_id: int
-    subject_id: int
-    charttime: Optional[str]
-    rrf_score: float = 0.0
-    sources: list = field(default_factory=list)
+def _mk(chunk_id: int, subject_id: int, charttime, rrf_score: float) -> RetrievalResult:
+    """Build a RetrievalResult with only the fields the temporal logic reads."""
+    return RetrievalResult(
+        chunk_id=chunk_id,
+        note_id=chunk_id,
+        subject_id=subject_id,
+        hadm_id=None,
+        note_type="discharge",
+        chunk_index=0,
+        chunk_text="",
+        token_count=0,
+        charttime=charttime,
+        rrf_score=rrf_score,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Charttime parsing (MIMIC charttime is "YYYY-MM-DD HH:MM:SS")
-# ---------------------------------------------------------------------------
-def _parse_charttime(value) -> Optional[datetime]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    s = str(value).strip().replace("Z", "")
-    if not s or s.lower() in ("none", "nat", "nan"):
-        return None
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        pass
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Optional: infer temporal intent straight from the query phrasing.
-# Conservative — returns "all" unless there's a clear signal.
-# ---------------------------------------------------------------------------
-_TEMPORAL_PATTERNS = [
-    ("latest", [r"\bmost recent\b", r"\blatest\b", r"\bnewest\b", r"\bcurrent(?:ly)?\b",
-                r"\blast (?:recorded|known|measured|documented|value)\b", r"\bas of (?:now|today)\b"]),
-    ("trend",  [r"\btrend(?:ing|ed)?\b", r"\bover time\b", r"\bprogression\b", r"\bserial\b",
-                r"\bevolution\b", r"\bchang(?:e|ed|ing) over\b",
-                r"\bover the (?:past|last) \w+ (?:days|weeks|months|years)\b"]),
-    ("recent", [r"\bin the (?:past|last) \d+ (?:days|weeks|months|years)\b",
-                r"\brecent(?:ly)?\b", r"\bthis admission\b", r"\bduring (?:this|the current)\b"]),
-]
-
-
-def detect_temporal_mode(query: str) -> str:
-    q = query.lower()
-    for mode, patterns in _TEMPORAL_PATTERNS:   # latest > trend > recent
-        if any(re.search(p, q) for p in patterns):
-            return mode
-    return "all"
-
-
-# ---------------------------------------------------------------------------
-# THE FIX
-# ---------------------------------------------------------------------------
-def apply_temporal_filter(
-    results: list[RetrievalResult],
-    mode: str = "all",
-    boost_recent: bool = True,
-    recency_days: int = 365,
-    boost_weight: float = 0.20,
-    halflife_days: float = 180.0,
-    reference_times: Optional[dict] = None,
-) -> list[RetrievalResult]:
-    """
-    Temporal reweighting/filtering that is correct for MIMIC's shifted dates.
-
-    MIMIC-IV shifts each patient's dates into 2100-2200 with a *per-patient*
-    offset. Absolute dates are meaningless across patients, but the offset is
-    identical for all of one patient's records, so intervals WITHIN a patient
-    are real. We therefore anchor recency to each subject's OWN latest retrieved
-    record, never a global wall-clock.
-
-    Modes:
-      "all"                    -> no temporal effect (relevance order kept)
-      "recent"                 -> drop records older than recency_days before the
-                                  subject's anchor; boost survivors by recency
-      "latest"/"most_recent"   -> boost toward newest per subject; keep all
-      "trend"/"oldest_first"   -> chronological ascending (undated sink last)
-    """
-    mode = (mode or "all").lower()
-    if mode == "oldest_first":
-        mode = "trend"
-    if mode == "most_recent":
-        mode = "latest"
-    if mode == "all":
-        return results
-
-    # Per-subject anchor = that subject's latest retrieved charttime
-    # (unless the caller supplies the patient's true latest encounter).
-    refs: dict = dict(reference_times) if reference_times else {}
-    if not reference_times:
-        for r in results:
-            ct = _parse_charttime(r.charttime)
-            if ct is None:
-                continue
-            if r.subject_id not in refs or ct > refs[r.subject_id]:
-                refs[r.subject_id] = ct
-
-    kept: list[RetrievalResult] = []
-    for r in results:
-        ct = _parse_charttime(r.charttime)
-        ref = refs.get(r.subject_id)
-
-        # Undated records keep their relevance but get no recency signal and
-        # are not dropped by "recent" (we can't prove they're old).
-        if ct is None or ref is None:
-            kept.append(r)
-            continue
-
-        days_ago = max(0.0, (ref - ct).total_seconds() / 86400.0)
-
-        if mode == "recent" and days_ago > recency_days:
-            continue
-
-        if boost_recent and mode in ("recent", "latest"):
-            r.rrf_score += boost_weight * (0.5 ** (days_ago / halflife_days))
-
-        kept.append(r)
-
-    if mode == "trend":
-        kept.sort(key=lambda x: _parse_charttime(x.charttime) or datetime.max)
-    else:
-        kept.sort(key=lambda x: x.rrf_score, reverse=True)
-
-    return kept
-
-
-# ---------------------------------------------------------------------------
-# The OLD broken behaviour, reproduced for contrast
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# The pre-fix behaviour, frozen for contrast. NOT the live implementation.
+# ===========================================================================
 def old_apply(results, mode="all", boost_recent=True, recency_days=365):
-    from datetime import timedelta
+    """
+    How temporal filtering worked before the per-patient anchor.
+
+    Two defects, both reproduced faithfully:
+      1. `now` is a hardcoded global date, so a patient shifted to 2150 looks
+         ~18,000 days stale and every record is "old".
+      2. The boost is multiplicative on rrf_score, so a min-maxed score of 0
+         stays 0 no matter how recent the record is.
+    """
     if mode == "all" and not boost_recent:
         return results
     now = datetime(2200, 1, 1)
@@ -164,9 +81,110 @@ def old_apply(results, mode="all", boost_recent=True, recency_days=365):
 
 
 # ===========================================================================
-# Scenarios
+# Scenarios — each returns fresh objects, since the filters mutate rrf_score
 # ===========================================================================
-def banner(t): print("\n" + "=" * 74 + f"\n  {t}\n" + "=" * 74)
+def s1():
+    """One patient shifted to 2150. Latest = Dec; older = Jan, 334 days before."""
+    return [
+        _mk(1, 100, "2150-12-01 09:00:00", 0.90),
+        _mk(2, 100, "2150-01-01 09:00:00", 0.85),
+    ]
+
+
+def s2():
+    """Two patients, offsets 35 years apart. Each has a note ~1 month before
+    THEIR OWN latest, so both should earn a near-identical recency boost."""
+    return [
+        _mk(10, 100, "2150-12-01", 0.50),   # patient 100's latest
+        _mk(11, 100, "2150-11-01", 0.50),   # 30d before it
+        _mk(20, 200, "2185-06-01", 0.50),   # patient 200's latest
+        _mk(21, 200, "2185-05-01", 0.50),   # 31d before it
+    ]
+
+
+def s3():
+    """Out-of-order dates plus one undated record, for trend mode."""
+    return [
+        _mk(31, 100, "2150-09-15", 0.7),
+        _mk(32, 100, "2150-03-15", 0.7),
+        _mk(33, 100, "2150-12-20", 0.7),
+        _mk(34, 100, None, 0.7),
+    ]
+
+
+INTENT_CASES = [
+    ("most recent HbA1c",                        "latest"),
+    ("current medications",                      "latest"),
+    ("trend in HbA1c over the last 12 months",   "trend"),
+    ("creatinine progression",                   "trend"),
+    ("potassium in the last 7 days",             "recent"),
+    ("lab results this admission",               "recent"),
+    ("any historical mention of penicillin reaction", "all"),
+    ("abnormal potassium lab results",           "all"),
+]
+
+
+# ===========================================================================
+# Assertions
+# ===========================================================================
+def test_intra_patient_window_uses_real_intervals():
+    """The old global anchor drops a patient's ENTIRE record as stale."""
+    old = old_apply(s1(), mode="recent", recency_days=365)
+    assert len(old) == 0, f"expected old anchor to drop everything, kept {len(old)}"
+
+    new = apply_temporal_filter(s1(), mode="recent", recency_days=365)
+    assert [r.chunk_id for r in new] == [1, 2], "both notes are within 365d of the patient's own latest"
+
+    tight = apply_temporal_filter(s1(), mode="recent", recency_days=180)
+    assert [r.chunk_id for r in tight] == [1], "the 334-day-old note should fall outside a 180d window"
+
+
+def test_per_patient_anchoring_survives_different_offsets():
+    """A 35-year difference in date shift must not change relative recency."""
+    old = old_apply(s2(), mode="all", boost_recent=True)
+    assert all(abs(r.rrf_score - 0.50) < 1e-9 for r in old), \
+        "old anchor makes every record look ancient, so the boost collapses to zero"
+
+    new = {r.chunk_id: r.rrf_score for r in apply_temporal_filter(s2(), mode="latest")}
+    assert new[10] > new[11], "patient 100's latest must outrank its own older note"
+    assert new[20] > new[21], "patient 200's latest must outrank its own older note"
+    assert abs(new[11] - new[21]) < 0.01, \
+        f"~30d-old notes should score alike across patients, got {new[11]:.4f} vs {new[21]:.4f}"
+    assert new[10] > 0.50, "a boost must actually be applied, not multiplied into nothing"
+
+
+def test_trend_mode_is_chronological_with_undated_last():
+    order = [r.chunk_id for r in apply_temporal_filter(s3(), mode="trend")]
+    assert order == [32, 31, 33, 34], f"expected ascending by charttime, undated last; got {order}"
+
+
+def test_undated_records_survive_recent_mode():
+    """We can't prove an undated record is old, so it must not be dropped."""
+    results = s3() + [_mk(35, 100, None, 0.9)]
+    kept = {r.chunk_id for r in apply_temporal_filter(results, mode="recent", recency_days=30)}
+    assert 34 in kept and 35 in kept, "undated records must never be dropped by 'recent'"
+
+
+def test_query_intent_detection():
+    for query, expected in INTENT_CASES:
+        got = detect_temporal_mode(query)
+        assert got == expected, f"{query!r}: expected {expected}, got {got}"
+
+
+TESTS = [
+    test_intra_patient_window_uses_real_intervals,
+    test_per_patient_anchoring_survives_different_offsets,
+    test_trend_mode_is_chronological_with_undated_last,
+    test_undated_records_survive_recent_mode,
+    test_query_intent_detection,
+]
+
+
+# ===========================================================================
+# Optional side-by-side display (--show)
+# ===========================================================================
+def banner(t):
+    print("\n" + "=" * 74 + f"\n  {t}\n" + "=" * 74)
 
 
 def show(rs, label):
@@ -178,57 +196,55 @@ def show(rs, label):
         print("    (empty)")
 
 
-banner("Scenario 1 — intra-patient window uses REAL intervals, not 2200 distance")
-# One patient, dates shifted to 2150. Latest = Dec; older = Jan (~334 days before).
-def s1():
-    return [
-        RetrievalResult(1, 100, "2150-12-01 09:00:00", rrf_score=0.90),
-        RetrievalResult(2, 100, "2150-01-01 09:00:00", rrf_score=0.85),  # 334d before
-    ]
-print("\n  OLD (anchor=2200): 'recent' within 365d")
-show(old_apply(s1(), mode="recent", recency_days=365), "->")
-print("\n  NEW (anchor=patient's own latest): 'recent' within 365d")
-show(apply_temporal_filter(s1(), mode="recent", recency_days=365), "->")
-print("\n  NEW: 'recent' within 180d  (the Jan note is 334d old -> dropped)")
-show(apply_temporal_filter(s1(), mode="recent", recency_days=180), "->")
+def demo():
+    banner("Scenario 1 — intra-patient window uses REAL intervals, not 2200 distance")
+    print("\n  OLD (anchor=2200): 'recent' within 365d — the whole record vanishes")
+    show(old_apply(s1(), mode="recent", recency_days=365), "->")
+    print("\n  NEW (anchor=patient's own latest): 'recent' within 365d")
+    show(apply_temporal_filter(s1(), mode="recent", recency_days=365), "->")
+    print("\n  NEW: 'recent' within 180d  (the Jan note is 334d old -> dropped)")
+    show(apply_temporal_filter(s1(), mode="recent", recency_days=180), "->")
+
+    banner("Scenario 2 — per-patient anchoring works across patients with different shifts")
+    print("\n  OLD (anchor=2200): every record looks ancient -> ~0 boost")
+    show(old_apply(s2(), mode="all", boost_recent=True), "->")
+    print("\n  NEW (mode=latest): each note boosted vs its OWN patient's latest")
+    show(apply_temporal_filter(s2(), mode="latest"), "->")
+
+    banner("Scenario 3 — trend mode = chronological ascending (for 'over time' queries)")
+    show(apply_temporal_filter(s3(), mode="trend"), "trend ->")
+
+    banner("Scenario 4 — query-intent auto-detection")
+    for query, expected in INTENT_CASES:
+        got = detect_temporal_mode(query)
+        flag = " " if got == expected else "  <-- MISMATCH"
+        print(f"    {got:8s}  <-  \"{query}\"{flag}")
 
 
-banner("Scenario 2 — per-patient anchoring works across patients with different shifts")
-# Patient 100 lives in 2150, patient 200 in 2185. Each has a note ~1 month before
-# THEIR OWN latest. Both should get a strong, comparable recency boost.
-def s2():
-    return [
-        RetrievalResult(10, 100, "2150-12-01", rrf_score=0.50),  # 100's latest
-        RetrievalResult(11, 100, "2150-11-01", rrf_score=0.50),  # ~30d before
-        RetrievalResult(20, 200, "2185-06-01", rrf_score=0.50),  # 200's latest
-        RetrievalResult(21, 200, "2185-05-01", rrf_score=0.50),  # ~31d before
-    ]
-print("\n  OLD (anchor=2200): every record looks ancient -> ~0 boost")
-show(old_apply(s2(), mode="latest" if False else "all", boost_recent=True), "->")
-print("\n  NEW (mode=latest): each note boosted vs its OWN patient's latest")
-show(apply_temporal_filter(s2(), mode="latest"), "->")
+def main():
+    parser = argparse.ArgumentParser(description="Temporal logic regression test (no DB/models)")
+    parser.add_argument("--show", action="store_true", help="Print side-by-side old vs new output")
+    args = parser.parse_args()
+
+    if args.show:
+        demo()
+
+    print("\n" + "=" * 74)
+    failures = 0
+    for fn in TESTS:
+        try:
+            fn()
+            print(f"  PASS  {fn.__name__}")
+        except AssertionError as e:
+            failures += 1
+            print(f"  FAIL  {fn.__name__}\n          {e}")
+
+    print("=" * 74)
+    if failures:
+        print(f"\n{failures} of {len(TESTS)} checks FAILED.")
+        raise SystemExit(1)
+    print(f"\nAll {len(TESTS)} temporal checks passed.")
 
 
-banner("Scenario 3 — trend mode = chronological ascending (for 'over time' queries)")
-def s3():
-    return [
-        RetrievalResult(31, 100, "2150-09-15", rrf_score=0.7),
-        RetrievalResult(32, 100, "2150-03-15", rrf_score=0.7),
-        RetrievalResult(33, 100, "2150-12-20", rrf_score=0.7),
-        RetrievalResult(34, 100, None,          rrf_score=0.7),  # undated -> last
-    ]
-show(apply_temporal_filter(s3(), mode="trend"), "trend ->")
-
-
-banner("Scenario 4 — query-intent auto-detection")
-for q in [
-    "most recent HbA1c",
-    "trend in HbA1c over the last 12 months",
-    "potassium in the last 7 days",
-    "any historical mention of penicillin reaction",
-    "abnormal potassium lab results",
-    "current medications",
-]:
-    print(f"    {detect_temporal_mode(q):8s}  <-  \"{q}\"")
-
-print("\nAll scenarios ran.")
+if __name__ == "__main__":
+    main()

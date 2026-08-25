@@ -1,6 +1,6 @@
 """
-Hybrid Retriever v2 Test Runner
-=================================
+Hybrid Retriever v2 — RRF vs Rerank Comparison
+================================================
 Shows clean side-by-side comparison:
   - Hybrid (RRF) only
   - Hybrid + BGE rerank
@@ -8,13 +8,13 @@ Shows clean side-by-side comparison:
 Usage:
     cd ~/Lumen
     source .venv/bin/activate
-    python -m src.retrieval.test_retriever
+    python -m src.retrieval.test_retriever_v3
 
     # Interactive mode:
-    python -m src.retrieval.test_retriever -i
+    python -m src.retrieval.test_retriever_v3 -i
 
     # Skip reranker (fast):
-    python -m src.retrieval.test_retriever --no-reranker
+    python -m src.retrieval.test_retriever_v3 --no-reranker
 """
 
 from __future__ import annotations
@@ -227,7 +227,7 @@ def run_interactive(retriever: HybridRetriever):
 def main():
     parser = argparse.ArgumentParser(description="Test Hybrid Retriever v2")
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive mode")
-    parser.add_argument("--no-reranker", action="store_true", help="Skip MedCPT Cross-Encoder")
+    parser.add_argument("--no-reranker", action="store_true", help="Skip the BGE reranker (RRF-only, faster)")
     parser.add_argument("--patient", "-p", action="store_true", help="Run patient queries")
     args = parser.parse_args()
 

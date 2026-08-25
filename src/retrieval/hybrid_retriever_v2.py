@@ -24,7 +24,7 @@ Improvements over v1:
   - Expanded BM25 with OR matching catches partial keyword hits
 
 Usage:
-    from src.retrieval.hybrid_retriever import HybridRetriever
+    from src.retrieval.hybrid_retriever_v2 import HybridRetriever
 
     retriever = HybridRetriever()
     results = retriever.search("fluid overload swollen legs", subject_id=10000032)

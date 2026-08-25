@@ -1,0 +1,49 @@
+# Lumen — Postgres 16 + pgvector
+#
+#   docker compose up -d
+#   python -m src.storage.schema     # creates extensions, tables, HNSW + GIN indexes
+#
+# Host port is 5433, matching DATABASE_URL in .env and the fallback in
+# src/storage/__init__.py:21. Change both together if you move it.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: lumen-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: lumen
+      POSTGRES_DB: lumen
+      # Deterministic FTS behaviour — BM25 ranks on to_tsvector('english', ...)
+      # in a GENERATED column, so the server's collation must not drift.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - lumen_pgdata:/var/lib/postgresql/data
+    # Defaults are too small to build HNSW indexes over note_chunks without
+    # spilling to disk. maintenance_work_mem is the one that matters at index
+    # build time; work_mem covers the RRF-sized sorts at query time.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=2GB
+      - -c
+      - max_parallel_maintenance_workers=4
+      - -c
+      - effective_cache_size=4GB
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lumen"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  lumen_pgdata:
