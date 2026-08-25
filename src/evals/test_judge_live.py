@@ -1,7 +1,11 @@
-from src.evals.ollama_backend import make_ollama_judge
+from src.evals.llm_judge import LLMJudge
+from src.llm.local_client import FAST_MODEL, build_call_fn
 
-judge = make_ollama_judge()  # qwen2.5:14b via local Ollama, no API key
-
+judge = LLMJudge(
+    model=FAST_MODEL,
+    call_fn=build_call_fn(tier="fast", json_mode=True, max_tokens=200),
+    max_workers=2,   # local single-GPU: 8 parallel calls will thrash
+)
 tests = [
     ("abnormal potassium lab results", "Discharge labs: Potassium 6.1 mEq/L, critical high. Given kayexalate."),
     ("abnormal potassium lab results", "CBC: WBC 7.3 RBC 3.72 Hgb 11.2 Hct 33.8 Plt 210"),

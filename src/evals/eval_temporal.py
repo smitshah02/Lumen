@@ -194,14 +194,19 @@ def temporal_accuracy_for_case(retriever, judge, subject_id, query, assertion,
 
 def run_temporal_eval(top_k: int = 10, threshold: int = 2, patients: Optional[list] = None):
     from src.retrieval.hybrid_retriever_v2 import HybridRetriever
-    from src.evals.ollama_backend import make_ollama_judge
+    from src.evals.llm_judge import LLMJudge
 
     print("=" * 74)
     print("  LUMEN TEMPORAL-ACCURACY EVAL  (temporal mode vs all, per patient)")
     print("=" * 74)
 
     retriever = HybridRetriever(use_reranker=True)
-    judge = make_ollama_judge()
+    from src.llm.local_client import FAST_MODEL, build_call_fn
+    judge = LLMJudge(
+        model=FAST_MODEL,
+        call_fn=build_call_fn(tier="fast", json_mode=True, max_tokens=200),
+        max_workers=2,
+    )
 
     if patients is None:
         picks = select_temporal_patients(limit=2)

@@ -46,22 +46,31 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 SYSTEM_PROMPT = """You are an expert clinical information-retrieval judge. Given a SEARCH QUERY and a retrieved TEXT CHUNK from a clinical note, rate how well the chunk's INFORMATION answers the query, on a 0-3 scale.
 
-Judge information relevance, NOT keyword overlap. A chunk that merely contains a word from the query in an unrelated context is not relevant. Examples: a cervical-spine MRI is irrelevant to "swollen legs"; a generic CBC panel that does not report the asked-about value is irrelevant to "abnormal potassium"; a liver MRI is irrelevant to "kidneys shutting down".
+Follow these steps in order.
 
-Scale:
-3 = Directly answers the query: contains the specific finding, value, medication, or fact asked for.
-2 = Relevant: same clinical topic and useful context, though not the exact answer.
-1 = Marginal: tangentially related; shares a term but not the intent.
-0 = Irrelevant: different topic, or only incidental keyword overlap.
+STEP 1 — Identify the TARGET of the query: the specific analyte, finding, medication, event, or measurement being asked about. Write it down mentally. For "abnormal potassium lab results" the target is POTASSIUM, not "lab results". For "swollen legs fluid overload" the target is PERIPHERAL EDEMA / VOLUME STATUS, not "body parts".
+
+STEP 2 — Ask: does the chunk report a value, finding, or statement about THAT TARGET specifically?
+  If NO, the score is 0 or 1. It cannot be 2 or 3, no matter how similar the general topic seems.
+  A chunk from the same document type, the same body system, or the same category of test does NOT qualify. A lab panel that omits the target analyte scores 0.
+
+STEP 3 — Only if the answer to STEP 2 was YES, choose between:
+  3 = Directly answers: contains the specific value, finding, medication, or fact asked for.
+  2 = Relevant: discusses the target and gives useful context, but not the exact answer.
+
+If STEP 2 was NO, choose between:
+  1 = Marginal: mentions the target in passing, or is clearly adjacent clinical context.
+  0 = Irrelevant: different topic, or only incidental keyword overlap.
+
+The single most common error is scoring 2 because the chunk "feels" topically close. Resist this. Topical similarity without the target is 0.
 
 The text is de-identified; placeholders like [PERSON], [DATE], [LOCATION], or ___ are normal and must not lower the score.
 
 Respond with ONLY a JSON object: {"score": <integer 0-3>, "reason": "<one short sentence>"}. Output no text outside the JSON."""
-
 
 # ---------------------------------------------------------------------------
 # Result container
