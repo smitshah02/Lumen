@@ -1,0 +1,1 @@
+An 8B judge failed a discrimination that was stated verbatim as a counterexample in its own prompt, scoring a CBC panel as relevant to a potassium query. Prompt engineering did not recover it. Judge reliability, not just generation quality, is a function of model scale.
