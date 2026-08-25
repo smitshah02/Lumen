@@ -5,9 +5,10 @@ patient-scoped clinical questions from de-identified discharge summaries and
 radiology reports, and grounds every claim in a citation back to the source note.
 
 The design constraint that shapes everything here: **no clinical text leaves the
-machine.** Retrieval, reranking, and answer generation all run locally against a
-local Postgres instance and a local Ollama model. The only hosted API in the
-project is the LLM judge used for offline evaluation.
+machine.** Retrieval, reranking, answer generation, and the evaluation judge all
+run locally against a local Postgres instance and a local Ollama model — which is
+what keeps the project inside the PhysioNet DUA. No hosted API touches clinical
+text at any point in the pipeline.
 
 ---
 
@@ -43,17 +44,28 @@ MIMIC-IV (csv.gz)
                            query encoder → queries          768-dim
 ```
 
-Retrieval is a nine-stage pipeline ([hybrid_retriever_v2.py](src/retrieval/hybrid_retriever_v2.py)):
+Retrieval is an eight-stage pipeline ([hybrid_retriever_v2.py](src/retrieval/hybrid_retriever_v2.py)):
 
 1. **Query expansion** — clinical synonyms and abbreviations, to bridge the gap between how a person asks ("swollen legs") and how a clinician writes ("peripheral edema")
-2. **BM25** over Postgres `tsvector`, OR + AND combination
+2. **BM25** over each chunk's own Postgres `tsvector`, OR + AND combination
 3. **Vector search** via pgvector cosine over MedCPT embeddings
-4. **Quality filter** — drops the one-line radiology indications that otherwise pollute the top-K
-5. **Reciprocal Rank Fusion**, with a bonus for chunks found by *both* arms
-6. **Context window expansion** — pulls adjacent chunks so the reranker sees a clinical picture, not a fragment
-7. **Note-level dedup** — stops three chunks from one note from monopolizing the results
-8. **Temporal filter / boost**
-9. **BGE cross-encoder rerank** over the assembled context → final top-K
+4. **Reciprocal Rank Fusion**, with a bonus for chunks found by *both* arms
+5. **Note-level dedup** — stops three chunks from one note from monopolizing the results
+6. **Temporal filter / boost** — anchored per patient, see below
+7. **Context window expansion** — pulls adjacent chunks so the reranker sees a clinical picture, not a fragment
+8. **BGE cross-encoder rerank** over the assembled context → final top-K, falling back to RRF order when the reranker's top score is below 0.35
+
+A minimum-token quality filter runs inside stages 2 and 3, dropping the one-line
+radiology indications that otherwise pollute the top-K.
+
+**Temporal correctness is the part worth looking at.** MIMIC-IV shifts each
+patient's dates into 2100–2200 with a *per-patient* offset, so absolute dates are
+meaningless across patients but intervals within one patient are real. Recency is
+therefore anchored to each subject's own latest record, never a global clock, and
+applied as an additive half-life decay so a min-maxed score of 0 can still be
+boosted. [temporal_fix.py](src/retrieval/temporal_fix.py) is a standalone
+regression test that pins this against the pre-fix behaviour — no DB or models
+needed to run it.
 
 Generation ([answer_generator.py](src/generation/answer_generator.py)) is grounded-only:
 the system prompt forbids outside knowledge about the patient, requires a `[S#]`
@@ -66,8 +78,9 @@ retrieval, so one patient's question can never surface another patient's notes.
 ## Results
 
 28 golden queries across six categories (medications, labs, diagnosis, imaging,
-sections, plain-language), graded by an LLM judge at relevance threshold 2 on a
-0–3 scale, `top_k=5`. Full per-query output in [results.json](results.json).
+sections, plain-language), graded by a local Ollama judge (`qwen2.5:14b`) at
+relevance threshold 2 on a 0–3 scale, `top_k=5`. Full per-query output in
+[results.json](results.json).
 
 | Configuration | P@5 | Recall@5 | MRR | nDCG@5 |
 |---|---|---|---|---|
@@ -106,7 +119,7 @@ chunk it failed to parse.
 | Path | What's in it |
 |---|---|
 | [src/storage/](src/storage/) | Postgres schema, MIMIC ingestion, FTS migration, lab dictionary loader |
-| [src/retrieval/](src/retrieval/) | Chunker, MedCPT embeddings, hybrid retriever (v1 + v2), note/guideline indexers, temporal handling |
+| [src/retrieval/](src/retrieval/) | Chunker, MedCPT embeddings, hybrid retriever, note/guideline indexers, temporal logic + its regression test |
 | [src/deid/](src/deid/) | Presidio de-identification pipeline and MIMIC adapter |
 | [src/generation/](src/generation/) | Grounded answer generation, lab querying, batch harness |
 | [src/evals/](src/evals/) | Golden dataset, LLM judge, pooled scoring, retrieval + temporal evaluation |
@@ -116,16 +129,14 @@ chunk it failed to parse.
 
 ## Running it
 
-Requires Python 3.11+, Postgres 15+ with the `vector` and `pg_trgm` extensions,
-and roughly 16 GB RAM (the reranker and a 14B Ollama model share it). Apple
-Silicon MPS is used automatically when available.
+Requires Python 3.11+ (developed on 3.14), Docker, and roughly 16 GB RAM — the
+reranker and a 14B Ollama model share it. Apple Silicon MPS is used automatically
+when available.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install sqlalchemy psycopg2-binary pgvector torch transformers \
-            presidio-analyzer presidio-anonymizer spacy \
-            pandas numpy tqdm pypdf python-dotenv requests openai groq
-python -m spacy download en_core_web_lg
+pip install -r requirements.txt      # includes the spaCy en_core_web_lg model
+docker compose up -d                 # Postgres 16 + pgvector on :5433
 ```
 
 Model weights are not vendored. Download to `models/`:
@@ -133,15 +144,21 @@ Model weights are not vendored. Download to `models/`:
 - [`ncbi/MedCPT-Query-Encoder`](https://huggingface.co/ncbi/MedCPT-Query-Encoder) → `models/medcpt-query`
 - [`ncbi/MedCPT-Article-Encoder`](https://huggingface.co/ncbi/MedCPT-Article-Encoder) → `models/medcpt-article`
 - [`ncbi/MedCPT-Cross-Encoder`](https://huggingface.co/ncbi/MedCPT-Cross-Encoder) → `models/medcpt-cross-encoder`
-- [`BAAI/bge-reranker-large`](https://huggingface.co/BAAI/bge-reranker-large) → `models/bge-reranker`
+- [`BAAI/bge-reranker-v2-m3`](https://huggingface.co/BAAI/bge-reranker-v2-m3) → `models/bge-reranker`
 
-Set `DATABASE_URL` and `GROQ_API_KEY` in `.env`, then:
+Model paths currently resolve to `~/Lumen/models`, so clone to your home directory
+or edit the path constants.
+
+`docker compose` provisions the database with the credentials already in
+`src/storage/__init__.py`; override them with `DATABASE_URL` in `.env` if you
+change the compose file. Then:
 
 ```bash
-python -m src.storage.schema          # create tables
+python -m src.storage.schema          # create extensions, tables, HNSW + GIN indexes
 python -m src.storage.ingest          # load MIMIC-IV
 python -m src.retrieval.index_notes   # chunk + embed notes
-python -m src.evals.eval_retrieval    # reproduce the table above
+python -m src.evals.retrieve_pool --out pooled.json     # retrieve across all 5 configs
+python -m src.evals.judge_and_score --in pooled.json    # judge once, score all configs
 ```
 
 Ask a question:

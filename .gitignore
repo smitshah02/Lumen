@@ -55,3 +55,5 @@ Thumbs.db
 
 # Docker
 langfuse/
+# Working audit doc — local only, contradicts README until rewritten
+LUMEN_STATUS.md
