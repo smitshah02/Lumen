@@ -29,6 +29,7 @@ from src.agents import prompts, citations
 from src.llm.local_client import chat
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
 from src.retrieval.guideline_retriever import GuidelineRetriever
+from langgraph.types import Command, interrupt
 
 logger = logging.getLogger(__name__)
 
@@ -205,14 +206,93 @@ def verification(state: AgentState) -> dict:
             unsupported += 1
         out.append({**c, "verified": ok, "verification_note": f"{verdict}: {note}"})
 
-    prior = state.get("verification", {}) or {}
+        prior = state.get("verification", {}) or {}
     logger.info(f"[verification] {checked} checked, {unsupported} unsupported")
     return {
         "citations": out,
         "verification": {**prior, "checked": checked, "unsupported": unsupported},
-        "needs_human_review": unsupported > 0,   # DAY 3: this triggers interrupt()
+        "needs_human_review": unsupported > 0,
+        "review_status": "pending" if unsupported > 0 else "auto_approved",
         "node_trail": _trail(state, "verification"),
     }
+
+def human_review(state: AgentState) -> dict:
+    """
+    Pause for clinician adjudication of unsupported claims.
+
+    This node is deliberately cheap: it reads state and interrupts, nothing
+    more. LangGraph re-executes a node from the top on resume, so any LLM
+    work here would repeat on every decision — which is why the verification
+    calls live in the previous node.
+    """
+    cites = state.get("citations", []) or []
+    flagged = [(i, c) for i, c in enumerate(cites) if not c.get("verified")]
+
+    if not flagged:
+        return {"review_status": "auto_approved", "node_trail": _trail(state, "human_review")}
+
+    ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
+                                  (state.get("guideline_evidence", []) or [])}
+
+    payload = {
+        "query": state.get("query", ""),
+        "answer": state.get("draft_answer", ""),
+        "flagged": [{
+            "index": i,
+            "claim": c["claim"],
+            "label": c.get("label", ""),
+            "note": c.get("verification_note", ""),
+            "source_text": (ev.get(c.get("label", ""), {}) or {}).get("text", "")[:3000],
+        } for i, c in flagged],
+    }
+
+    logger.info(f"[human_review] pausing on {len(flagged)} flagged claim(s)")
+    decisions = interrupt(payload)   # <-- graph halts here; state is checkpointed
+
+    # ---- resumed from here ----
+    if isinstance(decisions, dict):
+        decisions = [decisions]
+    if not isinstance(decisions, list):
+        decisions = [{"action": "escalate", "note": "malformed resume payload"}]
+
+    updated = [dict(c) for c in cites]
+    struck, escalated, recorded = set(), False, []
+
+    for (idx, _), d in zip(flagged, decisions):
+        action = (d or {}).get("action", "escalate")
+        note = (d or {}).get("note", "")
+        recorded.append({"index": idx, "action": action, "note": note})
+
+        if action == "approve":
+            updated[idx]["verified"] = True
+            updated[idx]["verification_note"] = f"human approved: {note}" if note else "human approved"
+        elif action == "strike":
+            struck.add(idx)
+            updated[idx]["verification_note"] = f"struck by reviewer: {note}" if note else "struck by reviewer"
+        else:
+            escalated = True
+            updated[idx]["verification_note"] = f"escalated: {note}" if note else "escalated"
+
+    keep = {i for i in range(len(updated)) if i not in struck}
+    final = citations.rebuild_answer(updated, keep)
+
+    logger.info(f"[human_review] {len(recorded)} decision(s); struck={len(struck)} escalated={escalated}")
+    return {
+        "citations": updated,
+        "human_decisions": list(state.get("human_decisions", [])) + recorded,
+        "final_answer": final,
+        "review_status": "escalated" if escalated else "reviewed",
+        "needs_human_review": escalated,
+        "node_trail": _trail(state, "human_review"),
+    }
+
+
+def finalize(state: AgentState) -> dict:
+    """Set final_answer when no review was needed."""
+    if state.get("final_answer"):
+        return {"node_trail": _trail(state, "finalize")}
+    return {"final_answer": state.get("draft_answer", ""),
+            "node_trail": _trail(state, "finalize")}
 
 
 def refuse(state: AgentState) -> dict:
@@ -240,6 +320,8 @@ def route_after_patient(state: AgentState) -> str:
     # should be done. A plain chart lookup does not need them.
     return "guideline_retrieval" if state.get("query_type") in ("guideline_check", "literature") else "synthesis"
 
+def route_after_verification(state: AgentState) -> str:
+    return "human_review" if state.get("needs_human_review") else "finalize"
 
 def build_graph(setup: bool = True):
     pool = ConnectionPool(
@@ -247,6 +329,7 @@ def build_graph(setup: bool = True):
         kwargs={"autocommit": True, "row_factory": dict_row},
     )
     checkpointer = PostgresSaver(pool)
+    _pools.append(pool)
     if setup:
         checkpointer.setup()
 
@@ -266,6 +349,28 @@ def build_graph(setup: bool = True):
     b.add_edge("guideline_retrieval", "synthesis")
     b.add_edge("synthesis", "verification")
     b.add_edge("verification", END)
-    b.add_edge("refuse", END)
+    b.add_node("human_review", human_review)
+    b.add_node("finalize", finalize)
+    b.add_conditional_edges("verification", route_after_verification,
+                            ["human_review", "finalize"])
+    b.add_edge("human_review", "finalize")
+    b.add_edge("finalize", END)
 
     return b.compile(checkpointer=checkpointer), checkpointer
+
+import atexit
+
+_pools: list[ConnectionPool] = []
+
+def close_pools() -> None:
+    """Close pools before interpreter shutdown. Python 3.14 forbids joining
+    threads during finalization, so relying on __del__ raises a (harmless but
+    noisy) PythonFinalizationError."""
+    while _pools:
+        try:
+            _pools.pop().close()
+        except Exception:
+            pass
+
+
+atexit.register(close_pools)

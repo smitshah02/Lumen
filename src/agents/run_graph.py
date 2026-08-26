@@ -46,6 +46,14 @@ def main() -> int:
         config=config,
     )
 
+    if "__interrupt__" in out:
+        payload = out["__interrupt__"][0].value
+        print(f"\n  PAUSED for human review — {len(payload['flagged'])} flagged claim(s)")
+        print(f"  state is checkpointed; this process can exit safely.\n")
+        print(f"  resume with:")
+        print(f"    python -m src.agents.review_cli --thread {thread_id}\n")
+        return 0
+
     print(f"\n  query        {out['query']}")
     print(f"  query_type   {out.get('query_type')}   temporal={out.get('temporal_mode')}")
     print(f"  node_trail   {' -> '.join(out.get('node_trail', []))}")
@@ -63,7 +71,7 @@ def main() -> int:
                 print(f"      {e['text'][:280].strip()}...")
 
     print("\n" + "-" * 70)
-    print(out.get("draft_answer", "(no answer)"))
+    print(out.get("final_answer") or out.get("draft_answer", "(no answer)"))
     print("-" * 70)
 
     v = out.get("verification", {}) or {}

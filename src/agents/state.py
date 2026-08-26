@@ -76,6 +76,8 @@ class AgentState(TypedDict, total=False):
     verification: dict
     needs_human_review: bool
     human_decisions: list[dict]
+    review_status: str        # pending | auto_approved | reviewed | escalated
+    final_answer: str
 
     # --- observability / safety ---
     egress_log: list[EgressRecord]

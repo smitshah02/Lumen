@@ -71,3 +71,8 @@ def strip_bad_labels(answer: str, evidence: list[dict]) -> str:
     """Remove hallucinated markers so they never reach a reader."""
     valid = {e["label"] for e in evidence}
     return CITE_RE.sub(lambda m: m.group(0) if m.group(1) in valid else "", answer or "")
+
+def rebuild_answer(claims: list[dict], keep: set[int]) -> str:
+    """Reassemble an answer from the claims that survived review."""
+    kept = [c["claim"].strip() for i, c in enumerate(claims) if i in keep]
+    return " ".join(kept).strip()
