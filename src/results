@@ -1,1 +1,5 @@
 An 8B judge failed a discrimination that was stated verbatim as a counterexample in its own prompt, scoring a CBC panel as relevant to a potassium query. Prompt engineering did not recover it. Judge reliability, not just generation quality, is a function of model scale.
+
+8B synthesis produced 100% cite_rate with zero hallucinated labels on the working case. Better than I predicted. Worth re-measuring against the 70B on burst day.
+The corpus bug mattered more than the model. A single regex flag was degrading retrieval more than model size was.
+Correct refusal under genuinely relevant but patient-inapplicable evidence. That's your safety story, and you have a concrete example.

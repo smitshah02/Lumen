@@ -68,17 +68,51 @@ def extract_pdf_text(pdf_path: Path) -> list[dict]:
 
 def clean_pdf_text(text: str) -> str:
     """Clean common PDF extraction artifacts."""
-    # Fix broken hyphenation at line breaks
-    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+    # Fix broken hyphenation. Two-column medical PDFs split words as
+    # "hyperka-\nlemia" AND "hyperka\n-\nlemia" (hyphen alone on a line).
+    text = re.sub(r"(\w)-[ \t]*\n[ \t]*(\w)", r"\1\2", text)
+    text = re.sub(r"(\w)[ \t]*\n[ \t]*-[ \t]*\n[ \t]*(\w)", r"\1\2", text)
     # Collapse multiple newlines
     text = re.sub(r"\n{3,}", "\n\n", text)
     # Remove page header/footer patterns (common in guidelines)
-    text = re.sub(r"(?m)^S\d+\s+Diabetes Care.*$", "", text)  # ADA headers
-    text = re.sub(r"(?m)^©\s*\d{4}.*$", "", text)  # Copyright lines
-    text = re.sub(r"(?m)^\d+\s*$", "", text)  # Standalone page numbers
+    text = re.sub(r"(?m)^S\d+\s+Diabetes Care.*$", "", text)
+    text = re.sub(r"(?m)^©\s*\d{4}.*$", "", text)
+    text = re.sub(r"(?m)^\d+\s*$", "", text)
     # Collapse whitespace runs
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
+
+
+# --- Reference / bibliography removal -------------------------------------
+# 30% of the original index was bibliography. Reference lists are dense with
+# query terminology (paper titles) but contain no guidance, so they
+# outrank real content on both vector and cross-encoder scoring.
+
+_REF_HEADING_RE = re.compile(
+    r"(?m)^\s*(?:References|REFERENCES|Bibliography|BIBLIOGRAPHY)\s*$"
+)
+
+_CITATION_PATTERNS = [
+    re.compile(r"\d{4};\s*\d+\s*[:(]"),            # J Name. 2012;10:2006
+    re.compile(r"\b\d{1,3}\.\s+[A-Z][a-z]+ [A-Z]{1,3}\b"),  # 58. Goldenberg NA
+    re.compile(r"\b(?:doi|PMID|PMCID)\s*:", re.I),
+    re.compile(r"\bet al\.\s*\w+.*\d{4}"),
+]
+
+
+def strip_reference_sections(text: str) -> str:
+    """Cut everything after a standalone References heading."""
+    m = list(_REF_HEADING_RE.finditer(text))
+    return text[:m[-1].start()].rstrip() if m else text
+
+
+def is_reference_chunk(text: str, threshold: float = 0.012) -> bool:
+    """True when citation markers are dense enough that this is a
+    bibliography fragment rather than prose."""
+    if not text:
+        return True
+    hits = sum(len(p.findall(text)) for p in _CITATION_PATTERNS)
+    return (hits / max(len(text.split()), 1)) > threshold or hits >= 4
 
 
 # ===========================================================================
@@ -86,23 +120,30 @@ def clean_pdf_text(text: str) -> str:
 # ===========================================================================
 
 # Section header patterns for clinical guidelines
+# Section header patterns for clinical guidelines.
+#
+# NOTE: re.IGNORECASE is deliberately NOT used. It previously applied to the
+# whole pattern, degrading the ALL-CAPS rule [A-Z][A-Z\s]{5,60}$ into
+# [A-Za-z][A-Za-z\s]{5,60}$ — which matched almost every wrapped line of PDF
+# text. That turned ordinary sentences into section headers and shattered the
+# corpus into fragments. Keep this case-sensitive.
 GUIDELINE_SECTION_RE = re.compile(
     r"(?m)^(?:"
-    # Numbered sections: "1.", "1.1", "2.3.4", "Chapter 1"
-    r"(?:Chapter\s+)?\d{1,2}(?:\.\d{1,2}){0,3}\s+[A-Z]"
-    # ALL-CAPS headers
-    r"|[A-Z][A-Z\s]{5,60}$"
-    # "RECOMMENDATION" or "EVIDENCE" blocks
-    r"|(?:RECOMMENDATION|EVIDENCE|SUMMARY|KEY POINTS|TABLE|FIGURE)"
-    # Common guideline sections
+    # Numbered sections: "1. Screening", "2.3.4 Management"
+    r"(?:Chapter\s+)?\d{1,2}(?:\.\d{1,2}){0,3}\s+[A-Z][A-Za-z]{3,}"
+    # Genuine ALL-CAPS headers (case-sensitive; allows punctuation)
+    r"|[A-Z][A-Z0-9 ,\-/&()]{5,60}$"
+    # Structural blocks
+    r"|(?:RECOMMENDATION|EVIDENCE|SUMMARY|KEY POINTS)\b"
+    # Title-case section names — must occupy the whole line
     r"|(?:Introduction|Background|Methodology|Methods|Results|Discussion"
     r"|Screening|Diagnosis|Treatment|Management|Prevention|Monitoring"
     r"|Assessment|Classification|Pharmacotherapy|Pharmacologic"
     r"|Nonpharmacologic|Lifestyle|Goals|Targets|Follow.?up"
     r"|Complications|Comorbidities|Special Populations"
     r"|Older Adults|Children|Pregnancy|Hospitalized)"
+    r"[A-Za-z ,\-]{0,40}\s*:?\s*$"
     r")",
-    re.IGNORECASE,
 )
 
 
@@ -124,6 +165,10 @@ def chunk_guideline_pages(
     """
     # Concatenate all pages
     full_text = "\n\n".join(p["text"] for p in pages)
+    before = len(full_text)
+    full_text = strip_reference_sections(full_text)
+    if len(full_text) < before:
+        logger.info(f"  dropped {before - len(full_text):,} chars of references")
 
     # Build page offset map for tracking which page a chunk came from
     page_starts = []
@@ -178,7 +223,7 @@ def chunk_guideline_pages(
                     "source_file": source_file,
                     "section_title": section_name,
                     "chunk_index": chunk_index,
-                    "chunk_text": f"[{source_file}] [{section_name}] {section_text}",
+                    "chunk_text": section_text,
                     "token_count": est_tokens,
                     "page_num": page_num,
                 })
@@ -201,7 +246,7 @@ def chunk_guideline_pages(
                             "source_file": source_file,
                             "section_title": section_name,
                             "chunk_index": chunk_index,
-                            "chunk_text": f"[{source_file}] [{section_name}] {text}",
+                            "chunk_text": text,
                             "token_count": int(len(text.split()) * 1.3),
                             "page_num": page_num,
                         })
@@ -231,13 +276,17 @@ def chunk_guideline_pages(
                         "source_file": source_file,
                         "section_title": section_name,
                         "chunk_index": chunk_index,
-                        "chunk_text": f"[{source_file}] [{section_name}] {text}",
+                        "chunk_text": text,
                         "token_count": int(len(text.split()) * 1.3),
                         "page_num": page_num,
                     })
                     chunk_index += 1
 
-    return chunks
+    kept = [c for c in chunks if not is_reference_chunk(c["chunk_text"])]
+    dropped = len(chunks) - len(kept)
+    if dropped:
+        logger.info(f"  dropped {dropped} bibliography chunks ({dropped/max(len(chunks),1):.0%})")
+    return kept
 
 
 # ===========================================================================
