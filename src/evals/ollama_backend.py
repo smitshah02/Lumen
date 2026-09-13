@@ -24,6 +24,19 @@ from src.evals.llm_judge import LLMJudge
 DEFAULT_OLLAMA_MODEL = "qwen2.5:14b"          # Q4_K_M instruct, ~9 GB on disk
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
+# Structured-output schema for the judge reply. Ollama >= 0.5 constrains
+# generation to this; older builds ignore an object `format` and fall back to
+# free-form JSON, which is the behaviour this replaced — so the parser in
+# llm_judge.py stays as the second line of defence either way.
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score": {"type": "integer", "minimum": 0, "maximum": 3},
+        "reason": {"type": "string"},
+    },
+    "required": ["score", "reason"],
+}
+
 
 def make_ollama_call_fn(
     model: str = DEFAULT_OLLAMA_MODEL,
@@ -32,6 +45,7 @@ def make_ollama_call_fn(
     temperature: float = 0.0,     # deterministic grading
     timeout: float = 180.0,
     keep_alive: str = "30m",      # keep the model warm between calls
+    num_predict: int = 512,       # see below
 ) -> Callable[[list], str]:
     """Return a call_fn(messages) -> str that talks to a local Ollama server."""
     url = f"{host.rstrip('/')}/api/chat"
@@ -41,12 +55,30 @@ def make_ollama_call_fn(
             "model": model,
             "messages": messages,
             "stream": False,
-            "format": "json",          # force a JSON object out of the model
+            # A JSON *schema*, not just "json". With bare "json" the model is
+            # only required to emit valid JSON of any shape — and on chunks that
+            # are dense lab tables it did the obvious JSON task (transcribe the
+            # labs) instead of the asked one (grade them):
+            #     {"blood_tests": [{"time": "12:45 AM", "glucose": 76, ...
+            #     {"patient_data": {"blood_tests": [ ...
+            # then ran past num_predict and truncated mid-object, so the reply
+            # was unparseable and the pair scored 0 = irrelevant. That was 30 of
+            # ~560 judgements in one baseline run, concentrated on lab queries
+            # (up to 11/28 of a single query's pool). Raising num_predict alone
+            # would not have helped: the object would be complete but have no
+            # "score" field. Constraining the schema is the fix.
+            "format": JUDGE_SCHEMA,
             "keep_alive": keep_alive,
             "options": {
                 "temperature": temperature,
                 "num_ctx": num_ctx,
-                "num_predict": 256,
+                # 256 truncated a rambling `reason` mid-string, leaving an
+                # unterminated object that still failed to parse even once the
+                # schema was enforced (observed: a 1094-char reason cut off at
+                # "...could contribute to or result"). Measured prompt sizes top
+                # out near 1150 tokens, so 512 fits inside num_ctx=2048 with
+                # room to spare.
+                "num_predict": num_predict,
             },
         })
         resp.raise_for_status()        # raise -> LLMJudge retries, then degrades to 0

@@ -13,6 +13,7 @@ import logging
 import argparse
 
 from src.agents.graph import build_graph
+from src.obs import tracing
 
 
 def main() -> int:
@@ -35,11 +36,20 @@ def main() -> int:
     if args.history:
         for i, snap in enumerate(graph.get_state_history(config)):
             print(f"  {i}: next={snap.next}  trail={snap.values.get('node_trail')}")
+        tracing.flush()
         return 0
 
     print("=" * 70)
     print(f"  LUMEN AGENT GRAPH — thread {thread_id}")
     print("=" * 70)
+
+    cb = tracing.handler()
+    if cb:
+        config["callbacks"] = [cb]
+        config["metadata"] = {
+            "langfuse_session_id": thread_id,
+            "langfuse_tags": ["lumen", "agent-graph"],
+        }
 
     out = graph.invoke(
         {"query": args.query, "subject_id": args.subject, "thread_id": thread_id},
@@ -49,9 +59,13 @@ def main() -> int:
     if "__interrupt__" in out:
         payload = out["__interrupt__"][0].value
         print(f"\n  PAUSED for human review — {len(payload['flagged'])} flagged claim(s)")
+        eg = out.get("egress_log", []) or []
+        if eg:
+            print(f"  egress: {len(eg)} calls, {sum(1 for r in eg if not r['allowed'])} blocked")
         print(f"  state is checkpointed; this process can exit safely.\n")
         print(f"  resume with:")
         print(f"    python -m src.agents.review_cli --thread {thread_id}\n")
+        tracing.flush()
         return 0
 
     print(f"\n  query        {out['query']}")
@@ -78,6 +92,12 @@ def main() -> int:
     cr = v.get("citation_report", {}) or {}
     print(f"\n  claims       {cr.get('n_claims', 0)}   cite_rate={cr.get('cite_rate', 0):.0%}")
     print(f"  bad labels   {cr.get('bad_labels', [])}")
+    eg = out.get("egress_log", []) or []
+    if eg:
+        blocked = [r for r in eg if not r["allowed"]]
+        print(f"  egress       {len(eg)} calls, {len(blocked)} blocked")
+        for r in blocked:
+            print(f"    BLOCKED {r['tool']} rule={r['rule']} sha={r['payload_sha256'][:12]}")
     print(f"  verified     {v.get('checked', 0) - v.get('unsupported', 0)}/{v.get('checked', 0)}")
     print(f"  review?      {out.get('needs_human_review')}")
 
@@ -90,6 +110,8 @@ def main() -> int:
     snap = graph.get_state(config)
     print(f"\n  checkpoint   id={snap.config['configurable']['checkpoint_id'][:12]}...  next={snap.next}")
     print(f"  (re-run with --thread {thread_id} --history to inspect)\n")
+    # The SDK batches; a short-lived CLI would exit before the background send.
+    tracing.flush()
     return 0
 
 

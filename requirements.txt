@@ -48,3 +48,9 @@ python-dotenv==1.2.2
 # It sends *training-data* text off-machine — do not run it on MIMIC note text
 # you are holding under the PhysioNet DUA.
 # openai==2.36.0
+
+# --- Optional: tracing (src/obs/tracing.py) --------------------------------
+# Only needed when LUMEN_TRACING=1. Traces carry note text in span inputs, so
+# LANGFUSE_HOST must stay on a self-hosted instance — src/obs/tracing.py
+# refuses to send anywhere but localhost.
+langfuse==4.15.1

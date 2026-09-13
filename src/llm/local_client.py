@@ -32,6 +32,8 @@ from typing import Callable, Optional
 import requests
 import re
 
+from src.obs import tracing
+
 logger = logging.getLogger(__name__)
 
 HOST = os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434")
@@ -99,24 +101,32 @@ def chat(
         payload["think"] = think
 
     last_exc = None
-    for attempt in range(max_retries + 1):
-        try:
-            resp = requests.post(f"{HOST}/api/chat", json=payload, timeout=timeout)
-            # Older Ollama builds reject the `think` field; drop it and retry once.
-            if resp.status_code == 400 and "think" in payload:
-                logger.warning("ollama rejected `think`; falling back to tag stripping")
-                _SUPPORTS_THINK_PARAM = False
-                payload.pop("think")
-                continue
-            resp.raise_for_status()
-            return _strip_thinking(resp.json()["message"]["content"])
-        except Exception as e:
-            last_exc = e
-            if attempt == max_retries:
-                break
-            delay = 1.5 * (2 ** attempt) + random.uniform(0, 1.0)
-            logger.debug(f"local LLM call failed (attempt {attempt + 1}): {e}; retry in {delay:.1f}s")
-            time.sleep(delay)
+    with tracing.generation(f"ollama:{tier}", resolved_model, prompt=messages) as gen:
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.post(f"{HOST}/api/chat", json=payload, timeout=timeout)
+                # Older Ollama builds reject the `think` field; drop it and retry once.
+                if resp.status_code == 400 and "think" in payload:
+                    logger.warning("ollama rejected `think`; falling back to tag stripping")
+                    _SUPPORTS_THINK_PARAM = False
+                    payload.pop("think")
+                    continue
+                resp.raise_for_status()
+                body = resp.json()
+                text_out = _strip_thinking(body["message"]["content"])
+                if gen is not None:
+                    gen.update(output=text_out, usage_details={
+                        "input": body.get("prompt_eval_count", 0),
+                        "output": body.get("eval_count", 0),
+                    })
+                return text_out
+            except Exception as e:
+                last_exc = e
+                if attempt == max_retries:
+                    break
+                delay = 1.5 * (2 ** attempt) + random.uniform(0, 1.0)
+                logger.debug(f"local LLM call failed (attempt {attempt + 1}): {e}; retry in {delay:.1f}s")
+                time.sleep(delay)
     raise RuntimeError(f"local LLM call failed after {max_retries + 1} attempts: {last_exc}")
 
 

@@ -53,6 +53,24 @@ from pathlib import Path
 
 DEFAULT_RERANKER_MODEL = str(Path.home() / "Lumen" / "models" / "bge-reranker")
 
+# pgvector's HNSW search breadth, set per-transaction in vector_search().
+#
+# Measured over the 28 golden queries, rows actually returned for top_n=60:
+#     ef=40 (pgvector default)  274/1680 rows,  0/28 queries full,  81 ms
+#     ef=200                   1191/1680 rows, 16/28 queries full, 178 ms
+#     ef=400                   1544/1680 rows, 24/28 queries full, 379 ms
+#     ef=1000                  1680/1680 rows, 28/28 queries full, 729 ms
+#
+# 1000 is pgvector's ceiling, and needing it is a symptom, not a solution: HNSW
+# post-filters, so the 91,789 sub-40-token chunks in note_chunks crowd out every
+# usable neighbour before `token_count >= 40` is applied. Stop indexing those and
+# this can come back down to ~100. Corpus-wide queries only — patient-scoped
+# search never touches this index (the planner picks idx_chunks_subject).
+import os as _os
+# pgvector 0.8.x accepts 1..1000; an out-of-range SET raises InvalidParameterValue
+# and would take the whole vector branch down, so clamp rather than trust the env.
+HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000")), 1000))
+
 
 # ===========================================================================
 # Clinical Query Expansion
@@ -108,17 +126,28 @@ def expand_query(query: str) -> tuple[str, list[str]]:
         (original_query, list_of_expansion_terms)
     """
     query_lower = query.lower()
-    expansions = set()
+
+    # Insertion-ordered dedup, NOT a set. `list(set(...))` iterates in an order
+    # that depends on PYTHONHASHSEED, which is randomised per process — and
+    # bm25_search only uses expansions[:8], so two runs of the same query picked
+    # a different 8 terms, built a different OR query, and returned a different
+    # candidate set. That made the eval non-reproducible across processes while
+    # looking perfectly stable within one.
+    #
+    # Insertion order also happens to be the order we want: CLINICAL_SYNONYMS is
+    # scanned multi-word phrases first, so the [:8] slice now keeps the most
+    # specific expansions instead of eight arbitrary ones.
+    expansions: dict[str, None] = {}
 
     # Check multi-word phrases first, then single words
     for trigger, synonyms in CLINICAL_SYNONYMS.items():
         if trigger in query_lower:
-            expansions.update(synonyms)
+            expansions.update(dict.fromkeys(synonyms))
 
     # Also check individual words
     for word in query_lower.split():
         if word in CLINICAL_SYNONYMS:
-            expansions.update(CLINICAL_SYNONYMS[word])
+            expansions.update(dict.fromkeys(CLINICAL_SYNONYMS[word]))
 
     return query, list(expansions)
 
@@ -205,7 +234,10 @@ def bm25_search(
         sql_and += " AND nc.note_type = :note_type"
         params_and["note_type"] = note_type
 
-    sql_and += " ORDER BY bm25_score DESC LIMIT :top_n"
+    # chunk_id is the tiebreaker, not decoration: ts_rank_cd ties are common and
+    # Postgres returns tied rows in whatever order the heap hands them over, so
+    # without it the same query returns a different ranking run to run.
+    sql_and += " ORDER BY bm25_score DESC, nc.chunk_id ASC LIMIT :top_n"
     params_and["top_n"] = top_n
 
     with engine.connect() as conn:
@@ -250,7 +282,7 @@ def bm25_search(
                 sql_or += " AND nc.note_type = :note_type"
                 params_or["note_type"] = note_type
 
-            sql_or += " ORDER BY bm25_score DESC LIMIT :top_n"
+            sql_or += " ORDER BY bm25_score DESC, nc.chunk_id ASC LIMIT :top_n"
             params_or["top_n"] = top_n
 
             try:
@@ -272,7 +304,10 @@ def bm25_search(
             seen_ids.add(row["chunk_id"])
             merged.append(row)
 
-    merged.sort(key=lambda r: r["bm25_score"], reverse=True)
+    # Same tiebreaker as the SQL: Python's sort is stable, so without an explicit
+    # second key this would preserve whatever arbitrary order the AND/OR merge
+    # produced for equal scores.
+    merged.sort(key=lambda r: (-r["bm25_score"], r["chunk_id"]))
 
     # Min-max normalize to 0-1 (cosmetic; RRF fuses on rank, not score value)
     if merged:
@@ -337,8 +372,22 @@ def vector_search(
 
     try:
         with engine.connect() as conn:
+            # HNSW post-filters: the index hands back ef_search candidates and
+            # only THEN are token_count / subject_id / note_type applied. With
+            # pgvector's default ef_search=40 and a corpus where sub-40-token
+            # chunks dominate query-vector neighbourhoods, a top_n=60 request
+            # was coming back with 0-17 rows. ef_search must therefore clear
+            # top_n by a wide margin, not merely equal it.
+            conn.execute(sa_text(f"SET LOCAL hnsw.ef_search = {int(HNSW_EF_SEARCH)}"))
             result = conn.execute(sa_text(sql), params)
             rows = result.mappings().all()
+        if len(rows) < top_n:
+            # Not fatal, but the caller asked for top_n and did not get it.
+            # Silence here is what let the vector branch die unnoticed.
+            logger.debug(
+                f"vector_search returned {len(rows)}/{top_n} rows "
+                f"(hnsw.ef_search={HNSW_EF_SEARCH}); raise LUMEN_HNSW_EF_SEARCH if this is common"
+            )
         return [dict(r) for r in rows]
     except Exception as e:
         logger.warning(f"Vector search failed (pgvector error): {e}")
@@ -385,15 +434,34 @@ def expand_context(
     for r in results:
         adjacent = fetch_adjacent_chunks(r.note_id, r.chunk_index, window=window)
 
-        context_parts = []
-        total_tokens = 0
-        for chunk in adjacent:
-            if total_tokens + chunk["token_count"] > max_context_tokens:
-                break
-            context_parts.append(chunk["chunk_text"])
-            total_tokens += chunk["token_count"]
+        # The matched chunk is included unconditionally. Walking `adjacent` in
+        # index order and breaking on budget meant a large preceding chunk could
+        # consume the whole allowance before the match was ever reached — the
+        # reranker then scored, and the caller received, a chunk that never
+        # matched the query.
+        matched = next((c for c in adjacent if c["chunk_id"] == r.chunk_id), None)
+        if matched is None:
+            # Shouldn't happen (the match came from note_chunks), but never
+            # silently substitute a neighbour for it.
+            r.context_text = r.chunk_text
+            continue
 
-        r.context_text = "\n".join(context_parts) if context_parts else r.chunk_text
+        kept = {matched["chunk_id"]: matched}
+        total_tokens = matched["token_count"] or 0
+
+        # `continue`, not `break`: a small neighbour on one side should still fit
+        # when a large one on the other side does not.
+        for chunk in adjacent:
+            if chunk["chunk_id"] in kept:
+                continue
+            tok = chunk["token_count"] or 0
+            if total_tokens + tok > max_context_tokens:
+                continue
+            kept[chunk["chunk_id"]] = chunk
+            total_tokens += tok
+
+        ordered = sorted(kept.values(), key=lambda c: c["chunk_index"])
+        r.context_text = "\n".join(c["chunk_text"] for c in ordered)
         r.token_count = total_tokens
 
     return results
@@ -561,6 +629,7 @@ def apply_temporal_filter(
     boost_weight: float = 0.20,
     halflife_days: float = 180.0,
     reference_times: Optional[dict[int, datetime]] = None,
+    score_attr: str = "rrf_score",
 ) -> list[RetrievalResult]:
     """
     Temporal reweighting/filtering that is correct for MIMIC's shifted dates.
@@ -617,14 +686,30 @@ def apply_temporal_filter(
             continue
 
         if boost_recent and mode in ("recent", "latest"):
-            r.rrf_score += boost_weight * (0.5 ** (days_ago / halflife_days))
+            setattr(r, score_attr,
+                    getattr(r, score_attr) + boost_weight * (0.5 ** (days_ago / halflife_days)))
 
         kept.append(r)
 
     if mode == "trend":
         kept.sort(key=lambda x: _parse_charttime(x.charttime) or datetime.max)
+    elif mode == "latest":
+        # "latest" is only reached for phrasings that explicitly ask for recency
+        # ("most recent", "latest", "current", "last recorded"), so recency is
+        # the ranking key and relevance breaks ties.
+        #
+        # The additive boost alone cannot do this: it is capped at boost_weight
+        # (0.20) while the newest record routinely sits a larger distance down
+        # the relevance ranking — measured gap 0.44 on subject 10882916 for
+        # "most recent creatinine value", so the newest record could never
+        # surface no matter how recent it was.
+        kept.sort(
+            key=lambda x: (_parse_charttime(x.charttime) or datetime.min,
+                           getattr(x, score_attr)),
+            reverse=True,
+        )
     else:
-        kept.sort(key=lambda x: x.rrf_score, reverse=True)
+        kept.sort(key=lambda x: getattr(x, score_attr), reverse=True)
 
     return kept
 
@@ -783,6 +868,14 @@ class HybridRetriever:
         """
         t0 = time.time()
 
+        # An empty query has no answer. This used to return nothing only because
+        # the vector branch was too starved to return anything; with ef_search
+        # raised it happily returns whatever sits nearest the empty embedding,
+        # so the emptiness has to be checked rather than relied upon.
+        if not query or not query.strip():
+            logger.info("Empty query — returning no results")
+            return []
+
         # Stage 1: Query expansion
         expansions = []
         if self.use_query_expansion:
@@ -841,9 +934,12 @@ class HybridRetriever:
                 max_context_tokens=600,
             )
 
-        # Stage 8: Reranking on assembled context
+        # Stage 8: Reranking on assembled context.
+        # Rerank the FULL candidate set rather than cutting to top_k here: stage 9
+        # reorders on temporal signal, and truncating first would throw away the
+        # very records that signal is meant to promote.
         if self.reranker and candidates:
-            reranked = self.reranker.rerank(query, candidates, top_k=top_k)
+            reranked = self.reranker.rerank(query, candidates, top_k=len(candidates))
             # Fall back to RRF order if reranker confidence is too low — this
             # happens when the query type (lab values, culture results) doesn't
             # match the cross-encoder's training distribution well
@@ -854,13 +950,23 @@ class HybridRetriever:
                 )
                 for r in candidates:
                     r.final_score = r.rrf_score
-                results = sorted(candidates, key=lambda r: r.rrf_score, reverse=True)[:top_k]
+                ordered = sorted(candidates, key=lambda r: r.rrf_score, reverse=True)
             else:
-                results = reranked
+                ordered = reranked
         else:
             for r in candidates:
                 r.final_score = r.rrf_score
-            results = candidates[:top_k]
+            ordered = candidates
+
+        # Stage 9: Temporal ordering, applied to the score the caller actually
+        # sees. Stage 6 shapes the candidate pool (and drops out-of-window
+        # records), but the reranker then overwrites final_score and re-sorts on
+        # it alone — so before this stage existed, "latest" and "trend" had no
+        # effect whatsoever on the returned order.
+        ordered = apply_temporal_filter(
+            ordered, mode=resolved_temporal, score_attr="final_score"
+        )
+        results = ordered[:top_k]
 
         elapsed = time.time() - t0
         exp_str = f", +{len(expansions)} expanded" if expansions else ""

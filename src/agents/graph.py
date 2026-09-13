@@ -30,6 +30,9 @@ from src.llm.local_client import chat
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
 from src.retrieval.guideline_retriever import GuidelineRetriever
 from langgraph.types import Command, interrupt
+from src.safety.egress_gate import EgressGate, call_external
+from src.safety import stub_tools
+from src.obs import tracing
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,10 @@ def _dsn() -> str:
 
 
 def _trail(state: AgentState, name: str) -> list[str]:
-    return list(state.get("node_trail", [])) + [name]
+    """Return ONLY this node's entry — AgentState.node_trail carries an
+    operator.add reducer, so LangGraph appends it to what is already there.
+    Returning the merged list here would duplicate the whole trail."""
+    return [name]
 
 
 def _to_evidence(results, prefix: str, source_type: str) -> list[dict]:
@@ -74,6 +80,33 @@ def _to_evidence(results, prefix: str, source_type: str) -> list[dict]:
             "note_type": r.note_type,
             "score": round(float(r.final_score), 4),
             "label": f"{prefix}{i}",
+        })
+    return out
+
+def _gate_for(state: AgentState) -> EgressGate:
+    """Build a gate loaded with everything the patient side has retrieved.
+
+    Rebuilt per call rather than held on the graph: LangGraph re-executes
+    nodes on resume, and a gate carrying stale corpus from a previous run
+    would protect the wrong text. Shingling a handful of chunks is cheap.
+    """
+    gate = EgressGate()
+    gate.load_evidence(state.get("patient_evidence", []) or [])
+    gate.load_evidence(state.get("guideline_evidence", []) or [])
+    return gate
+
+
+def _to_literature_evidence(results: list[dict]) -> list[dict]:
+    out = []
+    for i, r in enumerate(results, 1):
+        out.append({
+            "chunk_id": -1,
+            "source_type": "literature",
+            "text": f"{r.get('title', '')} ({r.get('pmid') or r.get('nct_id', '')})",
+            "charttime": None,
+            "note_type": "literature",
+            "score": 0.0,
+            "label": f"P{i}",
         })
     return out
 
@@ -114,34 +147,98 @@ def triage(state: AgentState) -> dict:
 
 def patient_retrieval(state: AgentState) -> dict:
     retriever, _ = get_retrievers()
-    results = retriever.search(
-        query=state["query"],
-        subject_id=state.get("subject_id"),
-        temporal_filter=state.get("temporal_mode") or "auto",
-        top_k=PATIENT_TOP_K,
-    )
-    ev = _to_evidence(results, "S", "note")
+    with tracing.span("patient_retrieval", subject_id=state.get("subject_id"),
+                      query=state["query"]) as s:
+        results = retriever.search(
+            query=state["query"],
+            subject_id=state.get("subject_id"),
+            temporal_filter=state.get("temporal_mode") or "auto",
+            top_k=PATIENT_TOP_K,
+        )
+        ev = _to_evidence(results, "S", "note")
+        if s is not None:
+            s.update(output={"n": len(ev), "chunk_ids": [e["chunk_id"] for e in ev],
+                             "top_score": ev[0]["score"] if ev else None})
     logger.info(f"[patient_retrieval] {len(ev)} chunks")
     return {"patient_evidence": ev, "node_trail": _trail(state, "patient_retrieval")}
 
 
 def guideline_retrieval(state: AgentState) -> dict:
     _, gr = get_retrievers()
-    results = gr.search(state["query"], top_k=GUIDELINE_TOP_K)
-    ev = _to_evidence(results, "G", "guideline")
+    with tracing.span("guideline_retrieval", query=state["query"]) as s:
+        results = gr.search(state["query"], top_k=GUIDELINE_TOP_K)
+        ev = _to_evidence(results, "G", "guideline")
+        if s is not None:
+            s.update(output={"n": len(ev), "chunk_ids": [e["chunk_id"] for e in ev],
+                             "top_score": ev[0]["score"] if ev else None})
     logger.info(f"[guideline_retrieval] {len(ev)} chunks")
     return {"guideline_evidence": ev, "node_trail": _trail(state, "guideline_retrieval")}
+
+def literature_retrieval(state: AgentState) -> dict:
+    """Query external evidence sources. Every outbound call passes the gate.
+
+    The query sent outward is NEVER the user's question verbatim — it is a
+    concept query generated from it, then gate-checked. If the gate blocks,
+    we retry once under a stricter instruction rather than failing the run.
+    """
+    gate = _gate_for(state)
+    query = state["query"]
+    egress = list(state.get("egress_log", []) or [])
+
+    def concept(strict: bool = False) -> str:
+        sys_prompt = prompts.CONCEPT_SYSTEM
+        if strict:
+            sys_prompt += ("\n\nYour previous attempt was rejected for containing patient data. "
+                           "Use ONLY the disease or drug name and one general qualifier.")
+        try:
+            raw = chat([{"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": query}],
+                       tier="fast", json_mode=True, max_tokens=80)
+            return (json.loads(raw).get("concept_query") or "").strip()
+        except Exception as e:
+            logger.warning(f"concept extraction failed: {e}")
+            return ""
+
+    results, attempts = [], []
+    for strict in (False, True):
+        cq = concept(strict)
+        if not cq:
+            continue
+        attempts.append(cq)
+        out = call_external(gate, "search_literature",
+                            {"query": cq}, stub_tools.search_literature)
+        egress.append(gate.log[-1])
+        rec = gate.log[-1]
+        # Hash and rule only. The gate's no-retention rule holds inside the
+        # observability layer too — a blocked payload must not reappear here.
+        with tracing.span("egress_check", tool=rec["tool"], rule=rec["rule"],
+                          allowed=rec["allowed"], sha256=rec["payload_sha256"][:16]) as s:
+            if s is not None:
+                s.update(output={"allowed": rec["allowed"], "rule": rec["rule"]})
+        if isinstance(out, dict) and out.get("blocked"):
+            logger.warning(f"[literature_retrieval] egress blocked ({out['rule']}); "
+                           f"{'giving up' if strict else 'retrying stricter'}")
+            continue
+        results = out.get("results", [])
+        break
+
+    ev = _to_literature_evidence(results)
+    logger.info(f"[literature_retrieval] {len(ev)} results; "
+                f"{sum(1 for r in egress if not r['allowed'])} blocked so far")
+    return {"literature_evidence": ev, "egress_log": egress,
+            "node_trail": _trail(state, "literature_retrieval")}
 
 
 def synthesis(state: AgentState) -> dict:
     pt = state.get("patient_evidence", []) or []
     gl = state.get("guideline_evidence", []) or []
+    lit = state.get("literature_evidence", []) or []
 
-    if not pt and not gl:
+    if not pt and not gl and not lit:
         return {"draft_answer": "The available records do not contain enough information to answer this.",
                 "citations": [], "node_trail": _trail(state, "synthesis")}
 
-    user = prompts.build_synthesis_prompt(state["query"], pt, gl)
+    user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit)
     try:
         answer = chat(
             [{"role": "system", "content": prompts.SYNTHESIS_SYSTEM},
@@ -151,18 +248,18 @@ def synthesis(state: AgentState) -> dict:
     except Exception as e:
         logger.error(f"synthesis failed: {e}")
         return {"draft_answer": "", "citations": [],
-                "errors": list(state.get("errors", [])) + [f"synthesis: {e}"],
+                "errors": [f"synthesis: {e}"],   # reducer appends; see AgentState
                 "node_trail": _trail(state, "synthesis")}
 
-    report = citations.validate(answer, pt + gl)
+    report = citations.validate(answer, pt + gl + lit)
     if report["bad_labels"]:
         logger.warning(f"[synthesis] hallucinated labels {report['bad_labels']} — stripped")
-        answer = citations.strip_bad_labels(answer, pt + gl)
+        answer = citations.strip_bad_labels(answer, pt + gl + lit)
 
     cites = [{
         "claim": c["claim"],
         "label": c["valid_labels"][0] if c["valid_labels"] else "",
-        "chunk_id": next((e["chunk_id"] for e in pt + gl if e["label"] == (c["valid_labels"] or [None])[0]), -1),
+        "chunk_id": next((e["chunk_id"] for e in pt + gl + lit if e["label"] == (c["valid_labels"] or [None])[0]), -1),
         "verified": False,
         "verification_note": "",
     } for c in report["claims"]]
@@ -176,7 +273,8 @@ def synthesis(state: AgentState) -> dict:
 
 def verification(state: AgentState) -> dict:
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
-                                  (state.get("guideline_evidence", []) or [])}
+                                  (state.get("guideline_evidence", []) or []) +
+                                  (state.get("literature_evidence", []) or [])}
     cites = state.get("citations", []) or []
     checked = unsupported = 0
     out = []
@@ -206,13 +304,29 @@ def verification(state: AgentState) -> dict:
             unsupported += 1
         out.append({**c, "verified": ok, "verification_note": f"{verdict}: {note}"})
 
-        prior = state.get("verification", {}) or {}
+    prior = state.get("verification", {}) or {}
+
+    # An empty draft is a FAILURE, not a clean bill of health. Without this, a
+    # synthesis outage produced zero citations, `unsupported > 0` was False, and
+    # the run reported "auto_approved, 0/0 verified" with an empty answer —
+    # indistinguishable from success to every caller.
+    draft = (state.get("draft_answer") or "").strip()
+    synthesis_failed = not draft and not state.get("final_answer")
+    errors: list[str] = []          # reducer appends; see AgentState
+    if synthesis_failed:
+        logger.error("[verification] no draft answer to verify — failing the run")
+        errors.append("verification: no draft answer produced (synthesis failed)")
+
     logger.info(f"[verification] {checked} checked, {unsupported} unsupported")
     return {
         "citations": out,
-        "verification": {**prior, "checked": checked, "unsupported": unsupported},
-        "needs_human_review": unsupported > 0,
-        "review_status": "pending" if unsupported > 0 else "auto_approved",
+        "verification": {**prior, "checked": checked, "unsupported": unsupported,
+                         "synthesis_failed": synthesis_failed},
+        "errors": errors,
+        "needs_human_review": unsupported > 0 or synthesis_failed,
+        "review_status": ("failed" if synthesis_failed
+                          else "pending" if unsupported > 0
+                          else "auto_approved"),
         "node_trail": _trail(state, "verification"),
     }
 
@@ -228,11 +342,18 @@ def human_review(state: AgentState) -> dict:
     cites = state.get("citations", []) or []
     flagged = [(i, c) for i, c in enumerate(cites) if not c.get("verified")]
 
+    # A failed synthesis reaches here with nothing to adjudicate. Returning
+    # "auto_approved" would launder the failure back into a success.
+    if (state.get("verification", {}) or {}).get("synthesis_failed"):
+        logger.error("[human_review] synthesis failed upstream — nothing to review")
+        return {"review_status": "failed", "node_trail": _trail(state, "human_review")}
+
     if not flagged:
         return {"review_status": "auto_approved", "node_trail": _trail(state, "human_review")}
 
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
-                                  (state.get("guideline_evidence", []) or [])}
+                                  (state.get("guideline_evidence", []) or []) +
+                                  (state.get("literature_evidence", []) or [])}
 
     payload = {
         "query": state.get("query", ""),
@@ -323,6 +444,13 @@ def route_after_patient(state: AgentState) -> str:
 def route_after_verification(state: AgentState) -> str:
     return "human_review" if state.get("needs_human_review") else "finalize"
 
+def route_after_guidelines(state: AgentState) -> str:
+    # Literature is consulted when explicitly asked for, or as a fallback
+    # when the local guideline corpus came back empty.
+    if state.get("query_type") == "literature" or not state.get("guideline_evidence"):
+        return "literature_retrieval"
+    return "synthesis"
+
 def build_graph(setup: bool = True):
     pool = ConnectionPool(
         conninfo=_dsn(), max_size=5,
@@ -340,20 +468,30 @@ def build_graph(setup: bool = True):
     b.add_node("synthesis", synthesis)
     b.add_node("verification", verification)
     b.add_node("refuse", refuse)
+    b.add_node("literature_retrieval", literature_retrieval)
 
     b.add_edge(START, "triage")
     b.add_conditional_edges("triage", route_from_triage,
                             ["patient_retrieval", "guideline_retrieval", "refuse"])
     b.add_conditional_edges("patient_retrieval", route_after_patient,
                             ["guideline_retrieval", "synthesis"])
-    b.add_edge("guideline_retrieval", "synthesis")
+    b.add_conditional_edges("guideline_retrieval", route_after_guidelines,
+                            ["literature_retrieval", "synthesis"])
+    b.add_edge("literature_retrieval", "synthesis")
     b.add_edge("synthesis", "verification")
-    b.add_edge("verification", END)
     b.add_node("human_review", human_review)
     b.add_node("finalize", finalize)
+    # verification routes ONLY through the conditional edge. A static
+    # `add_edge("verification", END)` used to sit alongside this, left over from
+    # the pre-human-review topology, which made verification fan out to END and
+    # to the branch at the same time — parallelism this state schema has no
+    # reducers to survive.
     b.add_conditional_edges("verification", route_after_verification,
                             ["human_review", "finalize"])
     b.add_edge("human_review", "finalize")
+    # refuse had no outgoing edge at all: it terminated implicitly and never set
+    # final_answer, so callers reading state["final_answer"] got "" on refusal.
+    b.add_edge("refuse", "finalize")
     b.add_edge("finalize", END)
 
     return b.compile(checkpointer=checkpointer), checkpointer

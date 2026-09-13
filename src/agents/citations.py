@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-CITE_RE = re.compile(r"\[([SLG]\d+)\]")
+CITE_RE = re.compile(r"\[([SLGP]\d+)\]")   # P = published literature
 # Sentence split that tolerates clinical abbreviations (mg., q.d., Dr.)
 _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[])")
 

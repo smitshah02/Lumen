@@ -19,6 +19,7 @@ import argparse
 from langgraph.types import Command
 
 from src.agents.graph import build_graph
+from src.obs import tracing
 
 BAR = "=" * 72
 
@@ -65,22 +66,30 @@ def main() -> int:
             st = graph.get_state({"configurable": {"thread_id": r[0]}})
             status = "AWAITING REVIEW" if st.next else "complete"
             print(f"    {r[0]:<24} {status}")
+        tracing.flush()
         return 0
 
     if not args.thread:
         ap.error("--thread is required (or use --list)")
 
+    cb = tracing.handler()
     config = {"configurable": {"thread_id": args.thread}}
+    if cb:
+        config["callbacks"] = [cb]
+        config["metadata"] = {"langfuse_session_id": args.thread,
+                              "langfuse_tags": ["lumen", "human-review"]}
     snap = graph.get_state(config)
 
     if not snap.next:
         print(f"\n  thread {args.thread} is not paused — nothing to review.")
         print(f"  status: {snap.values.get('review_status')}")
+        tracing.flush()
         return 0
 
     interrupts = [i for t in snap.tasks for i in (t.interrupts or [])]
     if not interrupts:
         print(f"\n  thread {args.thread} is at {snap.next} but has no pending interrupt.")
+        tracing.flush()
         return 1
 
     payload = interrupts[0].value
@@ -104,6 +113,8 @@ def main() -> int:
     for d in out.get("human_decisions", []):
         print(f"    #{d['index']}  {d['action']}  {d['note']}")
     print(f"\n  trail: {' -> '.join(out.get('node_trail', []))}\n")
+    # The SDK batches; a short-lived CLI would exit before the background send.
+    tracing.flush()
     return 0
 
 

@@ -1,0 +1,3225 @@
+{
+  "_meta": {
+    "model": "qwen2.5:14b",
+    "threshold": 2,
+    "top_k": 5
+  },
+  "configs": {
+    "BM25 Only": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 12,
+        "precision": 1.0,
+        "recall": 0.4166666666666667,
+        "mrr": 1.0,
+        "ndcg": 0.6089419728454368,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 1.0,
+        "recall": 0.21739130434782608,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.9250256699929476,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_004",
+        "category": "medications",
+        "n_relevant_pool": 22,
+        "precision": 0.2,
+        "recall": 0.045454545454545456,
+        "mrr": 0.5,
+        "ndcg": 0.28330462975114507,
+        "binary": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          3,
+          0,
+          1,
+          0
+        ]
+      },
+      {
+        "query_id": "med_005",
+        "category": "medications",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.7630543794998468,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "lab_001",
+        "category": "labs",
+        "n_relevant_pool": 17,
+        "precision": 0.6,
+        "recall": 0.17647058823529413,
+        "mrr": 1.0,
+        "ndcg": 0.39203213095117667,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          0,
+          3,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "lab_002",
+        "category": "labs",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.72272653993353,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          3,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_003",
+        "category": "labs",
+        "n_relevant_pool": 11,
+        "precision": 0.4,
+        "recall": 0.18181818181818182,
+        "mrr": 0.25,
+        "ndcg": 0.3589831433503269,
+        "binary": [
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          0,
+          1,
+          1,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_004",
+        "category": "labs",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.5035457585784809,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_005",
+        "category": "labs",
+        "n_relevant_pool": 18,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.0,
+        "binary": [],
+        "graded": []
+      },
+      {
+        "query_id": "dx_001",
+        "category": "diagnosis",
+        "n_relevant_pool": 13,
+        "precision": 0.8,
+        "recall": 0.3076923076923077,
+        "mrr": 1.0,
+        "ndcg": 0.5773721662448373,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_002",
+        "category": "diagnosis",
+        "n_relevant_pool": 6,
+        "precision": 0.8,
+        "recall": 0.6666666666666666,
+        "mrr": 1.0,
+        "ndcg": 0.8832264745243287,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          0,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "dx_003",
+        "category": "diagnosis",
+        "n_relevant_pool": 33,
+        "precision": 1.0,
+        "recall": 0.15151515151515152,
+        "mrr": 1.0,
+        "ndcg": 0.9165323715184533,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_004",
+        "category": "diagnosis",
+        "n_relevant_pool": 9,
+        "precision": 0.2,
+        "recall": 0.1111111111111111,
+        "mrr": 0.25,
+        "ndcg": 0.08406672995196406,
+        "binary": [
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          0,
+          2,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_005",
+        "category": "diagnosis",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 0.8281227542004858,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_001",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 1.0,
+        "recall": 0.38461538461538464,
+        "mrr": 1.0,
+        "ndcg": 0.575530086035005,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_002",
+        "category": "plain_language",
+        "n_relevant_pool": 24,
+        "precision": 0.8,
+        "recall": 0.16666666666666666,
+        "mrr": 1.0,
+        "ndcg": 0.7331155731745727,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          1,
+          3,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "plain_003",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.6,
+        "recall": 0.23076923076923078,
+        "mrr": 1.0,
+        "ndcg": 0.507916919341922,
+        "binary": [
+          1,
+          0,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          0,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_004",
+        "category": "plain_language",
+        "n_relevant_pool": 17,
+        "precision": 0.8,
+        "recall": 0.23529411764705882,
+        "mrr": 1.0,
+        "ndcg": 0.5385619291637966,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          1,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "plain_005",
+        "category": "plain_language",
+        "n_relevant_pool": 9,
+        "precision": 0.75,
+        "recall": 0.3333333333333333,
+        "mrr": 0.5,
+        "ndcg": 0.6426881189719142,
+        "binary": [
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          1,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_001",
+        "category": "sections",
+        "n_relevant_pool": 9,
+        "precision": 0.8,
+        "recall": 0.4444444444444444,
+        "mrr": 1.0,
+        "ndcg": 0.5903694098621622,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_002",
+        "category": "sections",
+        "n_relevant_pool": 13,
+        "precision": 0.6,
+        "recall": 0.23076923076923078,
+        "mrr": 1.0,
+        "ndcg": 0.43738191049838093,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_003",
+        "category": "sections",
+        "n_relevant_pool": 20,
+        "precision": 0.4,
+        "recall": 0.1,
+        "mrr": 1.0,
+        "ndcg": 0.47105305523805424,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          1,
+          1,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_004",
+        "category": "sections",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "sec_005",
+        "category": "sections",
+        "n_relevant_pool": 19,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.0,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "query_id": "img_001",
+        "category": "imaging",
+        "n_relevant_pool": 18,
+        "precision": 1.0,
+        "recall": 0.2777777777777778,
+        "mrr": 1.0,
+        "ndcg": 0.622377260156352,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "img_002",
+        "category": "imaging",
+        "n_relevant_pool": 6,
+        "precision": 0.6,
+        "recall": 0.5,
+        "mrr": 0.5,
+        "ndcg": 0.45173722486469103,
+        "binary": [
+          0,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          0,
+          3,
+          2,
+          0,
+          3
+        ]
+      },
+      {
+        "query_id": "img_003",
+        "category": "imaging",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.8777221344374128,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          3,
+          3
+        ]
+      }
+    ],
+    "Vector Only (MedCPT)": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 12,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.14285714285714285,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 0.6,
+        "recall": 0.13043478260869565,
+        "mrr": 1.0,
+        "ndcg": 0.4649106712342586,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.7446551257189392,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "med_004",
+        "category": "medications",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.8196294557259916,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "med_005",
+        "category": "medications",
+        "n_relevant_pool": 19,
+        "precision": 0.6,
+        "recall": 0.15789473684210525,
+        "mrr": 1.0,
+        "ndcg": 0.3776656807046149,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_001",
+        "category": "labs",
+        "n_relevant_pool": 17,
+        "precision": 0.8,
+        "recall": 0.23529411764705882,
+        "mrr": 1.0,
+        "ndcg": 0.6891108194730107,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          0,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_002",
+        "category": "labs",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.9030970842075382,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_003",
+        "category": "labs",
+        "n_relevant_pool": 11,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.1544358686372801,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_004",
+        "category": "labs",
+        "n_relevant_pool": 22,
+        "precision": 0.8,
+        "recall": 0.18181818181818182,
+        "mrr": 1.0,
+        "ndcg": 0.5133621291304895,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_005",
+        "category": "labs",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.596829757612036,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          3,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_001",
+        "category": "diagnosis",
+        "n_relevant_pool": 13,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.12411356035537974,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_002",
+        "category": "diagnosis",
+        "n_relevant_pool": 6,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.0,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_003",
+        "category": "diagnosis",
+        "n_relevant_pool": 33,
+        "precision": 1.0,
+        "recall": 0.15151515151515152,
+        "mrr": 1.0,
+        "ndcg": 0.4285714285714285,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "dx_004",
+        "category": "diagnosis",
+        "n_relevant_pool": 9,
+        "precision": 0.2,
+        "recall": 0.1111111111111111,
+        "mrr": 0.3333333333333333,
+        "ndcg": 0.3870402641324426,
+        "binary": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          3,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_005",
+        "category": "diagnosis",
+        "n_relevant_pool": 21,
+        "precision": 0.6,
+        "recall": 0.14285714285714285,
+        "mrr": 1.0,
+        "ndcg": 0.5050075798697692,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          2,
+          2,
+          0
+        ]
+      },
+      {
+        "query_id": "plain_001",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.2,
+        "recall": 0.07692307692307693,
+        "mrr": 0.5,
+        "ndcg": 0.2739470509136496,
+        "binary": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_002",
+        "category": "plain_language",
+        "n_relevant_pool": 24,
+        "precision": 0.6,
+        "recall": 0.125,
+        "mrr": 1.0,
+        "ndcg": 0.34935044932712905,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_003",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.8,
+        "recall": 0.3076923076923077,
+        "mrr": 1.0,
+        "ndcg": 0.5251884396690666,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_004",
+        "category": "plain_language",
+        "n_relevant_pool": 17,
+        "precision": 0.6,
+        "recall": 0.17647058823529413,
+        "mrr": 1.0,
+        "ndcg": 0.6072187908530787,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          2,
+          3,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_005",
+        "category": "plain_language",
+        "n_relevant_pool": 9,
+        "precision": 0.6,
+        "recall": 0.3333333333333333,
+        "mrr": 0.5,
+        "ndcg": 0.5733697430514895,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          0,
+          2,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_001",
+        "category": "sections",
+        "n_relevant_pool": 9,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.03892450849189045,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "query_id": "sec_002",
+        "category": "sections",
+        "n_relevant_pool": 13,
+        "precision": 0.6,
+        "recall": 0.23076923076923078,
+        "mrr": 1.0,
+        "ndcg": 0.43738191049838093,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_003",
+        "category": "sections",
+        "n_relevant_pool": 20,
+        "precision": 0.8,
+        "recall": 0.2,
+        "mrr": 1.0,
+        "ndcg": 0.3868376143306553,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_004",
+        "category": "sections",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "sec_005",
+        "category": "sections",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.8050102282292517,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "img_001",
+        "category": "imaging",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.487987179360364,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "img_002",
+        "category": "imaging",
+        "n_relevant_pool": 6,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.12824661818296554,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "img_003",
+        "category": "imaging",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.6839163028524893,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          3,
+          3
+        ]
+      }
+    ],
+    "Hybrid RRF": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 12,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.14285714285714285,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 0.8,
+        "recall": 0.17391304347826086,
+        "mrr": 1.0,
+        "ndcg": 0.6775463617080405,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.731219838408024,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_004",
+        "category": "medications",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.8196294557259916,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "med_005",
+        "category": "medications",
+        "n_relevant_pool": 19,
+        "precision": 0.6,
+        "recall": 0.15789473684210525,
+        "mrr": 1.0,
+        "ndcg": 0.3776656807046149,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_001",
+        "category": "labs",
+        "n_relevant_pool": 17,
+        "precision": 0.8,
+        "recall": 0.23529411764705882,
+        "mrr": 1.0,
+        "ndcg": 0.6891108194730107,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          0,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_002",
+        "category": "labs",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.9030970842075382,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_003",
+        "category": "labs",
+        "n_relevant_pool": 11,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.1544358686372801,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_004",
+        "category": "labs",
+        "n_relevant_pool": 22,
+        "precision": 0.8,
+        "recall": 0.18181818181818182,
+        "mrr": 1.0,
+        "ndcg": 0.6809927256927567,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          3,
+          1,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_005",
+        "category": "labs",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.596829757612036,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          3,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_001",
+        "category": "diagnosis",
+        "n_relevant_pool": 13,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.12411356035537974,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_002",
+        "category": "diagnosis",
+        "n_relevant_pool": 6,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.0,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_003",
+        "category": "diagnosis",
+        "n_relevant_pool": 33,
+        "precision": 1.0,
+        "recall": 0.15151515151515152,
+        "mrr": 1.0,
+        "ndcg": 0.5035457585784809,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_004",
+        "category": "diagnosis",
+        "n_relevant_pool": 9,
+        "precision": 0.2,
+        "recall": 0.1111111111111111,
+        "mrr": 0.3333333333333333,
+        "ndcg": 0.3870402641324426,
+        "binary": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          3,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_005",
+        "category": "diagnosis",
+        "n_relevant_pool": 21,
+        "precision": 0.6,
+        "recall": 0.14285714285714285,
+        "mrr": 1.0,
+        "ndcg": 0.5050075798697692,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          2,
+          2,
+          0
+        ]
+      },
+      {
+        "query_id": "plain_001",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.2,
+        "recall": 0.07692307692307693,
+        "mrr": 0.5,
+        "ndcg": 0.2739470509136496,
+        "binary": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_002",
+        "category": "plain_language",
+        "n_relevant_pool": 24,
+        "precision": 0.6,
+        "recall": 0.125,
+        "mrr": 1.0,
+        "ndcg": 0.34935044932712905,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_003",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.8,
+        "recall": 0.3076923076923077,
+        "mrr": 0.5,
+        "ndcg": 0.38033318391423077,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          0,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_004",
+        "category": "plain_language",
+        "n_relevant_pool": 17,
+        "precision": 0.6,
+        "recall": 0.17647058823529413,
+        "mrr": 1.0,
+        "ndcg": 0.6072187908530787,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          2,
+          3,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_005",
+        "category": "plain_language",
+        "n_relevant_pool": 9,
+        "precision": 0.6,
+        "recall": 0.3333333333333333,
+        "mrr": 0.5,
+        "ndcg": 0.5733697430514895,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          0,
+          2,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_001",
+        "category": "sections",
+        "n_relevant_pool": 9,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.03892450849189045,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      {
+        "query_id": "sec_002",
+        "category": "sections",
+        "n_relevant_pool": 13,
+        "precision": 0.6,
+        "recall": 0.23076923076923078,
+        "mrr": 1.0,
+        "ndcg": 0.43738191049838093,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_003",
+        "category": "sections",
+        "n_relevant_pool": 20,
+        "precision": 1.0,
+        "recall": 0.25,
+        "mrr": 1.0,
+        "ndcg": 0.622377260156352,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_004",
+        "category": "sections",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "sec_005",
+        "category": "sections",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.8050102282292517,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "img_001",
+        "category": "imaging",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.487987179360364,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "img_002",
+        "category": "imaging",
+        "n_relevant_pool": 6,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.12824661818296554,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "img_003",
+        "category": "imaging",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.6839163028524893,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          3,
+          3,
+          3
+        ]
+      }
+    ],
+    "Hybrid + BGE Reranker": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 12,
+        "precision": 0.0,
+        "recall": 0.0,
+        "mrr": 0.0,
+        "ndcg": 0.12199023573675623,
+        "binary": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 1.0,
+        "recall": 0.21739130434782608,
+        "mrr": 1.0,
+        "ndcg": 0.6258236241410682,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.9250256699929476,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "med_004",
+        "category": "medications",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "med_005",
+        "category": "medications",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.90976723004651,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "lab_001",
+        "category": "labs",
+        "n_relevant_pool": 17,
+        "precision": 0.8,
+        "recall": 0.23529411764705882,
+        "mrr": 1.0,
+        "ndcg": 0.8546456263113074,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          1,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_002",
+        "category": "labs",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.8281227542004858,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "lab_003",
+        "category": "labs",
+        "n_relevant_pool": 11,
+        "precision": 0.6,
+        "recall": 0.2727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.46144475815717073,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          1,
+          3,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_004",
+        "category": "labs",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.6258236241410682,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_005",
+        "category": "labs",
+        "n_relevant_pool": 18,
+        "precision": 1.0,
+        "recall": 0.2777777777777778,
+        "mrr": 1.0,
+        "ndcg": 0.8777221344374128,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_001",
+        "category": "diagnosis",
+        "n_relevant_pool": 13,
+        "precision": 1.0,
+        "recall": 0.38461538461538464,
+        "mrr": 1.0,
+        "ndcg": 0.9165323715184533,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_002",
+        "category": "diagnosis",
+        "n_relevant_pool": 6,
+        "precision": 0.2,
+        "recall": 0.16666666666666666,
+        "mrr": 1.0,
+        "ndcg": 0.3463081694972968,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_003",
+        "category": "diagnosis",
+        "n_relevant_pool": 33,
+        "precision": 1.0,
+        "recall": 0.15151515151515152,
+        "mrr": 1.0,
+        "ndcg": 0.9165323715184533,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_004",
+        "category": "diagnosis",
+        "n_relevant_pool": 9,
+        "precision": 0.4,
+        "recall": 0.2222222222222222,
+        "mrr": 0.5,
+        "ndcg": 0.4941989153522551,
+        "binary": [
+          0,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          1,
+          3,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_005",
+        "category": "diagnosis",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 0.8281227542004858,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_001",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.2,
+        "recall": 0.07692307692307693,
+        "mrr": 1.0,
+        "ndcg": 0.3219746300921845,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_002",
+        "category": "plain_language",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.9250256699929476,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_003",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.4,
+        "recall": 0.15384615384615385,
+        "mrr": 1.0,
+        "ndcg": 0.3870402641324426,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_004",
+        "category": "plain_language",
+        "n_relevant_pool": 17,
+        "precision": 0.6,
+        "recall": 0.17647058823529413,
+        "mrr": 0.3333333333333333,
+        "ndcg": 0.3455039100047257,
+        "binary": [
+          0,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          1,
+          1,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "plain_005",
+        "category": "plain_language",
+        "n_relevant_pool": 9,
+        "precision": 0.6,
+        "recall": 0.3333333333333333,
+        "mrr": 0.5,
+        "ndcg": 0.5733697430514895,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          0,
+          2,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_001",
+        "category": "sections",
+        "n_relevant_pool": 9,
+        "precision": 0.8,
+        "recall": 0.4444444444444444,
+        "mrr": 1.0,
+        "ndcg": 0.5903694098621622,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_002",
+        "category": "sections",
+        "n_relevant_pool": 13,
+        "precision": 0.8,
+        "recall": 0.3076923076923077,
+        "mrr": 1.0,
+        "ndcg": 0.7707269881557792,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          1,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_003",
+        "category": "sections",
+        "n_relevant_pool": 20,
+        "precision": 0.6,
+        "recall": 0.15,
+        "mrr": 1.0,
+        "ndcg": 0.4649106712342586,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          3,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_004",
+        "category": "sections",
+        "n_relevant_pool": 21,
+        "precision": 0.8,
+        "recall": 0.19047619047619047,
+        "mrr": 1.0,
+        "ndcg": 0.8875385049894213,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_005",
+        "category": "sections",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.8860613086902124,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "img_001",
+        "category": "imaging",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.367432495790135,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "img_002",
+        "category": "imaging",
+        "n_relevant_pool": 6,
+        "precision": 0.6,
+        "recall": 0.5,
+        "mrr": 1.0,
+        "ndcg": 0.6859169366358278,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          3,
+          0,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "img_003",
+        "category": "imaging",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      }
+    ],
+    "Hybrid + MedCPT Cross-Enc": [
+      {
+        "query_id": "med_001",
+        "category": "medications",
+        "n_relevant_pool": 12,
+        "precision": 0.4,
+        "recall": 0.16666666666666666,
+        "mrr": 1.0,
+        "ndcg": 0.47105305523805424,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          1,
+          1,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "med_002",
+        "category": "medications",
+        "n_relevant_pool": 23,
+        "precision": 0.8,
+        "recall": 0.17391304347826086,
+        "mrr": 1.0,
+        "ndcg": 0.6775463617080405,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          2,
+          3,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "med_003",
+        "category": "medications",
+        "n_relevant_pool": 24,
+        "precision": 1.0,
+        "recall": 0.20833333333333334,
+        "mrr": 1.0,
+        "ndcg": 0.7446551257189392,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "med_004",
+        "category": "medications",
+        "n_relevant_pool": 22,
+        "precision": 1.0,
+        "recall": 0.22727272727272727,
+        "mrr": 1.0,
+        "ndcg": 0.8061941684150765,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "med_005",
+        "category": "medications",
+        "n_relevant_pool": 19,
+        "precision": 0.6,
+        "recall": 0.15789473684210525,
+        "mrr": 1.0,
+        "ndcg": 0.3776656807046149,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "lab_001",
+        "category": "labs",
+        "n_relevant_pool": 17,
+        "precision": 0.8,
+        "recall": 0.23529411764705882,
+        "mrr": 1.0,
+        "ndcg": 0.7860137352654724,
+        "binary": [
+          1,
+          0,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          0,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_002",
+        "category": "labs",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.8196294557259916,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          2,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_003",
+        "category": "labs",
+        "n_relevant_pool": 11,
+        "precision": 0.4,
+        "recall": 0.18181818181818182,
+        "mrr": 0.5,
+        "ndcg": 0.39324433689210286,
+        "binary": [
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "graded": [
+          1,
+          3,
+          1,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "lab_004",
+        "category": "labs",
+        "n_relevant_pool": 22,
+        "precision": 0.8,
+        "recall": 0.18181818181818182,
+        "mrr": 1.0,
+        "ndcg": 0.8747985572776802,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          1,
+          3
+        ]
+      },
+      {
+        "query_id": "lab_005",
+        "category": "labs",
+        "n_relevant_pool": 18,
+        "precision": 1.0,
+        "recall": 0.2777777777777778,
+        "mrr": 1.0,
+        "ndcg": 0.9030970842075382,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_001",
+        "category": "diagnosis",
+        "n_relevant_pool": 13,
+        "precision": 0.6,
+        "recall": 0.23076923076923078,
+        "mrr": 1.0,
+        "ndcg": 0.7234405487989655,
+        "binary": [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          3,
+          1,
+          3,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_002",
+        "category": "diagnosis",
+        "n_relevant_pool": 6,
+        "precision": 0.4,
+        "recall": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg": 0.4522881713571311,
+        "binary": [
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          2,
+          1,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "dx_003",
+        "category": "diagnosis",
+        "n_relevant_pool": 33,
+        "precision": 1.0,
+        "recall": 0.15151515151515152,
+        "mrr": 1.0,
+        "ndcg": 0.7092912526226147,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          3,
+          2,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "dx_004",
+        "category": "diagnosis",
+        "n_relevant_pool": 9,
+        "precision": 0.4,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.6131108297048904,
+        "binary": [
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          1,
+          2,
+          0
+        ]
+      },
+      {
+        "query_id": "dx_005",
+        "category": "diagnosis",
+        "n_relevant_pool": 21,
+        "precision": 0.4,
+        "recall": 0.09523809523809523,
+        "mrr": 0.5,
+        "ndcg": 0.3842803435253494,
+        "binary": [
+          0,
+          1,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          0,
+          3,
+          1,
+          3,
+          0
+        ]
+      },
+      {
+        "query_id": "plain_001",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.2,
+        "recall": 0.07692307692307693,
+        "mrr": 0.5,
+        "ndcg": 0.2739470509136496,
+        "binary": [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_002",
+        "category": "plain_language",
+        "n_relevant_pool": 24,
+        "precision": 0.8,
+        "recall": 0.16666666666666666,
+        "mrr": 0.5,
+        "ndcg": 0.41513614126051335,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          1,
+          2,
+          2,
+          3,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_003",
+        "category": "plain_language",
+        "n_relevant_pool": 13,
+        "precision": 0.2,
+        "recall": 0.07692307692307693,
+        "mrr": 0.25,
+        "ndcg": 0.24788784864631103,
+        "binary": [
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "graded": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "plain_004",
+        "category": "plain_language",
+        "n_relevant_pool": 17,
+        "precision": 0.4,
+        "recall": 0.11764705882352941,
+        "mrr": 1.0,
+        "ndcg": 0.2772472236531308,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          1,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "plain_005",
+        "category": "plain_language",
+        "n_relevant_pool": 9,
+        "precision": 0.4,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.7020976466720958,
+        "binary": [
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          2,
+          2,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_001",
+        "category": "sections",
+        "n_relevant_pool": 9,
+        "precision": 0.6,
+        "recall": 0.3333333333333333,
+        "mrr": 1.0,
+        "ndcg": 0.5233139164942185,
+        "binary": [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          1,
+          2,
+          1,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_002",
+        "category": "sections",
+        "n_relevant_pool": 13,
+        "precision": 0.8,
+        "recall": 0.3076923076923077,
+        "mrr": 0.5,
+        "ndcg": 0.7397374638389677,
+        "binary": [
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          1,
+          3,
+          3,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "sec_003",
+        "category": "sections",
+        "n_relevant_pool": 20,
+        "precision": 0.8,
+        "recall": 0.2,
+        "mrr": 1.0,
+        "ndcg": 0.5848900951528258,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          0
+        ],
+        "graded": [
+          3,
+          2,
+          2,
+          2,
+          1
+        ]
+      },
+      {
+        "query_id": "sec_004",
+        "category": "sections",
+        "n_relevant_pool": 21,
+        "precision": 1.0,
+        "recall": 0.23809523809523808,
+        "mrr": 1.0,
+        "ndcg": 1.0,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          3,
+          3
+        ]
+      },
+      {
+        "query_id": "sec_005",
+        "category": "sections",
+        "n_relevant_pool": 19,
+        "precision": 1.0,
+        "recall": 0.2631578947368421,
+        "mrr": 1.0,
+        "ndcg": 0.4633076059118402,
+        "binary": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      {
+        "query_id": "img_001",
+        "category": "imaging",
+        "n_relevant_pool": 18,
+        "precision": 0.8,
+        "recall": 0.2222222222222222,
+        "mrr": 1.0,
+        "ndcg": 0.4618119443377077,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          2,
+          2,
+          2,
+          1,
+          3
+        ]
+      },
+      {
+        "query_id": "img_002",
+        "category": "imaging",
+        "n_relevant_pool": 6,
+        "precision": 0.2,
+        "recall": 0.16666666666666666,
+        "mrr": 1.0,
+        "ndcg": 0.44251762363474023,
+        "binary": [
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graded": [
+          3,
+          1,
+          0,
+          1,
+          1
+        ]
+      },
+      {
+        "query_id": "img_003",
+        "category": "imaging",
+        "n_relevant_pool": 22,
+        "precision": 0.8,
+        "recall": 0.18181818181818182,
+        "mrr": 1.0,
+        "ndcg": 0.8747985572776802,
+        "binary": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "graded": [
+          3,
+          3,
+          3,
+          1,
+          3
+        ]
+      }
+    ]
+  }
+}

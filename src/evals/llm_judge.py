@@ -384,8 +384,19 @@ class LLMJudge:
                     key = futs[fut]
                     res = fut.result()  # _judge_uncached never raises
                     key_results[key] = res
-                    with self._lock:
-                        self._cache[key] = {"score": res.score, "reason": res.reason, "error": res.error}
+                    # Only cache real judgements. A failure cached as score 0 is
+                    # indistinguishable from a genuine "irrelevant" on every
+                    # later run and is never retried, so a transient outage or
+                    # rate-limit permanently biases the metric toward 0.
+                    # (.cache/llm_judge_ollama.json still holds 30 such entries
+                    # from before this guard existed.)
+                    if res.error is None:
+                        with self._lock:
+                            self._cache[key] = {"score": res.score, "reason": res.reason}
+                    else:
+                        logger.warning(
+                            f"judge failed, NOT caching (will retry next run): {res.error}"
+                        )
                     done += 1
                     if done % 25 == 0:
                         logger.info(f"judged {done}/{len(to_compute)} new pairs")
@@ -395,6 +406,17 @@ class LLMJudge:
         for query, text, cid in items:
             base = key_results[self._cache_key(query, text)]
             out.append(replace(base, chunk_id=cid, query=query))
+
+        # An unjudgeable pair still scores 0 and still counts as "irrelevant" in
+        # every downstream metric. That is the conservative choice, but it must
+        # not be an invisible one — a run with failures is a degraded run.
+        n_failed = sum(1 for r in out if r.error)
+        if n_failed:
+            logger.warning(
+                f"JUDGE DEGRADED: {n_failed}/{len(out)} judgements failed and are "
+                f"counted as score 0 (irrelevant). Metrics from this run are biased "
+                f"low; re-run to retry them."
+            )
         return out
 
     def judge_pool(self, query: str, chunks: list[tuple]) -> dict:

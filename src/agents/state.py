@@ -12,7 +12,8 @@ the grounding chain.
 
 from __future__ import annotations
 
-from typing import Optional, Literal
+import operator
+from typing import Optional, Literal, Annotated
 from typing_extensions import TypedDict
 
 
@@ -80,6 +81,15 @@ class AgentState(TypedDict, total=False):
     final_answer: str
 
     # --- observability / safety ---
+    # egress_log, patient_evidence, citations et al. keep REPLACE semantics on
+    # purpose: each is produced whole by exactly one node, and _gate_for()
+    # deliberately rebuilds the gate per call rather than accumulating.
     egress_log: list[EgressRecord]
-    node_trail: list[str]     # which nodes ran, in order
-    errors: list[str]
+
+    # Append-only, so they carry reducers: a node returns only what IT adds and
+    # LangGraph merges. Without these, every node did a read-modify-write of the
+    # whole list and the last writer would win if two ever ran in one superstep.
+    # Producers must return ONLY their new entries — returning the merged list
+    # would double it.
+    node_trail: Annotated[list[str], operator.add]   # which nodes ran, in order
+    errors: Annotated[list[str], operator.add]

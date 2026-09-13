@@ -24,7 +24,7 @@ from pathlib import Path
 
 from src.retrieval.embeddings import MedCPTEmbedder
 from src.retrieval.hybrid_retriever_v2 import BGEReranker
-from src.evals.eval_retrieval import (
+from src.evals.retrieval_configs import (
     run_bm25_only,
     run_vector_only,
     run_rrf_only,
