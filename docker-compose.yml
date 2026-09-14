@@ -3,13 +3,13 @@
 #   docker compose up -d
 #   python -m src.storage.schema     # creates extensions, tables, HNSW + GIN indexes
 #
-# Host port is 5433, matching DATABASE_URL in .env and the fallback in
+# Host port is 5434, matching DATABASE_URL in .env and the fallback in
 # src/storage/__init__.py:21. Change both together if you move it.
 
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: lumen-postgres
+    container_name: lumen-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -19,7 +19,7 @@ services:
       # in a GENERATED column, so the server's collation must not drift.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - lumen_pgdata:/var/lib/postgresql/data
     # Defaults are too small to build HNSW indexes over note_chunks without
@@ -47,3 +47,5 @@ services:
 
 volumes:
   lumen_pgdata:
+    external: true
+    name: a97106af77bd529ca2bae536543c28826d5830ac45406d2f2e84a8fbefb62e9c

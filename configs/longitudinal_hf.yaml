@@ -1,0 +1,232 @@
+# ==========================================================================
+# Lumen — Longitudinal HF Readmission Study
+# FROZEN Day-1 scope / cohort / outcome specification.
+#
+# This file is the single source of truth. The Day-1 audit script reads its
+# cohort, outcome and leakage rules from here — nothing is hard-coded in the
+# script. Any change here is a protocol amendment: bump `version`, record it
+# in `amendments`, and re-run the audit.
+# ==========================================================================
+
+version: "1.0.1"
+frozen: true
+frozen_on: "2026-09-12"
+amendments:
+  - version: "1.0.1"
+    date: "2026-09-14"
+    change: >-
+      Re-baselined feasibility_reference to the FINAL eligible cohort. The prior
+      readmit counts (2,044 / 3,386) were derived pre-exclusion; the audit now
+      freezes 2,041 / 3,383 measured on the 7,204-admission eligible cohort.
+      No cohort, outcome, exclusion or leakage logic was changed.
+
+study:
+  id: longitudinal_hf_readmission
+  title: "Longitudinal predictors of 90-day readmission in heart failure"
+  question: >-
+    Do longitudinal renal, cardiovascular, medication and prior-utilization
+    features, observed on or before index discharge, predict 90-day hospital
+    readmission in heart-failure patients?
+  design: retrospective_observational_cohort
+  unit_of_analysis: index_admission          # patient may contribute >1 index admission
+  intended_use: research_portfolio
+  not_intended_use:
+    - clinical_decision_support
+    - treatment_recommendation
+    - individual_patient_risk_reporting
+
+data_source:
+  database: lumen
+  container: lumen-pg
+  engine: "postgresql-16+pgvector"
+  # MIMIC-IV release actually ingested. Leave as "unknown" until the version is
+  # manually confirmed from the source download (e.g. mimic-iv 2.2 / 3.1).
+  # The audit report prints this verbatim.
+  mimic_version: unknown
+  mimic_version_confirmed: false
+  mimic_version_source_note: >-
+    Confirm from the PhysioNet download directory name or the dataset
+    CHANGELOG before publishing any results.
+  deidentified: true
+  date_shifting:
+    shifted: true
+    # MIMIC shifts each patient's dates by a random per-patient offset.
+    # Within-patient intervals are preserved; absolute calendar time is not.
+    within_patient_intervals_valid: true
+    absolute_calendar_time_valid: false
+
+cohort:
+  heart_failure:
+    source_table: diagnoses_icd
+    source_column: icd_code
+    match: prefix
+    normalize: "UPPER(TRIM(icd_code))"
+    use_icd_version: true          # match prefixes only within their own ICD version
+    icd10_prefixes: ["I50"]
+    icd9_prefixes: ["428"]
+    scope: any_diagnosis_position  # seq_num is NOT restricted; any position counts
+  index_admission:
+    definition: >-
+      Any admission carrying a qualifying HF diagnosis code, with non-null
+      admittime and dischtime, where the patient survived the hospitalization.
+    require_admittime: true
+    require_dischtime: true
+    exclusions:
+      - id: in_hospital_death_flag
+        rule: "hospital_expire_flag = 1"
+      - id: in_hospital_death_time
+        rule: "deathtime IS NOT NULL"
+      - id: missing_times
+        rule: "admittime IS NULL OR dischtime IS NULL"
+    multiple_index_admissions_per_patient: allowed
+    # Descriptive only — NOT an eligibility filter. Reported by the audit.
+    longitudinal_depth_probe_min_admissions: 3
+
+prediction:
+  cutoff: index_admission_dischtime
+  cutoff_column: "admissions.dischtime"
+  lookback: all_history_up_to_cutoff   # no fixed lookback window at Day 1
+  observation_rule: >-
+    A value may enter the feature set only if its own event timestamp is
+    non-null and <= the index admission dischtime.
+
+outcomes:
+  primary:
+    name: readmit_90d
+    type: binary
+    anchor: index_admission_dischtime
+    event: next_recorded_hospital_admission
+    window_days: 90
+    lower_bound_days_exclusive: 0        # strictly AFTER discharge
+    upper_bound_inclusive: true          # (0, 90] days
+    computation: >-
+      LEAD(admittime) OVER (PARTITION BY subject_id ORDER BY admittime, hadm_id)
+      over ALL admissions, then filtered to eligible HF index admissions.
+    next_admission_scope: any_cause      # the next admission need not be HF-coded
+  secondary:
+    name: readmit_30d
+    type: binary
+    anchor: index_admission_dischtime
+    event: next_recorded_hospital_admission
+    window_days: 30
+    lower_bound_days_exclusive: 0
+    upper_bound_inclusive: true
+    computation: same_as_primary
+    next_admission_scope: any_cause
+  censoring:
+    # Day 1 records these as limitations; no formal survival model is specified.
+    right_censoring_acknowledged: true
+    death_is_competing_risk: true
+    out_of_network_readmissions_unobservable: true
+
+leakage_rules:
+  - id: LR1
+    rule: "No predictor may use data timestamped after the index dischtime."
+  - id: LR2
+    rule: "No future labevents (charttime > cutoff)."
+  - id: LR3
+    rule: "No future prescriptions (starttime > cutoff)."
+  - id: LR4
+    rule: "No diagnoses from admissions later than the index admission."
+  - id: LR5
+    rule: "No future admissions except as the outcome itself."
+  - id: LR6
+    rule: "No clinical notes with charttime > cutoff."
+  - id: LR7
+    rule: "Discharge-time fields that encode the outcome (discharge_location,
+           deathtime, dod, hospital_expire_flag) are outcome/QC fields, not
+           predictors."
+  - id: LR8
+    rule: "Never use absolute calendar year, anchor_year or anchor_year_group as
+           a population-level temporal feature — dates are patient-shifted."
+  - id: LR9
+    rule: "Index-admission diagnoses are billing codes finalized at discharge;
+           they are allowed as comorbidity predictors but must be flagged as
+           discharge-coded in the data dictionary."
+  - id: LR10
+    rule: "Any aggregate (mean, imputation value, scaler, encoder) must be fit on
+           training patients only, never on the full cohort."
+
+splitting:
+  unit: subject_id            # patient-level, never admission-level
+  rationale: >-
+    A patient contributes multiple index admissions; splitting on hadm_id would
+    place correlated records from the same patient on both sides of the split.
+  stratify_on: [readmit_90d]
+  planned_scheme: grouped_train_valid_test
+  proportions: {train: 0.70, valid: 0.15, test: 0.15}
+  seed: 20260912
+  group_key_column: subject_id
+
+# Last observed feasibility numbers, expressed as a COHORT FLOW. The audit
+# re-derives each stage; a mismatch is a signal that the DB or the definition
+# changed and must be investigated.
+
+# These are two different quantities and must never be compared to each other:
+#   raw_hf_admissions          = 7,442  (BEFORE exclusions)
+#   eligible_hf_index_admissions = 7,204  (AFTER exclusions)
+#   7,442 - 238 in-hospital deaths - 0 missing discharge times = 7,204
+feasibility_reference:
+  raw_hf_admissions: 7442
+  excluded_in_hospital_death: 238
+  excluded_missing_times: 0
+  eligible_hf_index_admissions: 7204
+  readmit_30d_n: 2041
+  readmit_90d_n: 3383
+  # All outcome references are measured ON the final eligible cohort (7,204).
+  # The earlier 2,044 / 3,386 (27.47% / 45.50%) came from the pre-exclusion
+  # feasibility pass and are superseded.
+  readmit_30d_rate: 0.2833
+  readmit_90d_rate: 0.4696
+  tolerance_pct: 1.0
+
+audit:
+  report_path: reports/longitudinal/day1_audit.md
+  data_dictionary_path: reports/longitudinal/data_dictionary.csv
+  read_only: true
+  # Missing required table/column => non-zero exit.
+  required_tables:
+    patients: [subject_id, gender, anchor_age, anchor_year, anchor_year_group, dod]
+    admissions: [hadm_id, subject_id, admittime, dischtime, deathtime,
+                 admission_type, admission_location, discharge_location,
+                 hospital_expire_flag]
+    diagnoses_icd: [subject_id, hadm_id, seq_num, icd_code, icd_version]
+  # Missing => warning only (not needed to lock the cohort).
+  expected_tables:
+    labevents: [subject_id, hadm_id, itemid, charttime, storetime, value,
+                valuenum, valueuom, flag]
+    d_labitems: [itemid, label, fluid, category]
+    prescriptions: [subject_id, hadm_id, starttime, stoptime, drug,
+                    dose_val_rx, dose_unit_rx, doses_per_24_hrs, route]
+    clinical_notes: [subject_id, hadm_id, note_type, charttime]
+    procedures_icd: [subject_id, hadm_id, seq_num, icd_code, icd_version]
+  missingness_columns:
+    admissions: [admittime, dischtime, deathtime, admission_type,
+                 admission_location, discharge_location, hospital_expire_flag]
+    patients: [gender, anchor_age, anchor_year, anchor_year_group, dod]
+    diagnoses_icd: [hadm_id, seq_num, icd_code, icd_version]
+  # Label patterns for d_labitems discovery. Audit only — no feature building.
+  lab_concepts:
+    creatinine: ["%creatinine%"]
+    bun_urea: ["%urea nitrogen%", "bun"]
+    sodium: ["%sodium%"]
+    potassium: ["%potassium%"]
+    hemoglobin: ["%hemoglobin%"]
+    bnp: ["%natriuretic%", "%bnp%", "%probnp%"]
+  lab_fluid_preference: ["Blood"]   # recorded for Day 2; not filtered at Day 1
+  # Availability probe only — no medication features are engineered at Day 1.
+  medication_probe_names:
+    - "furosemide%"
+    - "torsemide%"
+    - "bumetanide%"
+    - "lisinopril%"
+    - "losartan%"
+    - "sacubitril%"
+    - "carvedilol%"
+    - "metoprolol%"
+    - "spironolactone%"
+    - "eplerenone%"
+    - "dapagliflozin%"
+    - "empagliflozin%"
+    - "digoxin%"
+  top_drug_names_limit: 20
