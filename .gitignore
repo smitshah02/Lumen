@@ -64,3 +64,5 @@ Thumbs.db
 langfuse/
 # Working audit doc — local only, contradicts README until rewritten
 LUMEN_STATUS.md
+
+backups/
