@@ -42,6 +42,9 @@ engine = create_engine(
     max_overflow=10,
     pool_pre_ping=True,
     echo=False,
+    # Fail fast when Postgres is unreachable instead of waiting on TCP timeouts
+    # (the API readiness probe depends on this).
+    connect_args={"connect_timeout": int(os.environ.get("LUMEN_DB_CONNECT_TIMEOUT", "10"))},
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

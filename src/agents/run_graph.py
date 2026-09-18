@@ -16,6 +16,26 @@ from src.agents.graph import build_graph
 from src.obs import tracing
 
 
+def build_config(thread_id: str, tags=("lumen", "agent-graph"), metadata: dict | None = None) -> dict:
+    """LangGraph run config: checkpoint thread + (when LUMEN_TRACING=1) the
+    Langfuse callback, with the thread as the Langfuse session."""
+    config = {"configurable": {"thread_id": thread_id}}
+    cb = tracing.handler()
+    if cb:
+        config["callbacks"] = [cb]
+        config["metadata"] = {"langfuse_session_id": thread_id, "langfuse_tags": list(tags), **(metadata or {})}
+    return config
+
+
+def run_once(graph, query: str, subject_id, thread_id: str, tags=("lumen", "agent-graph"),
+             metadata: dict | None = None) -> tuple[dict, dict]:
+    """One end-to-end graph run. Returns (invoke output, config). An output
+    containing "__interrupt__" means the run is checkpointed at human_review."""
+    config = build_config(thread_id, tags, metadata)
+    out = graph.invoke({"query": query, "subject_id": subject_id, "thread_id": thread_id}, config=config)
+    return out, config
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--query", default="most recent creatinine value")
@@ -30,7 +50,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 
     thread_id = args.thread or f"smoke-{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
+    config = build_config(thread_id)
     graph, _ = build_graph()
 
     if args.history:
@@ -43,18 +63,7 @@ def main() -> int:
     print(f"  LUMEN AGENT GRAPH — thread {thread_id}")
     print("=" * 70)
 
-    cb = tracing.handler()
-    if cb:
-        config["callbacks"] = [cb]
-        config["metadata"] = {
-            "langfuse_session_id": thread_id,
-            "langfuse_tags": ["lumen", "agent-graph"],
-        }
-
-    out = graph.invoke(
-        {"query": args.query, "subject_id": args.subject, "thread_id": thread_id},
-        config=config,
-    )
+    out, config = run_once(graph, args.query, args.subject, thread_id)
 
     if "__interrupt__" in out:
         payload = out["__interrupt__"][0].value

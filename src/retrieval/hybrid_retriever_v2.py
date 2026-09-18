@@ -46,6 +46,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from src.storage import engine
 from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
+from src.obs.logging import obs_extra, add_timing
 
 logger = logging.getLogger(__name__)
 
@@ -979,11 +980,14 @@ class HybridRetriever:
         results = ordered[:top_k]
 
         elapsed = time.time() - t0
+        add_timing("retrieval_ms", elapsed * 1000)
         exp_str = f", +{len(expansions)} expanded" if expansions else ""
         logger.info(
             f"Search '{query[:50]}' → {len(results)} results "
             f"(bm25={len(bm25_results)}, vec={len(vec_results)}, "
-            f"merged={len(merged)}{exp_str}) in {elapsed:.2f}s"
+            f"merged={len(merged)}{exp_str}) in {elapsed:.2f}s",
+            extra=obs_extra("retrieval", result_count=len(results), duration_ms=round(elapsed * 1000, 1),
+                            subject_id=subject_id, top_k=top_k, temporal_mode=resolved_temporal),
         )
 
         return results

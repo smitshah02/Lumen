@@ -36,6 +36,7 @@ import requests
 import re
 
 from src.obs import tracing
+from src.obs.logging import log_event, add_timing
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ def chat(
         payload["think"] = think
 
     last_exc = None
+    t0 = time.perf_counter()
     with tracing.generation(f"ollama:{tier}", resolved_model, prompt=messages) as gen:
         for attempt in range(max_retries + 1):
             try:
@@ -117,6 +119,10 @@ def chat(
                 resp.raise_for_status()
                 body = resp.json()
                 text_out = _strip_thinking(body["message"]["content"])
+                ms = round((time.perf_counter() - t0) * 1000, 1)
+                add_timing("llm_ms", ms)
+                log_event(logger, "llm_call", model=resolved_model, tier=tier, duration_ms=ms,
+                          prompt_tokens=body.get("prompt_eval_count"), completion_tokens=body.get("eval_count"))
                 if gen is not None:
                     gen.update(output=text_out, usage_details={
                         "input": body.get("prompt_eval_count", 0),
