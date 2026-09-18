@@ -1,0 +1,86 @@
+[
+ {
+  "itemid": 990001,
+  "label": "Creatinine",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990002,
+  "label": "Urea Nitrogen",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990003,
+  "label": "Potassium",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990004,
+  "label": "Sodium",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990005,
+  "label": "Glucose",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990006,
+  "label": "Hemoglobin",
+  "fluid": "Blood",
+  "category": "Hematology"
+ },
+ {
+  "itemid": 990007,
+  "label": "White Blood Cells",
+  "fluid": "Blood",
+  "category": "Hematology"
+ },
+ {
+  "itemid": 990008,
+  "label": "Platelet Count",
+  "fluid": "Blood",
+  "category": "Hematology"
+ },
+ {
+  "itemid": 990009,
+  "label": "Hemoglobin A1c",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990010,
+  "label": "NT-proBNP",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990011,
+  "label": "Lactate",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990012,
+  "label": "Ferritin",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990013,
+  "label": "Troponin T",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990014,
+  "label": "Bicarbonate",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ }
+]

@@ -1,0 +1,302 @@
+[
+ {
+  "hadm_id": 91000011,
+  "subject_id": 90000001,
+  "admittime": "2023-01-10 14:20",
+  "dischtime": "2023-01-15 11:05",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000012,
+  "subject_id": 90000001,
+  "admittime": "2023-08-02 09:40",
+  "dischtime": "2023-08-07 12:30",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000013,
+  "subject_id": 90000001,
+  "admittime": "2024-03-12 13:15",
+  "dischtime": "2024-03-18 10:40",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000021,
+  "subject_id": 90000002,
+  "admittime": "2022-11-03 18:30",
+  "dischtime": "2022-11-07 11:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000022,
+  "subject_id": 90000002,
+  "admittime": "2023-09-14 15:10",
+  "dischtime": "2023-09-18 13:20",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000023,
+  "subject_id": 90000002,
+  "admittime": "2024-10-21 11:45",
+  "dischtime": "2024-10-25 10:15",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000031,
+  "subject_id": 90000003,
+  "admittime": "2023-12-04 20:10",
+  "dischtime": "2023-12-09 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000032,
+  "subject_id": 90000003,
+  "admittime": "2024-02-20 07:50",
+  "dischtime": "2024-02-23 11:30",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000041,
+  "subject_id": 90000004,
+  "admittime": "2022-06-08 16:05",
+  "dischtime": "2022-06-11 12:10",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000042,
+  "subject_id": 90000004,
+  "admittime": "2023-05-16 03:40",
+  "dischtime": "2023-05-20 14:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000043,
+  "subject_id": 90000004,
+  "admittime": "2024-04-09 07:00",
+  "dischtime": "2024-04-12 11:30",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000051,
+  "subject_id": 90000005,
+  "admittime": "2023-03-02 10:30",
+  "dischtime": "2023-03-04 15:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000052,
+  "subject_id": 90000005,
+  "admittime": "2023-07-10 06:30",
+  "dischtime": "2023-07-12 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000061,
+  "subject_id": 90000006,
+  "admittime": "2023-06-19 22:10",
+  "dischtime": "2023-06-21 10:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000062,
+  "subject_id": 90000006,
+  "admittime": "2024-05-02 14:30",
+  "dischtime": "2024-05-04 11:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000071,
+  "subject_id": 90000007,
+  "admittime": "2023-10-05 12:00",
+  "dischtime": "2023-10-10 13:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000072,
+  "subject_id": 90000007,
+  "admittime": "2024-06-11 09:20",
+  "dischtime": "2024-06-15 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000081,
+  "subject_id": 90000008,
+  "admittime": "2024-01-15 18:00",
+  "dischtime": "2024-01-21 12:30",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000082,
+  "subject_id": 90000008,
+  "admittime": "2024-03-02 10:10",
+  "dischtime": "2024-03-05 11:45",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000091,
+  "subject_id": 90000009,
+  "admittime": "2023-04-11 13:00",
+  "dischtime": "2023-04-13 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000092,
+  "subject_id": 90000009,
+  "admittime": "2024-02-06 11:20",
+  "dischtime": "2024-02-08 10:30",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000101,
+  "subject_id": 90000010,
+  "admittime": "2022-12-01 08:15",
+  "dischtime": "2022-12-05 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000102,
+  "subject_id": 90000010,
+  "admittime": "2023-04-18 14:40",
+  "dischtime": "2023-04-22 11:15",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000103,
+  "subject_id": 90000010,
+  "admittime": "2023-11-08 09:30",
+  "dischtime": "2023-11-13 13:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000111,
+  "subject_id": 90000011,
+  "admittime": "2024-07-08 16:20",
+  "dischtime": "2024-07-12 11:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000112,
+  "subject_id": 90000011,
+  "admittime": "2024-09-22 07:45",
+  "dischtime": "2024-09-24 12:15",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000121,
+  "subject_id": 90000012,
+  "admittime": "2024-02-11 05:20",
+  "dischtime": "2024-02-16 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000122,
+  "subject_id": 90000012,
+  "admittime": "2024-04-02 06:00",
+  "dischtime": "2024-04-09 11:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000131,
+  "subject_id": 90000013,
+  "admittime": "2023-08-20 19:30",
+  "dischtime": "2023-08-23 12:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ },
+ {
+  "hadm_id": 91000132,
+  "subject_id": 90000013,
+  "admittime": "2024-01-29 06:30",
+  "dischtime": "2024-02-01 11:00",
+  "admission_type": "SYNTHETIC-DEMO",
+  "insurance": "SYNTHETIC-DEMO",
+  "discharge_location": "HOME",
+  "hospital_expire_flag": 0
+ }
+]

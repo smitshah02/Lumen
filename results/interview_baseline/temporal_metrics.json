@@ -1,0 +1,251 @@
+{
+  "status": "ok",
+  "_meta": {
+    "judge_model": "qwen3:8b",
+    "top_k": 10,
+    "threshold": 2,
+    "n_patients": 2,
+    "n_cases_per_patient": 6,
+    "patient_selection": "auto: select_temporal_patients(limit=2, min_notes=4, min_times=3); patients pseudonymised"
+  },
+  "summary": {
+    "latest_hit@1": {
+      "all": 0.0,
+      "temporal": 1.0,
+      "lift": 1.0,
+      "n": 6
+    },
+    "trend_monotonicity": {
+      "all": 0.5793650793650793,
+      "temporal": 1.0,
+      "lift": 0.4206349206349207,
+      "n": 2
+    },
+    "window_frac_same_admission": {
+      "all": 0.1,
+      "temporal": 0.3333333333333333,
+      "lift": 0.2333333333333333,
+      "n": 2
+    }
+  },
+  "cases": [
+    {
+      "patient": "patient_1",
+      "case_id": "temp_latest_creatinine",
+      "assertion": "latest",
+      "n_relevant": 12,
+      "temporal": {
+        "measurable": true,
+        "n": 6,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 6,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 6
+      }
+    },
+    {
+      "patient": "patient_1",
+      "case_id": "temp_latest_hgb",
+      "assertion": "latest",
+      "n_relevant": 16,
+      "temporal": {
+        "measurable": true,
+        "n": 6,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 10
+      }
+    },
+    {
+      "patient": "patient_1",
+      "case_id": "temp_latest_meds",
+      "assertion": "latest",
+      "n_relevant": 13,
+      "temporal": {
+        "measurable": true,
+        "n": 5,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 9,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 5
+      }
+    },
+    {
+      "patient": "patient_1",
+      "case_id": "temp_trend_creatinine",
+      "assertion": "trend",
+      "n_relevant": 3,
+      "temporal": {
+        "measurable": false,
+        "n": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 2,
+        "monotonicity": 1.0,
+        "distinct_dates": 2
+      }
+    },
+    {
+      "patient": "patient_1",
+      "case_id": "temp_trend_potassium",
+      "assertion": "trend",
+      "n_relevant": 12,
+      "temporal": {
+        "measurable": true,
+        "n": 5,
+        "monotonicity": 1.0,
+        "distinct_dates": 5
+      },
+      "all": {
+        "measurable": true,
+        "n": 8,
+        "monotonicity": 0.7142857142857143,
+        "distinct_dates": 7
+      }
+    },
+    {
+      "patient": "patient_1",
+      "case_id": "temp_window_labs",
+      "assertion": "window",
+      "n_relevant": 10,
+      "temporal": {
+        "measurable": true,
+        "n": 3,
+        "frac_same_admission": 0.3333333333333333
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "frac_same_admission": 0.1
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_latest_creatinine",
+      "assertion": "latest",
+      "n_relevant": 11,
+      "temporal": {
+        "measurable": true,
+        "n": 6,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 5,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 4
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_latest_hgb",
+      "assertion": "latest",
+      "n_relevant": 19,
+      "temporal": {
+        "measurable": true,
+        "n": 10,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 9
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_latest_meds",
+      "assertion": "latest",
+      "n_relevant": 16,
+      "temporal": {
+        "measurable": true,
+        "n": 8,
+        "hit@1": true,
+        "hit@3": true,
+        "rank_of_newest": 1
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "hit@1": false,
+        "hit@3": false,
+        "rank_of_newest": 7
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_trend_creatinine",
+      "assertion": "trend",
+      "n_relevant": 2,
+      "temporal": {
+        "measurable": false,
+        "n": 1
+      },
+      "all": {
+        "measurable": false,
+        "n": 1
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_trend_potassium",
+      "assertion": "trend",
+      "n_relevant": 11,
+      "temporal": {
+        "measurable": true,
+        "n": 4,
+        "monotonicity": 1.0,
+        "distinct_dates": 3
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "monotonicity": 0.4444444444444444,
+        "distinct_dates": 8
+      }
+    },
+    {
+      "patient": "patient_2",
+      "case_id": "temp_window_labs",
+      "assertion": "window",
+      "n_relevant": 14,
+      "temporal": {
+        "measurable": true,
+        "n": 6,
+        "frac_same_admission": 0.3333333333333333
+      },
+      "all": {
+        "measurable": true,
+        "n": 10,
+        "frac_same_admission": 0.1
+      }
+    }
+  ]
+}

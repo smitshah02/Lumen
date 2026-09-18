@@ -1,7 +1,8 @@
-# Environment variables
+# Environment variables / secrets
 .env
-API_keys.docx
-API_keys.pages
+.env.*
+!.env.example
+API_keys.*
 
 # Python
 .venv/
@@ -25,6 +26,8 @@ src/reranker/reranker_training_data/
 *.csv
 disease_flow/
 pooled*.json
+# tune_retrieval.py phase-1 output carries chunk_text (raw note text)
+tune_*.json
 sweep*.json
 *_answers.json
 indexing_log.txt
@@ -66,3 +69,4 @@ langfuse/
 LUMEN_STATUS.md
 
 backups/
+*.dump

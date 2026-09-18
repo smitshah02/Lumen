@@ -4,9 +4,12 @@ Local LLM Client (Ollama)
 Single inference path for every LLM job in Lumen: triage, judging,
 synthesis, verification. Nothing here leaves the machine.
 
-Two model tiers, set in .env:
-  LUMEN_LLM_FAST  — triage, judging          (7B)
-  LUMEN_LLM_MAIN  — synthesis, verification  (14B)
+Two model tiers, set in .env (both default to qwen3:8b):
+  LUMEN_LLM_FAST  — triage, judging
+  LUMEN_LLM_MAIN  — synthesis, verification
+  LUMEN_LLM_HOST  — Ollama base URL (default http://localhost:11434)
+
+    python -m src.llm.local_client --config   # configured models + reachability, no prompts
 
 Why native /api/chat and not the OpenAI-compat endpoint:
   we need `keep_alive` (to evict a model and free RAM) and `num_ctx`
@@ -154,6 +157,12 @@ def unload(tier: str = "main", model: Optional[str] = None) -> None:
         logger.warning(f"could not unload {resolved_model}: {e}")
 
 
+def runtime_config() -> dict:
+    """Configured host and model tags. Nothing here is secret."""
+    return {"host": HOST, "main_model": MAIN_MODEL, "fast_model": FAST_MODEL,
+            "keep_alive": KEEP_ALIVE, "ctx_main": CTX_MAIN, "ctx_fast": CTX_FAST}
+
+
 def health() -> dict:
     """Check the server is up and both configured models exist."""
     out = {"host": HOST, "reachable": False, "models": [], "main_ok": False, "fast_ok": False}
@@ -171,6 +180,12 @@ def health() -> dict:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+    if "--config" in __import__("sys").argv:
+        import json
+        h = health()
+        print(json.dumps({**runtime_config(), "reachable": h["reachable"],
+                          "main_ok": h["main_ok"], "fast_ok": h["fast_ok"]}, indent=2))
+        raise SystemExit(0 if h["reachable"] and h["main_ok"] and h["fast_ok"] else 1)
     h = health()
     print("=" * 60)
     print("  LOCAL LLM HEALTH")

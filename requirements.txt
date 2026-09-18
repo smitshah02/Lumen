@@ -9,7 +9,8 @@
 #
 # Not installed by pip:
 #   - Postgres 16 + pgvector  -> docker-compose.yml
-#   - Ollama + qwen2.5:14b    -> `ollama serve && ollama pull qwen2.5:14b`
+#   - Ollama + qwen3:8b       -> `ollama serve && ollama pull qwen3:8b`   (runtime; LUMEN_LLM_MAIN/FAST)
+#   - qwen2.5:14b             -> retrieval-eval judge only (src/evals/ollama_backend.py)
 #   - Model weights in models/ -> MedCPT query/article/cross-encoder, BGE reranker
 
 # --- Database -------------------------------------------------------------
@@ -36,6 +37,18 @@ pypdf==6.11.0
 
 # --- Ollama client (judge + answer generation talk to it over plain HTTP) --
 requests==2.33.1
+
+# --- Agent graph + Postgres checkpointer (src/agents/graph.py) -------------
+langgraph==1.1.10
+langgraph-checkpoint-postgres==3.1.2
+# psycopg 3 + pool: PostgresSaver's driver. -binary bundles libpq so no system
+# package is needed. (psycopg2-binary above is SQLAlchemy's driver; both stay.)
+psycopg==3.3.4
+psycopg-binary==3.3.4
+psycopg-pool==3.3.1
+
+# --- MCP server (src/mcp_server/) -------------------------------------------
+mcp==2.1.1
 
 # --- Ingestion / utilities -------------------------------------------------
 pandas==3.0.2

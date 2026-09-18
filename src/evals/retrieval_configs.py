@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.retrieval.embeddings import MedCPTEmbedder
+from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
 from src.retrieval.hybrid_retriever_v2 import (
     bm25_search,
     vector_search,
@@ -35,18 +35,19 @@ from src.retrieval.hybrid_retriever_v2 import (
     expand_query,
     BGEReranker,
     RetrievalResult,
+    QUERY_EXPANSION,
 )
 
 # Reranker model paths
-BGE_RERANKER_PATH = str(Path.home() / "Lumen" / "models" / "bge-reranker")
-MEDCPT_RERANKER_PATH = str(Path.home() / "Lumen" / "models" / "medcpt-cross-encoder")
+BGE_RERANKER_PATH = str(MODELS_DIR / "bge-reranker")
+MEDCPT_RERANKER_PATH = str(MODELS_DIR / "medcpt-cross-encoder")
 # Same reranker-confidence gate as HybridRetriever.search() — keep in sync.
 RERANK_FALLBACK_THRESHOLD = 0.35
 
 
 def run_bm25_only(query: str, embedder: MedCPTEmbedder, top_k: int = 5) -> list[RetrievalResult]:
     """BM25 only — no vector search, no reranking."""
-    _, expansions = expand_query(query)
+    expansions = expand_query(query)[1] if QUERY_EXPANSION else []   # mirrors HybridRetriever default
     results = bm25_search(query=query, expansions=expansions, top_n=60, min_tokens=40)
 
     output = []
@@ -92,7 +93,7 @@ def run_vector_only(query: str, embedder: MedCPTEmbedder, top_k: int = 5) -> lis
 
 def run_rrf_only(query: str, embedder: MedCPTEmbedder, top_k: int = 5) -> list[RetrievalResult]:
     """Hybrid RRF — BM25 + Vector fused, no reranking."""
-    _, expansions = expand_query(query)
+    expansions = expand_query(query)[1] if QUERY_EXPANSION else []   # mirrors HybridRetriever default
     bm25_results = bm25_search(query=query, expansions=expansions, top_n=60, min_tokens=40)
     query_vec = embedder.embed_query(query)
     vec_results = vector_search(query_embedding=query_vec, top_n=60, min_tokens=40)
@@ -118,7 +119,7 @@ def run_rrf_plus_reranker(
     RERANK_FALLBACK_THRESHOLD, fall back to RRF order over the FULL candidate set
     (not just the reranked top_k) — so the eval grades the system as shipped.
     """
-    _, expansions = expand_query(query)
+    expansions = expand_query(query)[1] if QUERY_EXPANSION else []   # mirrors HybridRetriever default
     bm25_results = bm25_search(query=query, expansions=expansions, top_n=60, min_tokens=40)
     query_vec = embedder.embed_query(query)
     vec_results = vector_search(query_embedding=query_vec, top_n=60, min_tokens=40)

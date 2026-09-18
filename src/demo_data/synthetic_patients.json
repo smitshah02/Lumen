@@ -1,0 +1,93 @@
+[
+ {
+  "subject_id": 90000001,
+  "gender": "M",
+  "anchor_age": 67,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000002,
+  "gender": "F",
+  "anchor_age": 72,
+  "anchor_year": 2022,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000003,
+  "gender": "M",
+  "anchor_age": 64,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000004,
+  "gender": "F",
+  "anchor_age": 71,
+  "anchor_year": 2022,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000005,
+  "gender": "F",
+  "anchor_age": 46,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000006,
+  "gender": "M",
+  "anchor_age": 55,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000007,
+  "gender": "F",
+  "anchor_age": 79,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000008,
+  "gender": "M",
+  "anchor_age": 83,
+  "anchor_year": 2024,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000009,
+  "gender": "M",
+  "anchor_age": 49,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000010,
+  "gender": "F",
+  "anchor_age": 70,
+  "anchor_year": 2022,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000011,
+  "gender": "M",
+  "anchor_age": 76,
+  "anchor_year": 2024,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000012,
+  "gender": "M",
+  "anchor_age": 61,
+  "anchor_year": 2024,
+  "anchor_year_group": "SYNTHETIC"
+ },
+ {
+  "subject_id": 90000013,
+  "gender": "F",
+  "anchor_age": 68,
+  "anchor_year": 2023,
+  "anchor_year_group": "SYNTHETIC"
+ }
+]

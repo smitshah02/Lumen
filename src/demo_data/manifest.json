@@ -1,0 +1,26 @@
+{
+ "version": "lumen-demo-v1",
+ "seed": 20260918,
+ "synthetic": true,
+ "source": "authored fictional scenarios (src/demo_data/generate.py)",
+ "counts": {
+  "synthetic_patients": 13,
+  "synthetic_admissions": 30,
+  "synthetic_diagnoses": 106,
+  "synthetic_lab_items": 14,
+  "synthetic_labs": 489,
+  "synthetic_prescriptions": 148,
+  "synthetic_notes": 52,
+  "golden_qa": 15
+ },
+ "sha256": {
+  "synthetic_patients.json": "b0bb8e0d354e5e608e15a5b1b4943716092fbd8144eb296704629d494b52f08e",
+  "synthetic_admissions.json": "f2fff8f5810d46a973e6bdf8fe16f7809005c78d72a1bb0e3c92b8f4c537798b",
+  "synthetic_diagnoses.json": "1138a180be68a93ff89f18f5651e25fde7bbe350c975d5576810685b2dcd18eb",
+  "synthetic_lab_items.json": "8c27e8aeceb58dd0e996daebbd0f59b6adcdff41c44b3e0c2346218192d3bd2d",
+  "synthetic_labs.json": "307d80fa71640282973d229ff0b7614327d87423d57072ff02030d445faee951",
+  "synthetic_prescriptions.json": "a58e8090ff2b3eac1011152f5d07b2b1c56b4de0c48cbb2388d6eeb8cb847dad",
+  "synthetic_notes.json": "a7e35e55f59b81f5ea6b2140c04882a0faae34d5c2da07f3909ee4ae6f85231b",
+  "golden_qa.json": "d265803f08329638c72612756b04ee218b74661f5b33becf66379e0c1409b009"
+ }
+}

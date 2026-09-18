@@ -1,0 +1,174 @@
+[
+ {
+  "id": "demo_q01",
+  "subject_id": 90000001,
+  "query": "What was the patient's most recent creatinine?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [
+   "creatinine 1.4 mg/dL"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q02",
+  "subject_id": 90000001,
+  "query": "How did the patient's creatinine change over time?",
+  "category": "labs",
+  "temporal": "trend",
+  "expected_facts": [
+   "creatinine 1.8 mg/dL",
+   "creatinine 2.1 mg/dL",
+   "creatinine 1.4 mg/dL"
+  ],
+  "min_facts": 2
+ },
+ {
+  "id": "demo_q03",
+  "subject_id": 90000001,
+  "query": "What medications was the patient discharged on most recently?",
+  "category": "medications",
+  "temporal": "latest",
+  "expected_facts": [
+   "torsemide 20 mg",
+   "sacubitril-valsartan 24-26 mg"
+  ],
+  "min_facts": 2
+ },
+ {
+  "id": "demo_q04",
+  "subject_id": 90000001,
+  "query": "Does the patient have a history of heart failure?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "heart failure with reduced ejection fraction"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q05",
+  "subject_id": 90000001,
+  "query": "Did the chest x-ray show pulmonary edema?",
+  "category": "imaging",
+  "temporal": "all",
+  "expected_facts": [
+   "pulmonary edema"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q06",
+  "subject_id": 90000003,
+  "query": "Why was the patient having trouble breathing?",
+  "category": "plain_language",
+  "temporal": "all",
+  "expected_facts": [
+   "pneumonia"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q07",
+  "subject_id": 90000002,
+  "query": "How has the creatinine changed across admissions?",
+  "category": "labs",
+  "temporal": "trend",
+  "expected_facts": [
+   "creatinine 1.9 mg/dL",
+   "creatinine 2.4 mg/dL",
+   "creatinine 3.1 mg/dL"
+  ],
+  "min_facts": 2
+ },
+ {
+  "id": "demo_q08",
+  "subject_id": 90000002,
+  "query": "What was the most recent hemoglobin A1c?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [
+   "hemoglobin A1c 7.1%"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q09",
+  "subject_id": 90000003,
+  "query": "Did the right lower lobe pneumonia resolve on follow-up chest imaging?",
+  "category": "imaging",
+  "temporal": "all",
+  "expected_facts": [
+   "interval resolution"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q10",
+  "subject_id": 90000003,
+  "query": "How much supplemental oxygen did the patient require for pneumonia?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "4 liters"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q11",
+  "subject_id": 90000004,
+  "query": "Is the patient on anticoagulation for atrial fibrillation?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "apixaban 5 mg"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q12",
+  "subject_id": 90000004,
+  "query": "How was the rate control medication changed?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "diltiazem",
+   "metoprolol succinate 50 mg"
+  ],
+  "min_facts": 2
+ },
+ {
+  "id": "demo_q13",
+  "subject_id": 90000001,
+  "query": "Was furosemide started before or after the previous admission?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "not previously been prescribed a loop diuretic",
+   "furosemide was started"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q14",
+  "subject_id": 90000005,
+  "query": "What was the most recent hemoglobin?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [
+   "hemoglobin 11.2 g/dL"
+  ],
+  "min_facts": 1
+ },
+ {
+  "id": "demo_q15",
+  "subject_id": 90000001,
+  "query": "What water pill is the patient taking now?",
+  "category": "plain_language",
+  "temporal": "all",
+  "expected_facts": [
+   "torsemide 20 mg"
+  ],
+  "min_facts": 1
+ }
+]

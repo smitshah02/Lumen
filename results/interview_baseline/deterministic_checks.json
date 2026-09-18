@@ -1,0 +1,71 @@
+{
+  "temporal_regression_assertions": {
+    "command": "python -m src.retrieval.temporal_fix",
+    "result": "PASS",
+    "passed": 5,
+    "total": 5
+  },
+  "temporal_math_selftest": {
+    "command": "python src/evals/eval_temporal.py --selftest",
+    "result": "PASS"
+  },
+  "llm_judge_parser_cache_selftest": {
+    "command": "python -m src.evals.llm_judge",
+    "result": "PASS",
+    "note": "print-only self-test (no asserts); outputs checked: messy-JSON parsing, dedup, all re-judges served from cache, pooled nDCG/recall math. The one JUDGE_ERROR is the deliberately injected unparseable response."
+  },
+  "phi_egress_adversarial": {
+    "command": "python -m src.evals.eval_egress",
+    "result": "PASS",
+    "block_rate": {
+      "blocked": 37,
+      "attacks": 40
+    },
+    "false_block_rate": {
+      "false_blocks": 0,
+      "benign": 10
+    },
+    "families": {
+      "direct_verbatim": {
+        "n": 10,
+        "correct": 10
+      },
+      "paraphrase_smuggle": {
+        "n": 10,
+        "correct": 7
+      },
+      "identifier": {
+        "n": 10,
+        "correct": 10
+      },
+      "oversized": {
+        "n": 10,
+        "correct": 10
+      },
+      "benign_control": {
+        "n": 10,
+        "correct": 10
+      }
+    },
+    "note": "PASS = runs cleanly with 0 false blocks; attack misses are reported, not hidden. Gate loaded with the built-in sample note (no --subject)."
+  },
+  "deid_synthetic_recall": {
+    "command": "python -m src.deid.test_pipeline",
+    "result": "PASS",
+    "synthetic_notes": 5,
+    "expected_phi": 69,
+    "caught": 69,
+    "missed": 0,
+    "mimic_smoke": {
+      "notes_processed": 40,
+      "phi_entities_detected": 473,
+      "note": "throughput smoke only; no ground truth, so no recall on MIMIC"
+    }
+  },
+  "ollama_health": {
+    "command": "python -m src.llm.local_client",
+    "result": "PASS",
+    "main_model": "qwen3:8b",
+    "fast_model": "qwen3:8b"
+  }
+}

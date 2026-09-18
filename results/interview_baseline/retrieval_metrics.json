@@ -1,0 +1,286 @@
+{
+  "status": "ok",
+  "judge": {
+    "backend": "ollama (src.evals.ollama_backend.make_ollama_judge)",
+    "model": "qwen2.5:14b",
+    "threshold": 2
+  },
+  "top_k": 5,
+  "relevance_pool": {
+    "method": "pooled union of all configs, judged once (TREC-style)",
+    "queries_with_empty_pool": 0,
+    "mean_pool_size": 16.89
+  },
+  "judge_failures": {
+    "degraded_batches": 0,
+    "failed_judgements": 0,
+    "note": "failed judgements are scored 0 (not relevant) by LLMJudge"
+  },
+  "judge_cache": {
+    "path": ".cache/llm_judge_ollama.json",
+    "key": "(prompt_version, model, query, chunk_text)",
+    "this_run": "100% cache hits: no new judge calls; cache file unmodified since 2026-09-09 and qwen2.5:14b never loaded during phase 2"
+  },
+  "determinism_check": "phase-1 ranked chunk_id lists identical to the 2026-09-09 pool for 140/140 (query x config) cells",
+  "metric_notes": {
+    "recall@5": "denominator = judged relevant pool size (capped well below 1 by construction)",
+    "ndcg@5": "graded (0-3), ideal DCG from the judged pool"
+  },
+  "configs": {
+    "BM25 Only": {
+      "n_queries": 28,
+      "precision@5": 0.7268,
+      "recall@5": 0.2444,
+      "mrr": 0.8214,
+      "ndcg@5": 0.582,
+      "by_category": {
+        "diagnosis": {
+          "n": 5,
+          "precision@5": 0.76,
+          "recall@5": 0.295,
+          "mrr": 0.85,
+          "ndcg@5": 0.6579
+        },
+        "imaging": {
+          "n": 3,
+          "precision@5": 0.8667,
+          "recall@5": 0.335,
+          "mrr": 0.8333,
+          "ndcg@5": 0.6506
+        },
+        "labs": {
+          "n": 5,
+          "precision@5": 0.6,
+          "recall@5": 0.1697,
+          "mrr": 0.65,
+          "ndcg@5": 0.3955
+        },
+        "medications": {
+          "n": 5,
+          "precision@5": 0.84,
+          "recall@5": 0.2302,
+          "mrr": 0.9,
+          "ndcg@5": 0.7161
+        },
+        "plain_language": {
+          "n": 5,
+          "precision@5": 0.79,
+          "recall@5": 0.2701,
+          "mrr": 0.9,
+          "ndcg@5": 0.5996
+        },
+        "sections": {
+          "n": 5,
+          "precision@5": 0.56,
+          "recall@5": 0.2027,
+          "mrr": 0.8,
+          "ndcg@5": 0.4998
+        }
+      }
+    },
+    "Vector Only (MedCPT)": {
+      "n_queries": 28,
+      "precision@5": 0.5857,
+      "recall@5": 0.1583,
+      "mrr": 0.7262,
+      "ndcg@5": 0.4696,
+      "by_category": {
+        "diagnosis": {
+          "n": 5,
+          "precision@5": 0.36,
+          "recall@5": 0.0811,
+          "mrr": 0.4667,
+          "ndcg@5": 0.2889
+        },
+        "imaging": {
+          "n": 3,
+          "precision@5": 0.6,
+          "recall@5": 0.1498,
+          "mrr": 0.6667,
+          "ndcg@5": 0.4334
+        },
+        "labs": {
+          "n": 5,
+          "precision@5": 0.68,
+          "recall@5": 0.1805,
+          "mrr": 0.8,
+          "ndcg@5": 0.5714
+        },
+        "medications": {
+          "n": 5,
+          "precision@5": 0.64,
+          "recall@5": 0.1448,
+          "mrr": 0.8,
+          "ndcg@5": 0.5099
+        },
+        "plain_language": {
+          "n": 5,
+          "precision@5": 0.56,
+          "recall@5": 0.2039,
+          "mrr": 0.8,
+          "ndcg@5": 0.4658
+        },
+        "sections": {
+          "n": 5,
+          "precision@5": 0.68,
+          "recall@5": 0.1864,
+          "mrr": 0.8,
+          "ndcg@5": 0.5336
+        }
+      }
+    },
+    "Hybrid RRF": {
+      "n_queries": 28,
+      "precision@5": 0.6,
+      "recall@5": 0.1617,
+      "mrr": 0.7083,
+      "ndcg@5": 0.4886,
+      "by_category": {
+        "diagnosis": {
+          "n": 5,
+          "precision@5": 0.36,
+          "recall@5": 0.0811,
+          "mrr": 0.4667,
+          "ndcg@5": 0.3039
+        },
+        "imaging": {
+          "n": 3,
+          "precision@5": 0.6,
+          "recall@5": 0.1498,
+          "mrr": 0.6667,
+          "ndcg@5": 0.4334
+        },
+        "labs": {
+          "n": 5,
+          "precision@5": 0.68,
+          "recall@5": 0.1805,
+          "mrr": 0.8,
+          "ndcg@5": 0.6049
+        },
+        "medications": {
+          "n": 5,
+          "precision@5": 0.68,
+          "recall@5": 0.1535,
+          "mrr": 0.8,
+          "ndcg@5": 0.5498
+        },
+        "plain_language": {
+          "n": 5,
+          "precision@5": 0.56,
+          "recall@5": 0.2039,
+          "mrr": 0.7,
+          "ndcg@5": 0.4368
+        },
+        "sections": {
+          "n": 5,
+          "precision@5": 0.72,
+          "recall@5": 0.1964,
+          "mrr": 0.8,
+          "ndcg@5": 0.5807
+        }
+      }
+    },
+    "Hybrid + BGE Reranker": {
+      "n_queries": 28,
+      "precision@5": 0.7571,
+      "recall@5": 0.2361,
+      "mrr": 0.9048,
+      "ndcg@5": 0.6764,
+      "by_category": {
+        "diagnosis": {
+          "n": 5,
+          "precision@5": 0.72,
+          "recall@5": 0.2326,
+          "mrr": 0.9,
+          "ndcg@5": 0.7003
+        },
+        "imaging": {
+          "n": 3,
+          "precision@5": 0.8,
+          "recall@5": 0.3165,
+          "mrr": 1.0,
+          "ndcg@5": 0.6844
+        },
+        "labs": {
+          "n": 5,
+          "precision@5": 0.88,
+          "recall@5": 0.2552,
+          "mrr": 1.0,
+          "ndcg@5": 0.7296
+        },
+        "medications": {
+          "n": 5,
+          "precision@5": 0.8,
+          "recall@5": 0.1832,
+          "mrr": 0.8,
+          "ndcg@5": 0.7165
+        },
+        "plain_language": {
+          "n": 5,
+          "precision@5": 0.56,
+          "recall@5": 0.1898,
+          "mrr": 0.7667,
+          "ndcg@5": 0.5106
+        },
+        "sections": {
+          "n": 5,
+          "precision@5": 0.8,
+          "recall@5": 0.2712,
+          "mrr": 1.0,
+          "ndcg@5": 0.7199
+        }
+      }
+    },
+    "Hybrid + MedCPT Cross-Enc": {
+      "n_queries": 28,
+      "precision@5": 0.6643,
+      "recall@5": 0.2029,
+      "mrr": 0.8839,
+      "ndcg@5": 0.598,
+      "by_category": {
+        "diagnosis": {
+          "n": 5,
+          "precision@5": 0.56,
+          "recall@5": 0.2066,
+          "mrr": 0.9,
+          "ndcg@5": 0.5765
+        },
+        "imaging": {
+          "n": 3,
+          "precision@5": 0.6,
+          "recall@5": 0.1902,
+          "mrr": 1.0,
+          "ndcg@5": 0.593
+        },
+        "labs": {
+          "n": 5,
+          "precision@5": 0.8,
+          "recall@5": 0.228,
+          "mrr": 0.9,
+          "ndcg@5": 0.7554
+        },
+        "medications": {
+          "n": 5,
+          "precision@5": 0.76,
+          "recall@5": 0.1868,
+          "mrr": 1.0,
+          "ndcg@5": 0.6154
+        },
+        "plain_language": {
+          "n": 5,
+          "precision@5": 0.4,
+          "recall@5": 0.1321,
+          "mrr": 0.65,
+          "ndcg@5": 0.3833
+        },
+        "sections": {
+          "n": 5,
+          "precision@5": 0.84,
+          "recall@5": 0.2685,
+          "mrr": 0.9,
+          "ndcg@5": 0.6622
+        }
+      }
+    }
+  }
+}

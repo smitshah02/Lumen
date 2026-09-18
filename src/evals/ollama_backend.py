@@ -16,13 +16,14 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import requests
 from typing import Callable
 
 from src.evals.llm_judge import LLMJudge
 
 DEFAULT_OLLAMA_MODEL = "qwen2.5:14b"          # Q4_K_M instruct, ~9 GB on disk
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+DEFAULT_OLLAMA_HOST = os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434")
 
 # Structured-output schema for the judge reply. Ollama >= 0.5 constrains
 # generation to this; older builds ignore an object `format` and fall back to

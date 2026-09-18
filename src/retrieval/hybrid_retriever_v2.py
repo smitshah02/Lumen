@@ -45,13 +45,13 @@ from sqlalchemy import text as sa_text
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from src.storage import engine
-from src.retrieval.embeddings import MedCPTEmbedder
+from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
 
 logger = logging.getLogger(__name__)
 
 from pathlib import Path
 
-DEFAULT_RERANKER_MODEL = str(Path.home() / "Lumen" / "models" / "bge-reranker")
+DEFAULT_RERANKER_MODEL = str(MODELS_DIR / "bge-reranker")
 
 # pgvector's HNSW search breadth, set per-transaction in vector_search().
 #
@@ -70,6 +70,16 @@ import os as _os
 # pgvector 0.8.x accepts 1..1000; an out-of-range SET raises InvalidParameterValue
 # and would take the whole vector branch down, so clamp rather than trust the env.
 HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000")), 1000))
+
+# Fusion defaults, selected on a dev split of the golden set and confirmed once
+# on a held-out split (results/interview_tuning/). At k=60 a 1.0/1.2 BM25/vector
+# ratio ranked the top ~12 vector hits above BM25's best, so "hybrid" returned
+# the weaker vector list; expansion hurt diagnosis/labs/medications queries.
+# To reproduce the pre-tuning baseline (results/interview_baseline/) set
+# LUMEN_RRF_BM25_WEIGHT=1.0 LUMEN_RRF_VECTOR_WEIGHT=1.2 LUMEN_QUERY_EXPANSION=1.
+RRF_BM25_WEIGHT = float(_os.environ.get("LUMEN_RRF_BM25_WEIGHT", "1.5"))
+RRF_VECTOR_WEIGHT = float(_os.environ.get("LUMEN_RRF_VECTOR_WEIGHT", "0.75"))
+QUERY_EXPANSION = _os.environ.get("LUMEN_QUERY_EXPANSION", "0").strip().lower() in ("1", "true", "yes")
 
 
 # ===========================================================================
@@ -475,8 +485,8 @@ def reciprocal_rank_fusion(
     bm25_results: list[dict],
     vector_results: list[dict],
     k: int = 60,
-    bm25_weight: float = 1.0,
-    vector_weight: float = 1.2,
+    bm25_weight: float = RRF_BM25_WEIGHT,
+    vector_weight: float = RRF_VECTOR_WEIGHT,
     overlap_bonus: float = 0.5,
 ) -> list[RetrievalResult]:
     """
@@ -485,8 +495,8 @@ def reciprocal_rank_fusion(
     Chunks found by BOTH methods get an additional bonus — agreement
     between keyword and semantic search is a strong relevance signal.
 
-    vector_weight is slightly higher (1.2) because MedCPT's biomedical
-    embeddings are generally more reliable than generic BM25 for clinical text.
+    Weights default to RRF_BM25_WEIGHT / RRF_VECTOR_WEIGHT (see above). With
+    k=60 the rank decay is flat, so the weight RATIO decides which arm leads.
     """
     merged: dict[int, RetrievalResult] = {}
 
@@ -817,14 +827,14 @@ class HybridRetriever:
     def __init__(
         self,
         use_reranker: bool = True,
-        use_query_expansion: bool = True,
+        use_query_expansion: bool = QUERY_EXPANSION,
         use_context_window: bool = True,
         bm25_top_n: int = 60,
         vector_top_n: int = 60,
         rerank_candidates: int = 40,
         rerank_top_k: int = 10,
-        bm25_weight: float = 1.0,
-        vector_weight: float = 1.2,
+        bm25_weight: float = RRF_BM25_WEIGHT,
+        vector_weight: float = RRF_VECTOR_WEIGHT,
         overlap_bonus: float = 0.5,
         min_chunk_tokens: int = 40,
         context_window: int = 1,

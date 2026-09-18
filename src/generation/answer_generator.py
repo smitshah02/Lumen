@@ -3,7 +3,7 @@ Lumen Answer Generation  (grounded RAG, local Ollama)
 =====================================================
 Turns a question into a grounded answer over the clinical notes: retrieve with
 the hybrid retriever, assemble the top chunks into a cited context block, and
-have a LOCAL Ollama model (default Qwen2.5-14B) write an answer that is allowed
+have a LOCAL Ollama model (LUMEN_LLM_MAIN, default qwen3:8b) write an answer that is allowed
 to use ONLY that context. No clinical text leaves the machine — same DUA-safe
 setup as the judge.
 
@@ -20,7 +20,7 @@ Design choices that matter for a clinical RAG:
 
 Requires a running Ollama server with the model pulled:
     ollama serve
-    ollama pull qwen2.5:14b
+    ollama pull qwen3:8b
 
 Usage (library):
     from src.generation.answer_generator import AnswerGenerator
@@ -50,8 +50,9 @@ from src.generation.lab_query import LabResolver
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GEN_MODEL = "qwen2.5:14b"
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+# Runtime model and host come from the same env vars as every other LLM call
+# (LUMEN_LLM_MAIN / LUMEN_LLM_HOST, see src/llm/local_client.py).
+from src.llm.local_client import MAIN_MODEL as DEFAULT_GEN_MODEL, HOST as DEFAULT_OLLAMA_HOST, _strip_thinking
 
 # The sentinel the model must return when the context is insufficient. We check
 # for it to flag ungrounded / no-answer cases downstream.
@@ -196,23 +197,26 @@ class AnswerGenerator:
         return self._labs
 
     def _ollama_chat(self, messages: list[dict]) -> str:
-        resp = requests.post(
-            f"{self.host}/api/chat",
-            timeout=self.timeout,
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": False,
-                "keep_alive": self.keep_alive,
-                "options": {
-                    "temperature": self.temperature,
-                    "num_ctx": self.num_ctx,
-                    "num_predict": self.num_predict,
-                },
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "keep_alive": self.keep_alive,
+            # qwen3 thinks by default and spends num_predict on it, returning an
+            # empty answer; same switch local_client.chat() sends.
+            "think": False,
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
             },
-        )
+        }
+        resp = requests.post(f"{self.host}/api/chat", timeout=self.timeout, json=payload)
+        if resp.status_code == 400 and "think" in resp.text:   # older Ollama builds reject the field
+            payload.pop("think")
+            resp = requests.post(f"{self.host}/api/chat", timeout=self.timeout, json=payload)
         resp.raise_for_status()
-        return resp.json()["message"]["content"].strip()
+        return _strip_thinking(resp.json()["message"]["content"])
 
     def answer(
         self,

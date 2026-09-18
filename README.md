@@ -136,7 +136,7 @@ when available.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt      # includes the spaCy en_core_web_lg model
-docker compose up -d                 # Postgres 16 + pgvector on :5433
+docker compose up -d                 # Postgres 16 + pgvector on :5434
 ```
 
 Model weights are not vendored. Download to `models/`:

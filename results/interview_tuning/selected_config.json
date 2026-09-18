@@ -1,0 +1,73 @@
+{
+  "frozen_at": "2026-09-18T18:20:33+00:00",
+  "frozen_before": "any held-out (test) query was retrieved or judged",
+  "selected_variant": "bge|w1.5/0.75|k60|ob0.5|noexp|C40",
+  "parameters": {
+    "bm25_weight": 1.5,
+    "vector_weight": 0.75,
+    "rrf_k": 60,
+    "overlap_bonus": 0.5,
+    "rerank_candidates": 40,
+    "query_expansion": false,
+    "bm25_top_n": 60,
+    "vector_top_n": 60,
+    "min_tokens": 40,
+    "max_per_note": 2,
+    "context_window": 1,
+    "rerank_fallback_threshold": 0.35,
+    "reranker": "BAAI/bge-reranker-v2-m3 (unchanged)",
+    "embedder": "MedCPT (unchanged)"
+  },
+  "current_parameters": {
+    "bm25_weight": 1.0,
+    "vector_weight": 1.2,
+    "rrf_k": 60,
+    "overlap_bonus": 0.5,
+    "rerank_candidates": 40,
+    "query_expansion": true
+  },
+  "changed_vs_current": [
+    "bm25_weight 1.0->1.5",
+    "vector_weight 1.2->0.75",
+    "query_expansion on->off"
+  ],
+  "protocol": {
+    "registered_at": "2026-09-18T14:36:43Z",
+    "registered_before": "any dev scores were computed",
+    "selection_pool": "BGE-reranked variants scored on the dev set",
+    "selection_rule": [
+      "1. best = max dev nDCG@5",
+      "2. negligible = within 0.01 nDCG@5 of best",
+      "3. among negligible, prefer fewest parameter changes vs current (bm25_w, vec_w, k, ob, C, exp)",
+      "4. remaining ties: higher nDCG@5, then MRR, then P@5, then R@5"
+    ],
+    "adoption_rule": [
+      "dev nDCG@5 gain >= 0.02 vs current config (same dev pool)",
+      "held-out nDCG@5 >= current held-out nDCG@5",
+      "held-out MRR >= current held-out MRR - 0.01",
+      "held-out P@5 >= current held-out P@5 - 0.025 (one chunk across 8 queries x 5 slots)"
+    ],
+    "held_out_policy": "evaluated exactly once, after freezing the selection"
+  },
+  "dev": {
+    "selected": {
+      "n": 20,
+      "precision@5": 0.9,
+      "recall@5": 0.1675,
+      "mrr": 0.95,
+      "ndcg@5": 0.7524,
+      "rerank_fallback_rate": 0.05
+    },
+    "current": {
+      "n": 20,
+      "precision@5": 0.75,
+      "recall@5": 0.1468,
+      "mrr": 0.8667,
+      "ndcg@5": 0.6408,
+      "rerank_fallback_rate": 0.05
+    },
+    "per_query_ndcg_W_T_L_vs_current": "10/6/4",
+    "dev_ndcg_gain": 0.1116
+  },
+  "selection_note": "w1.5/0.75+noexp was added in dev pass 2 after pass 1 showed BM25-leaning weights and expansion-off each helped; selection stayed dev-only. At k=60 a 2:1 BM25:vector ratio ranks the whole BM25 top-60 above vector rank 1, so the vector arm contributes only via the overlap bonus."
+}

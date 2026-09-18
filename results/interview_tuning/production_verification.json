@@ -1,0 +1,57 @@
+{
+  "parity_tuned_defaults": {
+    "mode": "tuned",
+    "queries": 28,
+    "HybridRetriever.search_identical": 28,
+    "retrieval_configs.run_rrf_plus_reranker_identical": 28
+  },
+  "parity_env_override_reproduces_frozen_baseline": {
+    "mode": "baseline",
+    "queries": 28,
+    "HybridRetriever.search_identical": 28,
+    "retrieval_configs.run_rrf_plus_reranker_identical": 28
+  },
+  "temporal_eval_rerun": {
+    "frozen_baseline": {
+      "latest_hit@1": {
+        "all": 0.0,
+        "temporal": 1.0,
+        "lift": 1.0,
+        "n": 6
+      },
+      "trend_monotonicity": {
+        "all": 0.5793650793650793,
+        "temporal": 1.0,
+        "lift": 0.4206349206349207,
+        "n": 2
+      },
+      "window_frac_same_admission": {
+        "all": 0.1,
+        "temporal": 0.3333333333333333,
+        "lift": 0.2333333333333333,
+        "n": 2
+      }
+    },
+    "tuned_defaults": {
+      "latest_hit@1": {
+        "all": 0.0,
+        "temporal": 1.0,
+        "lift": 1.0,
+        "n": 6
+      },
+      "trend_monotonicity": {
+        "all": 0.5,
+        "temporal": 1.0,
+        "lift": 0.5,
+        "n": 2
+      },
+      "window_frac_same_admission": {
+        "all": 0.1,
+        "temporal": 0.3333333333333333,
+        "lift": 0.2333333333333333,
+        "n": 2
+      }
+    },
+    "command": "python -m src.evals.eval_temporal --export <scratch>/temporal_tuned.json"
+  }
+}

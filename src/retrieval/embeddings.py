@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import logging
 import time
 from pathlib import Path
@@ -36,9 +37,11 @@ from transformers import AutoTokenizer, AutoModel
 
 logger = logging.getLogger(__name__)
 
-# Default model paths — matches your project structure
-DEFAULT_QUERY_MODEL = str(Path.home() / "Lumen" / "models" / "medcpt-query")
-DEFAULT_ARTICLE_MODEL = str(Path.home() / "Lumen" / "models" / "medcpt-article")
+# Local model weights. LUMEN_MODELS_DIR overrides (containers, other clones);
+# the fallback is the original ~/Lumen/models layout.
+MODELS_DIR = Path(os.environ.get("LUMEN_MODELS_DIR") or Path.home() / "Lumen" / "models")
+DEFAULT_QUERY_MODEL = str(MODELS_DIR / "medcpt-query")
+DEFAULT_ARTICLE_MODEL = str(MODELS_DIR / "medcpt-article")
 
 
 class MedCPTEmbedder:

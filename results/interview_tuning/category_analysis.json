@@ -1,0 +1,188 @@
+{
+  "source": "results/interview_baseline/retrieval_metrics.json (28 queries, canonical pool, frozen)",
+  "by_category": {
+    "diagnosis": {
+      "BM25 Only": {
+        "n": 5,
+        "precision@5": 0.76,
+        "ndcg@5": 0.6579
+      },
+      "Vector Only (MedCPT)": {
+        "n": 5,
+        "precision@5": 0.36,
+        "ndcg@5": 0.2889
+      },
+      "Hybrid RRF": {
+        "n": 5,
+        "precision@5": 0.36,
+        "ndcg@5": 0.3039
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 5,
+        "precision@5": 0.72,
+        "ndcg@5": 0.7003
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 5,
+        "precision@5": 0.56,
+        "ndcg@5": 0.5765
+      }
+    },
+    "imaging": {
+      "BM25 Only": {
+        "n": 3,
+        "precision@5": 0.8667,
+        "ndcg@5": 0.6506
+      },
+      "Vector Only (MedCPT)": {
+        "n": 3,
+        "precision@5": 0.6,
+        "ndcg@5": 0.4334
+      },
+      "Hybrid RRF": {
+        "n": 3,
+        "precision@5": 0.6,
+        "ndcg@5": 0.4334
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 3,
+        "precision@5": 0.8,
+        "ndcg@5": 0.6844
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 3,
+        "precision@5": 0.6,
+        "ndcg@5": 0.593
+      }
+    },
+    "labs": {
+      "BM25 Only": {
+        "n": 5,
+        "precision@5": 0.6,
+        "ndcg@5": 0.3955
+      },
+      "Vector Only (MedCPT)": {
+        "n": 5,
+        "precision@5": 0.68,
+        "ndcg@5": 0.5714
+      },
+      "Hybrid RRF": {
+        "n": 5,
+        "precision@5": 0.68,
+        "ndcg@5": 0.6049
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 5,
+        "precision@5": 0.88,
+        "ndcg@5": 0.7296
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 5,
+        "precision@5": 0.8,
+        "ndcg@5": 0.7554
+      }
+    },
+    "medications": {
+      "BM25 Only": {
+        "n": 5,
+        "precision@5": 0.84,
+        "ndcg@5": 0.7161
+      },
+      "Vector Only (MedCPT)": {
+        "n": 5,
+        "precision@5": 0.64,
+        "ndcg@5": 0.5099
+      },
+      "Hybrid RRF": {
+        "n": 5,
+        "precision@5": 0.68,
+        "ndcg@5": 0.5498
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 5,
+        "precision@5": 0.8,
+        "ndcg@5": 0.7165
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 5,
+        "precision@5": 0.76,
+        "ndcg@5": 0.6154
+      }
+    },
+    "plain_language": {
+      "BM25 Only": {
+        "n": 5,
+        "precision@5": 0.79,
+        "ndcg@5": 0.5996
+      },
+      "Vector Only (MedCPT)": {
+        "n": 5,
+        "precision@5": 0.56,
+        "ndcg@5": 0.4658
+      },
+      "Hybrid RRF": {
+        "n": 5,
+        "precision@5": 0.56,
+        "ndcg@5": 0.4368
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 5,
+        "precision@5": 0.56,
+        "ndcg@5": 0.5106
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 5,
+        "precision@5": 0.4,
+        "ndcg@5": 0.3833
+      }
+    },
+    "sections": {
+      "BM25 Only": {
+        "n": 5,
+        "precision@5": 0.56,
+        "ndcg@5": 0.4998
+      },
+      "Vector Only (MedCPT)": {
+        "n": 5,
+        "precision@5": 0.68,
+        "ndcg@5": 0.5336
+      },
+      "Hybrid RRF": {
+        "n": 5,
+        "precision@5": 0.72,
+        "ndcg@5": 0.5807
+      },
+      "Hybrid + BGE Reranker": {
+        "n": 5,
+        "precision@5": 0.8,
+        "ndcg@5": 0.7199
+      },
+      "Hybrid + MedCPT Cross-Enc": {
+        "n": 5,
+        "precision@5": 0.84,
+        "ndcg@5": 0.6622
+      }
+    }
+  },
+  "degradation": {
+    "vector_and_hybrid_rrf_worse_than_bm25_ndcg": [
+      "diagnosis",
+      "imaging",
+      "medications",
+      "plain_language"
+    ],
+    "vector_better_than_bm25_ndcg": [
+      "labs"
+    ]
+  },
+  "fusion_diagnostics_frozen_pool": {
+    "hybrid_rrf_top5_source_mix": {
+      "vector_only": 119,
+      "both": 21,
+      "bm25_only": 0
+    },
+    "hybrid_rrf_top5_identical_to_vector_top5": "21/28 queries",
+    "mean_overlap_bm25_top10_vector_top10": 0.32,
+    "golden_queries_triggering_expansion": "14/28 (imaging 0/3)"
+  }
+}

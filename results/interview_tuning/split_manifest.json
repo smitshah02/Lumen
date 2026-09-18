@@ -1,0 +1,124 @@
+{
+  "seed": 42,
+  "test_frac": 0.3,
+  "method": "stratified by category, largest-remainder quotas, seeded shuffle within category",
+  "n_dev": 20,
+  "n_test": 8,
+  "dev": [
+    {
+      "query_id": "dx_001",
+      "category": "diagnosis"
+    },
+    {
+      "query_id": "dx_002",
+      "category": "diagnosis"
+    },
+    {
+      "query_id": "dx_004",
+      "category": "diagnosis"
+    },
+    {
+      "query_id": "dx_005",
+      "category": "diagnosis"
+    },
+    {
+      "query_id": "img_001",
+      "category": "imaging"
+    },
+    {
+      "query_id": "img_003",
+      "category": "imaging"
+    },
+    {
+      "query_id": "lab_001",
+      "category": "labs"
+    },
+    {
+      "query_id": "lab_002",
+      "category": "labs"
+    },
+    {
+      "query_id": "lab_003",
+      "category": "labs"
+    },
+    {
+      "query_id": "lab_005",
+      "category": "labs"
+    },
+    {
+      "query_id": "med_001",
+      "category": "medications"
+    },
+    {
+      "query_id": "med_003",
+      "category": "medications"
+    },
+    {
+      "query_id": "med_004",
+      "category": "medications"
+    },
+    {
+      "query_id": "plain_002",
+      "category": "plain_language"
+    },
+    {
+      "query_id": "plain_004",
+      "category": "plain_language"
+    },
+    {
+      "query_id": "plain_005",
+      "category": "plain_language"
+    },
+    {
+      "query_id": "sec_001",
+      "category": "sections"
+    },
+    {
+      "query_id": "sec_002",
+      "category": "sections"
+    },
+    {
+      "query_id": "sec_003",
+      "category": "sections"
+    },
+    {
+      "query_id": "sec_004",
+      "category": "sections"
+    }
+  ],
+  "test": [
+    {
+      "query_id": "dx_003",
+      "category": "diagnosis"
+    },
+    {
+      "query_id": "img_002",
+      "category": "imaging"
+    },
+    {
+      "query_id": "lab_004",
+      "category": "labs"
+    },
+    {
+      "query_id": "med_002",
+      "category": "medications"
+    },
+    {
+      "query_id": "med_005",
+      "category": "medications"
+    },
+    {
+      "query_id": "plain_001",
+      "category": "plain_language"
+    },
+    {
+      "query_id": "plain_003",
+      "category": "plain_language"
+    },
+    {
+      "query_id": "sec_005",
+      "category": "sections"
+    }
+  ],
+  "rule": "test queries are never used to select parameters; evaluated once with the frozen selection"
+}

@@ -1,0 +1,198 @@
+{
+  "set": "test (held-out, evaluated once after freezing selected_config.json)",
+  "n_queries": 8,
+  "pool": "canonical 5 configs top-10 + tuned variant top-10, judged by local qwen2.5:14b (prompt v2, threshold 2)",
+  "configs": {
+    "BM25 baseline": {
+      "n": 8,
+      "precision@5": 0.775,
+      "recall@5": 0.1708,
+      "mrr": 0.8125,
+      "ndcg@5": 0.551,
+      "by_category": {
+        "diagnosis": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1316,
+          "mrr": 1.0,
+          "ndcg@5": 0.9165
+        },
+        "imaging": {
+          "n": 1,
+          "precision@5": 0.6,
+          "recall@5": 0.2727,
+          "mrr": 0.5,
+          "ndcg@5": 0.4179
+        },
+        "labs": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1613,
+          "mrr": 1.0,
+          "ndcg@5": 0.5035
+        },
+        "medications": {
+          "n": 2,
+          "precision@5": 1.0,
+          "recall@5": 0.2008,
+          "mrr": 1.0,
+          "ndcg@5": 0.8815
+        },
+        "plain_language": {
+          "n": 2,
+          "precision@5": 0.8,
+          "recall@5": 0.1998,
+          "mrr": 1.0,
+          "ndcg@5": 0.4034
+        },
+        "sections": {
+          "n": 1,
+          "precision@5": 0.0,
+          "recall@5": 0.0,
+          "mrr": 0.0,
+          "ndcg@5": 0.0
+        }
+      }
+    },
+    "Hybrid+BGE current": {
+      "n": 8,
+      "precision@5": 0.775,
+      "recall@5": 0.1629,
+      "mrr": 1.0,
+      "ndcg@5": 0.6325,
+      "by_category": {
+        "diagnosis": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1316,
+          "mrr": 1.0,
+          "ndcg@5": 0.9165
+        },
+        "imaging": {
+          "n": 1,
+          "precision@5": 0.6,
+          "recall@5": 0.2727,
+          "mrr": 1.0,
+          "ndcg@5": 0.6345
+        },
+        "labs": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1613,
+          "mrr": 1.0,
+          "ndcg@5": 0.6258
+        },
+        "medications": {
+          "n": 2,
+          "precision@5": 1.0,
+          "recall@5": 0.2008,
+          "mrr": 1.0,
+          "ndcg@5": 0.7678
+        },
+        "plain_language": {
+          "n": 2,
+          "precision@5": 0.3,
+          "recall@5": 0.0718,
+          "mrr": 1.0,
+          "ndcg@5": 0.264
+        },
+        "sections": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1923,
+          "mrr": 1.0,
+          "ndcg@5": 0.8196
+        }
+      }
+    },
+    "Hybrid+BGE tuned": {
+      "n": 8,
+      "precision@5": 0.9,
+      "recall@5": 0.2031,
+      "mrr": 1.0,
+      "ndcg@5": 0.7845,
+      "by_category": {
+        "diagnosis": {
+          "n": 1,
+          "precision@5": 1.0,
+          "recall@5": 0.1316,
+          "mrr": 1.0,
+          "ndcg@5": 0.8281
+        },
+        "imaging": {
+          "n": 1,
+          "precision@5": 0.8,
+          "recall@5": 0.3636,
+          "mrr": 1.0,
+          "ndcg@5": 0.8546
+        },
+        "labs": {
+          "n": 1,
+          "precision@5": 0.8,
+          "recall@5": 0.129,
+          "mrr": 1.0,
+          "ndcg@5": 0.8748
+        },
+        "medications": {
+          "n": 2,
+          "precision@5": 1.0,
+          "recall@5": 0.2008,
+          "mrr": 1.0,
+          "ndcg@5": 0.8123
+        },
+        "plain_language": {
+          "n": 2,
+          "precision@5": 0.9,
+          "recall@5": 0.2225,
+          "mrr": 1.0,
+          "ndcg@5": 0.7001
+        },
+        "sections": {
+          "n": 1,
+          "precision@5": 0.8,
+          "recall@5": 0.1538,
+          "mrr": 1.0,
+          "ndcg@5": 0.6937
+        }
+      }
+    },
+    "Hybrid RRF current (canonical)": {
+      "n": 8,
+      "precision@5": 0.65,
+      "recall@5": 0.1198,
+      "mrr": 0.75,
+      "ndcg@5": 0.4488
+    },
+    "Vector only (canonical)": {
+      "n": 8,
+      "precision@5": 0.625,
+      "recall@5": 0.116,
+      "mrr": 0.8125,
+      "ndcg@5": 0.4054
+    }
+  },
+  "per_query_ndcg_tuned_vs_current_W_T_L": "5/0/3",
+  "dev_for_overfitting_check": {
+    "current": {
+      "n": 20,
+      "precision@5": 0.75,
+      "recall@5": 0.1468,
+      "mrr": 0.8667,
+      "ndcg@5": 0.6408
+    },
+    "tuned": {
+      "n": 20,
+      "precision@5": 0.9,
+      "recall@5": 0.1675,
+      "mrr": 0.95,
+      "ndcg@5": 0.7524
+    }
+  },
+  "adoption_checks": {
+    "dev_ndcg_gain>=0.02": true,
+    "heldout_ndcg>=current": true,
+    "heldout_mrr>=current-0.01": true,
+    "heldout_p5>=current-0.025": true
+  },
+  "decision": "ADOPT TUNED CONFIG"
+}

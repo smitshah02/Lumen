@@ -192,7 +192,8 @@ def temporal_accuracy_for_case(retriever, judge, subject_id, query, assertion,
     }
 
 
-def run_temporal_eval(top_k: int = 10, threshold: int = 2, patients: Optional[list] = None):
+def run_temporal_eval(top_k: int = 10, threshold: int = 2, patients: Optional[list] = None,
+                      export_path: Optional[str] = None):
     from src.retrieval.hybrid_retriever_v2 import HybridRetriever
     from src.evals.llm_judge import LLMJudge
 
@@ -217,12 +218,16 @@ def run_temporal_eval(top_k: int = 10, threshold: int = 2, patients: Optional[li
         patients = [p[0] for p in picks]
 
     agg = {"latest": [], "trend": [], "window": []}
-    for sid in patients:
+    cases_out = []   # --export only: metric dicts, no note text, no subject_ids
+    for pi, sid in enumerate(patients, 1):
         print(f"\n--- patient {sid} ---")
         for case in TEMPORAL_CASES:
             r = temporal_accuracy_for_case(retriever, judge, sid, case["query"], case["assertion"],
                                            top_k=top_k, threshold=threshold)
             t, a = r["temporal"], r["all"]
+            cases_out.append({"patient": f"patient_{pi}", "case_id": case["id"],
+                              "assertion": case["assertion"], "n_relevant": r["n_relevant"],
+                              "temporal": t, "all": a})
             if not t.get("measurable"):
                 print(f"  {case['id']:<26} n/a (no relevant timepoints retrieved)")
                 continue
@@ -241,18 +246,30 @@ def run_temporal_eval(top_k: int = 10, threshold: int = 2, patients: Optional[li
     print("\n" + "=" * 74)
     print("  TEMPORAL LIFT (mean temporal vs mean all)")
     print("=" * 74)
+    summary = {}
     if agg["latest"]:
         th = sum(1 for t, _ in agg["latest"] if t["hit@1"]) / len(agg["latest"])
         ah = sum(1 for _, a in agg["latest"] if a.get("hit@1")) / len(agg["latest"])
         print(f"  latest   hit@1:        {ah:.2f} -> {th:.2f}   (+{th - ah:+.2f})")
+        summary["latest_hit@1"] = {"all": ah, "temporal": th, "lift": th - ah, "n": len(agg["latest"])}
     if agg["trend"]:
         tm = sum(t["monotonicity"] for t, _ in agg["trend"]) / len(agg["trend"])
         am = sum(a.get("monotonicity", 0) for _, a in agg["trend"]) / len(agg["trend"])
         print(f"  trend    monotonicity: {am:.2f} -> {tm:.2f}   (+{tm - am:+.2f})")
+        summary["trend_monotonicity"] = {"all": am, "temporal": tm, "lift": tm - am, "n": len(agg["trend"])}
     if agg["window"]:
         tw = sum(t["frac_same_admission"] for t, _ in agg["window"]) / len(agg["window"])
         aw = sum(a.get("frac_same_admission", 0) for _, a in agg["window"]) / len(agg["window"])
         print(f"  window   same-adm:     {aw:.2f} -> {tw:.2f}   (+{tw - aw:+.2f})")
+        summary["window_frac_same_admission"] = {"all": aw, "temporal": tw, "lift": tw - aw, "n": len(agg["window"])}
+
+    if export_path:
+        import json
+        with open(export_path, "w") as f:
+            json.dump({"_meta": {"judge_model": FAST_MODEL, "top_k": top_k, "threshold": threshold,
+                                 "n_patients": len(patients), "n_cases_per_patient": len(TEMPORAL_CASES)},
+                       "summary": summary, "cases": cases_out}, f, indent=2)
+        print(f"\n  exported -> {export_path}")
 
 
 # ===========================================================================
@@ -304,9 +321,11 @@ if __name__ == "__main__":
     parser.add_argument("--selftest", action="store_true", help="Run metric self-test (no DB/models)")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--threshold", type=int, default=2)
+    parser.add_argument("--export", type=str, default=None,
+                        help="Write aggregate metrics JSON (no note text, no subject_ids)")
     args = parser.parse_args()
 
     if args.selftest:
         _selftest()
     else:
-        run_temporal_eval(top_k=args.top_k, threshold=args.threshold)
+        run_temporal_eval(top_k=args.top_k, threshold=args.threshold, export_path=args.export)

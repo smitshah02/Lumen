@@ -19,7 +19,7 @@ services:
       # in a GENERATED column, so the server's collation must not drift.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
-      - "5434:5432"
+      - "${LUMEN_PG_PORT:-5434}:5432"
     volumes:
       - lumen_pgdata:/var/lib/postgresql/data
     # Defaults are too small to build HNSW indexes over note_chunks without
@@ -46,6 +46,10 @@ services:
       start_period: 10s
 
 volumes:
+  # External on purpose: `docker compose down -v` can never delete it.
+  # Default = the existing local volume (created before this file). On a new
+  # machine:  docker volume create lumen_pgdata
+  #            LUMEN_PG_VOLUME=lumen_pgdata docker compose up -d
   lumen_pgdata:
     external: true
-    name: a97106af77bd529ca2bae536543c28826d5830ac45406d2f2e84a8fbefb62e9c
+    name: ${LUMEN_PG_VOLUME:-a97106af77bd529ca2bae536543c28826d5830ac45406d2f2e84a8fbefb62e9c}

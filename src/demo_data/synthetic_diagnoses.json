@@ -1,0 +1,850 @@
+[
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000011,
+  "seq_num": 1,
+  "icd_code": "I5023",
+  "icd_version": 10,
+  "description": "Acute on chronic systolic heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000011,
+  "seq_num": 2,
+  "icd_code": "I110",
+  "icd_version": 10,
+  "description": "Hypertensive heart disease with heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000011,
+  "seq_num": 3,
+  "icd_code": "I2510",
+  "icd_version": 10,
+  "description": "Coronary artery disease"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000011,
+  "seq_num": 4,
+  "icd_code": "E785",
+  "icd_version": 10,
+  "description": "Hyperlipidemia"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000012,
+  "seq_num": 1,
+  "icd_code": "I5023",
+  "icd_version": 10,
+  "description": "Acute on chronic systolic heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000012,
+  "seq_num": 2,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000012,
+  "seq_num": 3,
+  "icd_code": "I110",
+  "icd_version": 10,
+  "description": "Hypertensive heart disease with heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000012,
+  "seq_num": 4,
+  "icd_code": "I2510",
+  "icd_version": 10,
+  "description": "Coronary artery disease"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000013,
+  "seq_num": 1,
+  "icd_code": "I5023",
+  "icd_version": 10,
+  "description": "Acute on chronic systolic heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000013,
+  "seq_num": 2,
+  "icd_code": "I255",
+  "icd_version": 10,
+  "description": "Ischemic cardiomyopathy"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000013,
+  "seq_num": 3,
+  "icd_code": "I110",
+  "icd_version": 10,
+  "description": "Hypertensive heart disease with heart failure"
+ },
+ {
+  "subject_id": 90000001,
+  "hadm_id": 91000013,
+  "seq_num": 4,
+  "icd_code": "I340",
+  "icd_version": 10,
+  "description": "Nonrheumatic mitral valve insufficiency"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000021,
+  "seq_num": 1,
+  "icd_code": "E1165",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hyperglycemia"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000021,
+  "seq_num": 2,
+  "icd_code": "E1122",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic chronic kidney disease"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000021,
+  "seq_num": 3,
+  "icd_code": "N184",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 4"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000021,
+  "seq_num": 4,
+  "icd_code": "E860",
+  "icd_version": 10,
+  "description": "Dehydration"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000021,
+  "seq_num": 5,
+  "icd_code": "I129",
+  "icd_version": 10,
+  "description": "Hypertensive chronic kidney disease"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000022,
+  "seq_num": 1,
+  "icd_code": "L03115",
+  "icd_version": 10,
+  "description": "Cellulitis of right lower limb"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000022,
+  "seq_num": 2,
+  "icd_code": "E1140",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic neuropathy"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000022,
+  "seq_num": 3,
+  "icd_code": "E1122",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic chronic kidney disease"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000022,
+  "seq_num": 4,
+  "icd_code": "N184",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 4"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000023,
+  "seq_num": 1,
+  "icd_code": "E875",
+  "icd_version": 10,
+  "description": "Hyperkalemia"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000023,
+  "seq_num": 2,
+  "icd_code": "N184",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 4"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000023,
+  "seq_num": 3,
+  "icd_code": "E1122",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic chronic kidney disease"
+ },
+ {
+  "subject_id": 90000002,
+  "hadm_id": 91000023,
+  "seq_num": 4,
+  "icd_code": "I129",
+  "icd_version": 10,
+  "description": "Hypertensive chronic kidney disease"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000031,
+  "seq_num": 1,
+  "icd_code": "J181",
+  "icd_version": 10,
+  "description": "Lobar pneumonia, right lower lobe"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000031,
+  "seq_num": 2,
+  "icd_code": "J9601",
+  "icd_version": 10,
+  "description": "Acute respiratory failure with hypoxia"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000031,
+  "seq_num": 3,
+  "icd_code": "J441",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease with acute exacerbation"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000031,
+  "seq_num": 4,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000032,
+  "seq_num": 1,
+  "icd_code": "J441",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease with acute exacerbation"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000032,
+  "seq_num": 2,
+  "icd_code": "J069",
+  "icd_version": 10,
+  "description": "Acute upper respiratory infection"
+ },
+ {
+  "subject_id": 90000003,
+  "hadm_id": 91000032,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000041,
+  "seq_num": 1,
+  "icd_code": "I4891",
+  "icd_version": 10,
+  "description": "Atrial fibrillation"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000041,
+  "seq_num": 2,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000041,
+  "seq_num": 3,
+  "icd_code": "E039",
+  "icd_version": 10,
+  "description": "Hypothyroidism"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000042,
+  "seq_num": 1,
+  "icd_code": "K254",
+  "icd_version": 10,
+  "description": "Chronic gastric ulcer with hemorrhage"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000042,
+  "seq_num": 2,
+  "icd_code": "D62",
+  "icd_version": 10,
+  "description": "Acute posthemorrhagic anemia"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000042,
+  "seq_num": 3,
+  "icd_code": "I4891",
+  "icd_version": 10,
+  "description": "Atrial fibrillation"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000042,
+  "seq_num": 4,
+  "icd_code": "Z7901",
+  "icd_version": 10,
+  "description": "Long term use of anticoagulants"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000043,
+  "seq_num": 1,
+  "icd_code": "I4819",
+  "icd_version": 10,
+  "description": "Other persistent atrial fibrillation"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000043,
+  "seq_num": 2,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000004,
+  "hadm_id": 91000043,
+  "seq_num": 3,
+  "icd_code": "Z7901",
+  "icd_version": 10,
+  "description": "Long term use of anticoagulants"
+ },
+ {
+  "subject_id": 90000005,
+  "hadm_id": 91000051,
+  "seq_num": 1,
+  "icd_code": "D500",
+  "icd_version": 10,
+  "description": "Iron deficiency anemia secondary to chronic blood loss"
+ },
+ {
+  "subject_id": 90000005,
+  "hadm_id": 91000051,
+  "seq_num": 2,
+  "icd_code": "N920",
+  "icd_version": 10,
+  "description": "Excessive and frequent menstruation"
+ },
+ {
+  "subject_id": 90000005,
+  "hadm_id": 91000051,
+  "seq_num": 3,
+  "icd_code": "D251",
+  "icd_version": 10,
+  "description": "Intramural leiomyoma of uterus"
+ },
+ {
+  "subject_id": 90000005,
+  "hadm_id": 91000052,
+  "seq_num": 1,
+  "icd_code": "D251",
+  "icd_version": 10,
+  "description": "Intramural leiomyoma of uterus"
+ },
+ {
+  "subject_id": 90000005,
+  "hadm_id": 91000052,
+  "seq_num": 2,
+  "icd_code": "D500",
+  "icd_version": 10,
+  "description": "Iron deficiency anemia secondary to chronic blood loss"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000061,
+  "seq_num": 1,
+  "icd_code": "I160",
+  "icd_version": 10,
+  "description": "Hypertensive urgency"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000061,
+  "seq_num": 2,
+  "icd_code": "G4733",
+  "icd_version": 10,
+  "description": "Obstructive sleep apnea"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000061,
+  "seq_num": 3,
+  "icd_code": "R7303",
+  "icd_version": 10,
+  "description": "Prediabetes"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000062,
+  "seq_num": 1,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000062,
+  "seq_num": 2,
+  "icd_code": "R0789",
+  "icd_version": 10,
+  "description": "Other chest pain"
+ },
+ {
+  "subject_id": 90000006,
+  "hadm_id": 91000062,
+  "seq_num": 3,
+  "icd_code": "G4733",
+  "icd_version": 10,
+  "description": "Obstructive sleep apnea"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000071,
+  "seq_num": 1,
+  "icd_code": "I5033",
+  "icd_version": 10,
+  "description": "Acute on chronic diastolic heart failure"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000071,
+  "seq_num": 2,
+  "icd_code": "I4821",
+  "icd_version": 10,
+  "description": "Permanent atrial fibrillation"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000071,
+  "seq_num": 3,
+  "icd_code": "I110",
+  "icd_version": 10,
+  "description": "Hypertensive heart disease with heart failure"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000071,
+  "seq_num": 4,
+  "icd_code": "E669",
+  "icd_version": 10,
+  "description": "Obesity"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000071,
+  "seq_num": 5,
+  "icd_code": "G4733",
+  "icd_version": 10,
+  "description": "Obstructive sleep apnea"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000072,
+  "seq_num": 1,
+  "icd_code": "I5033",
+  "icd_version": 10,
+  "description": "Acute on chronic diastolic heart failure"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000072,
+  "seq_num": 2,
+  "icd_code": "I4821",
+  "icd_version": 10,
+  "description": "Permanent atrial fibrillation"
+ },
+ {
+  "subject_id": 90000007,
+  "hadm_id": 91000072,
+  "seq_num": 3,
+  "icd_code": "I110",
+  "icd_version": 10,
+  "description": "Hypertensive heart disease with heart failure"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000081,
+  "seq_num": 1,
+  "icd_code": "A419",
+  "icd_version": 10,
+  "description": "Sepsis, unspecified organism"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000081,
+  "seq_num": 2,
+  "icd_code": "J181",
+  "icd_version": 10,
+  "description": "Lobar pneumonia, left lower lobe"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000081,
+  "seq_num": 3,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000081,
+  "seq_num": 4,
+  "icd_code": "G20",
+  "icd_version": 10,
+  "description": "Parkinson disease"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000081,
+  "seq_num": 5,
+  "icd_code": "R1310",
+  "icd_version": 10,
+  "description": "Dysphagia"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000082,
+  "seq_num": 1,
+  "icd_code": "J690",
+  "icd_version": 10,
+  "description": "Pneumonitis due to inhalation of food and vomit"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000082,
+  "seq_num": 2,
+  "icd_code": "G20",
+  "icd_version": 10,
+  "description": "Parkinson disease"
+ },
+ {
+  "subject_id": 90000008,
+  "hadm_id": 91000082,
+  "seq_num": 3,
+  "icd_code": "R1310",
+  "icd_version": 10,
+  "description": "Dysphagia"
+ },
+ {
+  "subject_id": 90000009,
+  "hadm_id": 91000091,
+  "seq_num": 1,
+  "icd_code": "E1165",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hyperglycemia"
+ },
+ {
+  "subject_id": 90000009,
+  "hadm_id": 91000091,
+  "seq_num": 2,
+  "icd_code": "E669",
+  "icd_version": 10,
+  "description": "Obesity"
+ },
+ {
+  "subject_id": 90000009,
+  "hadm_id": 91000091,
+  "seq_num": 3,
+  "icd_code": "K760",
+  "icd_version": 10,
+  "description": "Fatty liver disease"
+ },
+ {
+  "subject_id": 90000009,
+  "hadm_id": 91000092,
+  "seq_num": 1,
+  "icd_code": "E11649",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hypoglycemia without coma"
+ },
+ {
+  "subject_id": 90000009,
+  "hadm_id": 91000092,
+  "seq_num": 2,
+  "icd_code": "E669",
+  "icd_version": 10,
+  "description": "Obesity"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000101,
+  "seq_num": 1,
+  "icd_code": "J441",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease with acute exacerbation"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000101,
+  "seq_num": 2,
+  "icd_code": "J9602",
+  "icd_version": 10,
+  "description": "Acute respiratory failure with hypercapnia"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000101,
+  "seq_num": 3,
+  "icd_code": "M810",
+  "icd_version": 10,
+  "description": "Osteoporosis"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000101,
+  "seq_num": 4,
+  "icd_code": "F419",
+  "icd_version": 10,
+  "description": "Anxiety disorder"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000102,
+  "seq_num": 1,
+  "icd_code": "J441",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease with acute exacerbation"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000102,
+  "seq_num": 2,
+  "icd_code": "F419",
+  "icd_version": 10,
+  "description": "Anxiety disorder"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000103,
+  "seq_num": 1,
+  "icd_code": "J441",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease with acute exacerbation"
+ },
+ {
+  "subject_id": 90000010,
+  "hadm_id": 91000103,
+  "seq_num": 2,
+  "icd_code": "J9611",
+  "icd_version": 10,
+  "description": "Chronic respiratory failure with hypoxia"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000111,
+  "seq_num": 1,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000111,
+  "seq_num": 2,
+  "icd_code": "N1831",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 3a"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000111,
+  "seq_num": 3,
+  "icd_code": "E860",
+  "icd_version": 10,
+  "description": "Dehydration"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000111,
+  "seq_num": 4,
+  "icd_code": "A084",
+  "icd_version": 10,
+  "description": "Viral intestinal infection"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000111,
+  "seq_num": 5,
+  "icd_code": "I129",
+  "icd_version": 10,
+  "description": "Hypertensive chronic kidney disease"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000112,
+  "seq_num": 1,
+  "icd_code": "R55",
+  "icd_version": 10,
+  "description": "Syncope and collapse"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000112,
+  "seq_num": 2,
+  "icd_code": "I951",
+  "icd_version": 10,
+  "description": "Orthostatic hypotension"
+ },
+ {
+  "subject_id": 90000011,
+  "hadm_id": 91000112,
+  "seq_num": 3,
+  "icd_code": "N1831",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 3a"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000121,
+  "seq_num": 1,
+  "icd_code": "I214",
+  "icd_version": 10,
+  "description": "Non-ST elevation myocardial infarction"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000121,
+  "seq_num": 2,
+  "icd_code": "I2510",
+  "icd_version": 10,
+  "description": "Coronary artery disease"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000121,
+  "seq_num": 3,
+  "icd_code": "I255",
+  "icd_version": 10,
+  "description": "Ischemic cardiomyopathy"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000121,
+  "seq_num": 4,
+  "icd_code": "E119",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000121,
+  "seq_num": 5,
+  "icd_code": "F17210",
+  "icd_version": 10,
+  "description": "Nicotine dependence, cigarettes"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000122,
+  "seq_num": 1,
+  "icd_code": "I2510",
+  "icd_version": 10,
+  "description": "Coronary artery disease"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000122,
+  "seq_num": 2,
+  "icd_code": "Z951",
+  "icd_version": 10,
+  "description": "Presence of aortocoronary bypass graft"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000122,
+  "seq_num": 3,
+  "icd_code": "I4891",
+  "icd_version": 10,
+  "description": "Postoperative atrial fibrillation"
+ },
+ {
+  "subject_id": 90000012,
+  "hadm_id": 91000122,
+  "seq_num": 4,
+  "icd_code": "E119",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000131,
+  "seq_num": 1,
+  "icd_code": "E875",
+  "icd_version": 10,
+  "description": "Hyperkalemia"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000131,
+  "seq_num": 2,
+  "icd_code": "N184",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 4"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000131,
+  "seq_num": 3,
+  "icd_code": "D631",
+  "icd_version": 10,
+  "description": "Anemia in chronic kidney disease"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000131,
+  "seq_num": 4,
+  "icd_code": "I129",
+  "icd_version": 10,
+  "description": "Hypertensive chronic kidney disease"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000132,
+  "seq_num": 1,
+  "icd_code": "N184",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 4"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000132,
+  "seq_num": 2,
+  "icd_code": "D631",
+  "icd_version": 10,
+  "description": "Anemia in chronic kidney disease"
+ },
+ {
+  "subject_id": 90000013,
+  "hadm_id": 91000132,
+  "seq_num": 3,
+  "icd_code": "I129",
+  "icd_version": 10,
+  "description": "Hypertensive chronic kidney disease"
+ }
+]

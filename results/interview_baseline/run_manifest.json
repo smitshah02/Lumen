@@ -1,0 +1,126 @@
+{
+  "generated_at": "2026-09-18T14:16:08+00:00",
+  "git_sha": "40eae7c3615e601edf5643291c527c9b12477f66",
+  "branch": "longitudinal-day1",
+  "dirty_worktree": true,
+  "dirty_files": [
+    "src/evals/eval_temporal.py"
+  ],
+  "dirty_note": "only change: optional --export flag in src/evals/eval_temporal.py (no scoring/retrieval change)",
+  "python_version": "3.14.5rc1",
+  "ollama_version": "0.31.1",
+  "hardware": "Apple Silicon, 16 GB RAM, torch MPS",
+  "llm": {
+    "LUMEN_LLM_MAIN": "qwen3:8b",
+    "LUMEN_LLM_FAST": "qwen3:8b",
+    "ollama_digests": {
+      "qwen3:8b": "500a1f067a9f",
+      "qwen2.5:7b": "845dbda0ea48",
+      "qwen2.5:14b": "7cdf5a0187d5"
+    }
+  },
+  "judge": {
+    "retrieval_eval": {
+      "model": "qwen2.5:14b",
+      "backend": "local Ollama (no Groq)",
+      "prompt_version": "v2",
+      "temperature": 0.0,
+      "num_ctx": 2048,
+      "threshold": 2,
+      "scale": "0-3",
+      "cache": ".cache/llm_judge_ollama.json"
+    },
+    "temporal_eval": {
+      "model": "qwen3:8b (LUMEN_LLM_FAST)",
+      "backend": "local Ollama",
+      "prompt_version": "v2",
+      "threshold": 2,
+      "cache": ".cache/llm_judge.json"
+    }
+  },
+  "embedding_model": {
+    "query": "ncbi/MedCPT-Query-Encoder",
+    "article": "ncbi/MedCPT-Article-Encoder",
+    "hf_revision": {
+      "query": "d83a36cc6b8e3a5c5e9d9d6ba156808c1643dcbc",
+      "article": "d05a736da4bb84ee4057b7f7999485be6ed85465"
+    }
+  },
+  "reranker_model": {
+    "bge": "BAAI/bge-reranker-v2-m3 (models/bge-reranker, hf rev 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e)",
+    "medcpt_cross_encoder": "models/medcpt-cross-encoder (hf rev 71caf65d4927987813984f54c284405a13fcca49)"
+  },
+  "top_k": 5,
+  "pool_k": 10,
+  "golden_query_count": 28,
+  "golden_categories": {
+    "medications": 5,
+    "labs": 5,
+    "diagnosis": 5,
+    "plain_language": 5,
+    "sections": 5,
+    "imaging": 3
+  },
+  "retriever_config": {
+    "source": "src/evals/retrieval_configs.py (mirrors HybridRetriever.search)",
+    "configs": [
+      "BM25 Only",
+      "Vector Only (MedCPT)",
+      "Hybrid RRF",
+      "Hybrid + BGE Reranker",
+      "Hybrid + MedCPT Cross-Enc"
+    ],
+    "bm25": {
+      "top_n": 60,
+      "min_tokens": 40,
+      "query_expansion": "expand_query, first 8 expansions"
+    },
+    "vector": {
+      "top_n": 60,
+      "min_tokens": 40,
+      "hnsw_ef_search": 1000,
+      "LUMEN_HNSW_EF_SEARCH": "unset (default 1000)"
+    },
+    "rrf": {
+      "k": 60,
+      "bm25_weight": 1.0,
+      "vector_weight": 1.2,
+      "overlap_bonus": 0.5
+    },
+    "dedup_max_per_note": 2,
+    "temporal_mode": "all (corpus-wide eval)",
+    "rerank": {
+      "candidates": 40,
+      "context_window": 1,
+      "max_context_tokens": 600,
+      "fallback_threshold": 0.35
+    }
+  },
+  "environment_overrides": {
+    "LUMEN_TRACING": "0 for all eval runs (Langfuse off; no effect on scoring)"
+  },
+  "commands": [
+    "python -m src.retrieval.temporal_fix",
+    "python src/evals/eval_temporal.py --selftest",
+    "python -m src.evals.llm_judge",
+    "python -m src.evals.eval_egress",
+    "python -m src.deid.test_pipeline",
+    "python -m src.llm.local_client",
+    "python -m src.evals.retrieve_pool --out <scratch>/pooled_interview_baseline.json --pool-k 10",
+    "python -m src.evals.judge_and_score --in <scratch>/pooled_interview_baseline.json --export <scratch>/retrieval_export.json",
+    "python -m src.evals.eval_temporal --export <scratch>/temporal_export.json"
+  ],
+  "raw_artifacts_not_saved": "pooled retrieval JSON (contains note text) and full logs kept outside the repo",
+  "result_files": [
+    "retrieval_metrics.json",
+    "temporal_metrics.json",
+    "deterministic_checks.json",
+    "run_manifest.json"
+  ],
+  "supersedes": [
+    "results.json",
+    "results_baseline.json",
+    "results_smoke.json",
+    "evals/retrieval_results.json"
+  ]
+}

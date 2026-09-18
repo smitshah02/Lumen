@@ -1,0 +1,423 @@
+{
+  "set": "dev",
+  "pool": "dev metrics use one shared pool: canonical 5 configs top-10 + all 69 dev variants top-10, judged once by local qwen2.5:14b (prompt v2, threshold 2). Recall/nDCG therefore differ slightly from results/interview_baseline, whose pool is the canonical 5 configs only.",
+  "pairs": {
+    "bm25_only": {
+      "with_expansion": {
+        "n": 20,
+        "precision@5": 0.7075,
+        "recall@5": 0.1375,
+        "mrr": 0.825,
+        "ndcg@5": 0.5393,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.7,
+            "recall@5": 0.1265,
+            "mrr": 0.8125,
+            "ndcg@5": 0.5044
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 1.0,
+            "recall@5": 0.225,
+            "mrr": 1.0,
+            "ndcg@5": 0.75
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.5,
+            "recall@5": 0.1035,
+            "mrr": 0.5625,
+            "ndcg@5": 0.3617
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.7333,
+            "recall@5": 0.0926,
+            "mrr": 0.8333,
+            "ndcg@5": 0.6058
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.7833,
+            "recall@5": 0.1702,
+            "mrr": 0.8333,
+            "ndcg@5": 0.5714
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.7,
+            "recall@5": 0.1482,
+            "mrr": 1.0,
+            "ndcg@5": 0.5725
+          }
+        }
+      },
+      "without_expansion": {
+        "n": 20,
+        "precision@5": 0.7775,
+        "recall@5": 0.1386,
+        "mrr": 0.85,
+        "ndcg@5": 0.5934,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.95,
+            "recall@5": 0.1341,
+            "mrr": 1.0,
+            "ndcg@5": 0.6628
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 1.0,
+            "recall@5": 0.225,
+            "mrr": 1.0,
+            "ndcg@5": 0.75
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.7,
+            "recall@5": 0.125,
+            "mrr": 0.75,
+            "ndcg@5": 0.5506
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 1.0,
+            "recall@5": 0.1172,
+            "mrr": 1.0,
+            "ndcg@5": 0.8289
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.3833,
+            "recall@5": 0.1136,
+            "mrr": 0.3333,
+            "ndcg@5": 0.2457
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.7,
+            "recall@5": 0.1482,
+            "mrr": 1.0,
+            "ndcg@5": 0.5725
+          }
+        }
+      }
+    },
+    "hybrid_rrf_current": {
+      "with_expansion": {
+        "n": 20,
+        "precision@5": 0.58,
+        "recall@5": 0.1073,
+        "mrr": 0.6917,
+        "ndcg@5": 0.4723,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.2,
+            "recall@5": 0.0373,
+            "mrr": 0.3333,
+            "ndcg@5": 0.2293
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.586
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.65,
+            "recall@5": 0.1182,
+            "mrr": 0.75,
+            "ndcg@5": 0.583
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.6667,
+            "recall@5": 0.0785,
+            "mrr": 0.6667,
+            "ndcg@5": 0.5646
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.6,
+            "recall@5": 0.1527,
+            "mrr": 0.8333,
+            "ndcg@5": 0.4505
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.65,
+            "recall@5": 0.1077,
+            "mrr": 0.75,
+            "ndcg@5": 0.4952
+          }
+        }
+      },
+      "without_expansion": {
+        "n": 20,
+        "precision@5": 0.58,
+        "recall@5": 0.1073,
+        "mrr": 0.6917,
+        "ndcg@5": 0.4625,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.2,
+            "recall@5": 0.0373,
+            "mrr": 0.3333,
+            "ndcg@5": 0.2293
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.586
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.65,
+            "recall@5": 0.1182,
+            "mrr": 0.75,
+            "ndcg@5": 0.583
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.6667,
+            "recall@5": 0.0785,
+            "mrr": 0.6667,
+            "ndcg@5": 0.4988
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.6,
+            "recall@5": 0.1527,
+            "mrr": 0.8333,
+            "ndcg@5": 0.4505
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.65,
+            "recall@5": 0.1077,
+            "mrr": 0.75,
+            "ndcg@5": 0.4952
+          }
+        }
+      }
+    },
+    "hybrid_bge_current": {
+      "with_expansion": {
+        "n": 20,
+        "precision@5": 0.75,
+        "recall@5": 0.1468,
+        "mrr": 0.8667,
+        "ndcg@5": 0.6408,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.65,
+            "recall@5": 0.1184,
+            "mrr": 0.875,
+            "ndcg@5": 0.582
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.6837
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.85,
+            "recall@5": 0.175,
+            "mrr": 1.0,
+            "ndcg@5": 0.7468
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.6667,
+            "recall@5": 0.0785,
+            "mrr": 0.6667,
+            "ndcg@5": 0.6823
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.7333,
+            "recall@5": 0.1663,
+            "mrr": 0.6111,
+            "ndcg@5": 0.5551
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.75,
+            "recall@5": 0.1571,
+            "mrr": 1.0,
+            "ndcg@5": 0.605
+          }
+        }
+      },
+      "without_expansion": {
+        "n": 20,
+        "precision@5": 0.8,
+        "recall@5": 0.155,
+        "mrr": 0.9,
+        "ndcg@5": 0.6861,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.75,
+            "recall@5": 0.1323,
+            "mrr": 0.875,
+            "ndcg@5": 0.6817
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.6837
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.9,
+            "recall@5": 0.1907,
+            "mrr": 0.875,
+            "ndcg@5": 0.7685
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.8,
+            "recall@5": 0.094,
+            "mrr": 0.8333,
+            "ndcg@5": 0.7672
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.7333,
+            "recall@5": 0.1663,
+            "mrr": 0.8333,
+            "ndcg@5": 0.6109
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.75,
+            "recall@5": 0.1571,
+            "mrr": 1.0,
+            "ndcg@5": 0.605
+          }
+        }
+      }
+    },
+    "hybrid_bge_selected_weights": {
+      "with_expansion": {
+        "n": 20,
+        "precision@5": 0.85,
+        "recall@5": 0.1581,
+        "mrr": 0.9375,
+        "ndcg@5": 0.6719,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 0.9,
+            "recall@5": 0.1509,
+            "mrr": 1.0,
+            "ndcg@5": 0.6267
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.6837
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.75,
+            "recall@5": 0.1535,
+            "mrr": 0.8125,
+            "ndcg@5": 0.6075
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 0.8667,
+            "recall@5": 0.1049,
+            "mrr": 1.0,
+            "ndcg@5": 0.7701
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.8667,
+            "recall@5": 0.1878,
+            "mrr": 0.8333,
+            "ndcg@5": 0.7456
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.85,
+            "recall@5": 0.1665,
+            "mrr": 1.0,
+            "ndcg@5": 0.6469
+          }
+        }
+      },
+      "without_expansion": {
+        "n": 20,
+        "precision@5": 0.9,
+        "recall@5": 0.1675,
+        "mrr": 0.95,
+        "ndcg@5": 0.7524,
+        "by_category": {
+          "diagnosis": {
+            "n": 4,
+            "precision@5": 1.0,
+            "recall@5": 0.1679,
+            "mrr": 1.0,
+            "ndcg@5": 0.8299
+          },
+          "imaging": {
+            "n": 2,
+            "precision@5": 0.9,
+            "recall@5": 0.2,
+            "mrr": 1.0,
+            "ndcg@5": 0.6837
+          },
+          "labs": {
+            "n": 4,
+            "precision@5": 0.9,
+            "recall@5": 0.1907,
+            "mrr": 0.875,
+            "ndcg@5": 0.7685
+          },
+          "medications": {
+            "n": 3,
+            "precision@5": 1.0,
+            "recall@5": 0.1172,
+            "mrr": 1.0,
+            "ndcg@5": 0.9399
+          },
+          "plain_language": {
+            "n": 3,
+            "precision@5": 0.7333,
+            "recall@5": 0.1663,
+            "mrr": 0.8333,
+            "ndcg@5": 0.6268
+          },
+          "sections": {
+            "n": 4,
+            "precision@5": 0.85,
+            "recall@5": 0.1665,
+            "mrr": 1.0,
+            "ndcg@5": 0.6469
+          }
+        }
+      }
+    }
+  },
+  "finding": "expansion off improves diagnosis, labs, medications; hurts plain_language (dev n=3); imaging/sections unchanged. No category-specific logic implemented."
+}
