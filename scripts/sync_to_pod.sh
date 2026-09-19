@@ -20,7 +20,11 @@ FILES=(requirements.txt src
 
 rev="$(git rev-parse HEAD) dirty=$([ -n "$(git status --porcelain -- "${FILES[@]}")" ] && echo yes || echo no)"
 "${SSH[@]}" "$TARGET" "mkdir -p $DEST"
-rsync -azR --delete --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'src/reranker/' \
+# /workspace on RunPod can be an object-backed FUSE mount (geesefs): no chown/chmod,
+# no temp-file rename. So no -a (it implies -pgoD): copy content + file mtimes only,
+# never owner/group/perms or directory times, and write files in place.
+rsync -rtzR --omit-dir-times --no-perms --no-owner --no-group --inplace --delete \
+  --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'src/reranker/' \
   -e "${SSH[*]}" "${FILES[@]}" "$TARGET:$DEST/"
 printf '%s\n' "$rev" | "${SSH[@]}" "$TARGET" "cat > $DEST/REVISION"
 echo "synced to $TARGET:$DEST ($rev)"
