@@ -2,7 +2,7 @@
 Graph smoke runner
 ==================
     python -m src.agents.run_graph
-    python -m src.agents.run_graph --query "current medications" --subject 10000032
+    python -m src.agents.run_graph --query "current medications" --subject <subject_id>
     python -m src.agents.run_graph --thread demo-1 --history
 """
 

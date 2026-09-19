@@ -166,7 +166,7 @@ Ask a question:
 ```bash
 ollama serve && ollama pull qwen2.5:14b
 python -m src.generation.answer_generator \
-    "abnormal potassium labs" --subject 10014354 --top-k 6
+    "abnormal potassium labs" --subject <subject_id> --top-k 6
 ```
 
 ---

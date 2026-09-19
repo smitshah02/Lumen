@@ -1,0 +1,82 @@
+# Lumen SYNTHETIC demo stack: API + Postgres/pgvector + Ollama.
+#
+# Synthetic data only (LUMEN_DATA_PLANE=demo, database lumen_demo). Separate
+# Compose project and volumes, so it never touches the research `lumen-pg`
+# container or its volume. Only the API port is published.
+#
+#   docker compose -f docker-compose.demo.yml build
+#   scripts/init_demo_stack.sh                        # one-time, idempotent
+#   docker compose -f docker-compose.demo.yml up -d
+#   docker compose -f docker-compose.demo.yml down    # keeps volumes
+#
+# LUMEN_DEMO_LLM_HOST overrides where the API sends LLM calls (default: the
+# ollama service). On a laptop without enough Docker memory for qwen3:8b, point
+# it at the host: LUMEN_DEMO_LLM_HOST=http://host.docker.internal:11434
+
+name: lumen-demo
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: lumen_demo
+      # Local synthetic-demo default only; set LUMEN_DEMO_PG_PASSWORD anywhere else.
+      POSTGRES_PASSWORD: ${LUMEN_DEMO_PG_PASSWORD:-lumen-demo-local-only}
+      POSTGRES_DB: lumen_demo
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "maintenance_work_mem=256MB"]
+    volumes:
+      - demo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumen_demo -d lumen_demo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: lumen-api:demo
+    environment:
+      LUMEN_DATA_PLANE: demo          # fixed: this stack never serves the research plane
+      LUMEN_DEMO_DATABASE_URL: postgresql://lumen_demo:${LUMEN_DEMO_PG_PASSWORD:-lumen-demo-local-only}@db:5432/lumen_demo
+      LUMEN_LLM_HOST: ${LUMEN_DEMO_LLM_HOST:-http://ollama:11434}
+      LUMEN_LLM_MAIN: qwen3:8b
+      LUMEN_LLM_FAST: qwen3:8b
+      LUMEN_MODELS_DIR: /models
+      LUMEN_TRACING: "0"
+    volumes:
+      - models:/models
+    ports:
+      - "${LUMEN_API_BIND:-127.0.0.1}:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      # Healthy == /ready: database + indexed corpus + LLM host + qwen3:8b present.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=8)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  demo_pgdata:
+  ollama_models:
+  models:

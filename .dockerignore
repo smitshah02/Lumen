@@ -1,0 +1,49 @@
+# Lumen image build context — ALLOWLIST. Nothing enters the image unless listed.
+# The repo holds MIMIC-derived data, backups, caches and secrets; none of it may
+# reach an image. Deny everything, allow only what the API needs, then re-deny
+# sensitive patterns inside the allowed paths.
+*
+
+!requirements.txt
+!src/
+!scripts/load_synthetic_demo.py
+!scripts/fetch_models.py
+!scripts/demo_smoke_test.py
+!.env.example
+
+# --- explicit denies (also apply inside allowed directories) ---------------
+.git
+.venv
+venv
+.env
+.env.*
+**/.env
+**/.env.*
+API_keys.*
+**/API_keys.*
+data/
+models/
+backups/
+*.dump
+**/*.dump
+.cache/
+**/.cache/
+pooled*.json
+**/pooled*.json
+tune_*.json
+**/tune_*.json
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.DS_Store
+**/.DS_Store
+langfuse-v3-old-DO-NOT-RUN/
+docs/
+results/
+# MIMIC-derived reranker training data (raw note text) lives under src/
+src/reranker/reranker_training_data/
+src/reranker/
+
+# re-allow the safe example env file after the .env.* deny above
+!.env.example

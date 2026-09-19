@@ -5,7 +5,7 @@ Launches the server over stdio and exercises every tool — the same
 transport Claude Desktop uses, without needing Node.
 
     LUMEN_DATA_PLANE=demo     python -m src.mcp_server.test_client
-    LUMEN_DATA_PLANE=research python -m src.mcp_server.test_client --subject 10000032
+    LUMEN_DATA_PLANE=research python -m src.mcp_server.test_client --subject <subject_id>
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def main() -> int:
     ap.add_argument("--lab", default="potassium")
     args = ap.parse_args()
     subject = args.subject if args.subject is not None else (
-        90001 if os.environ.get("LUMEN_DATA_PLANE") == "demo" else 10000032)
+        90001 if os.environ.get("LUMEN_DATA_PLANE") == "demo" else 90000001)
     asyncio.run(run(subject, args.lab))
     return 0
 

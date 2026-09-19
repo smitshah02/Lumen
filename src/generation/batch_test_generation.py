@@ -22,14 +22,14 @@ Usage:
     ollama serve            # (separate terminal, if not already running)
 
     # default question set:
-    python -m src.generation.batch_test_generation --subject 10882916 --top-k 8
+    python -m src.generation.batch_test_generation --subject <subject_id> --top-k 8
 
     # your own questions, one per line in a file:
-    python -m src.generation.batch_test_generation --subject 10882916 --file questions.txt
+    python -m src.generation.batch_test_generation --subject <subject_id> --file questions.txt
 
     # pick model / export:
-    python -m src.generation.batch_test_generation --subject 10882916 \
-        --model qwen2.5:7b --top-k 8 --export sweep_10882916.json
+    python -m src.generation.batch_test_generation --subject <subject_id> \
+        --model qwen2.5:7b --top-k 8 --export sweep_<subject_id>.json
 """
 from __future__ import annotations
 

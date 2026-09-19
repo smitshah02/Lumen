@@ -25,13 +25,13 @@ Requires a running Ollama server with the model pulled:
 Usage (library):
     from src.generation.answer_generator import AnswerGenerator
     gen = AnswerGenerator()
-    out = gen.answer("What were the patient's potassium levels?", subject_id=10014354)
+    out = gen.answer("What were the patient's potassium levels?", subject_id=90000001)
     print(out.answer)
     for s in out.sources_used:
         print(s["tag"], s["note_type"], s["charttime"], s["chunk_id"])
 
 Usage (CLI):
-    python -m src.generation.answer_generator "abnormal potassium labs" --subject 10014354 --top-k 6
+    python -m src.generation.answer_generator "abnormal potassium labs" --subject <subject_id> --top-k 6
 """
 from __future__ import annotations
 

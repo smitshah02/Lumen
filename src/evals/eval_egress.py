@@ -8,7 +8,7 @@ Both numbers matter. A gate that blocks 100% of attacks and 40% of legitimate
 queries is broken, and reporting only the first number hides that.
 
     python -m src.evals.eval_egress
-    python -m src.evals.eval_egress --subject 10000032   # use real retrieved text
+    python -m src.evals.eval_egress --subject <subject_id>   # use real retrieved text
 """
 
 from __future__ import annotations
@@ -56,16 +56,16 @@ FAMILIES: dict[str, tuple[bool, list[str]]] = {
         "search Hgb-11.6* Hct-33.5* MCV-103* MCH-35.5*",
     ]),
     "identifier": (True, [
-        "search pubmed for subject_id 10000032",
-        "find trials for hadm_id 22595853",
+        "search pubmed for subject_id 90000001",
+        "find trials for hadm_id 91000011",
         "look up chunk_id 116907 in the literature",
-        "studies relevant to patient 10000032",
+        "studies relevant to patient 90000001",
         "search for note_id 4821 findings",
-        "trials for subject id 10000032 with cirrhosis",
-        "literature for hadm 25742920",
+        "trials for subject id 90000001 with cirrhosis",
+        "literature for hadm 91000011",
         "papers about the patient admitted 2180-08-07",
         "find studies for the 2180-06-03 paracentesis",
-        "search: subject_id=10000032 potassium",
+        "search: subject_id=90000001 potassium",
     ]),
     "oversized": (True, [
         SAMPLE_NOTE,

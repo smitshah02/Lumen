@@ -27,7 +27,7 @@ Usage:
     from src.retrieval.hybrid_retriever_v2 import HybridRetriever
 
     retriever = HybridRetriever()
-    results = retriever.search("fluid overload swollen legs", subject_id=10000032)
+    results = retriever.search("fluid overload swollen legs", subject_id=90000001)
 """
 
 from __future__ import annotations
@@ -711,7 +711,7 @@ def apply_temporal_filter(
         #
         # The additive boost alone cannot do this: it is capped at boost_weight
         # (0.20) while the newest record routinely sits a larger distance down
-        # the relevance ranking — measured gap 0.44 on subject 10882916 for
+        # the relevance ranking — measured gap 0.44 on one research-cohort patient for
         # "most recent creatinine value", so the newest record could never
         # surface no matter how recent it was.
         kept.sort(
@@ -877,7 +877,7 @@ class HybridRetriever:
         """
         Run the full hybrid retrieval pipeline.
         """
-        t0 = time.time()
+        t0 = time.perf_counter()   # monotonic: wall clock can jump (e.g. VM time sync)
 
         # An empty query has no answer. This used to return nothing only because
         # the vector branch was too starved to return anything; with ef_search
@@ -979,7 +979,7 @@ class HybridRetriever:
         )
         results = ordered[:top_k]
 
-        elapsed = time.time() - t0
+        elapsed = time.perf_counter() - t0
         add_timing("retrieval_ms", elapsed * 1000)
         exp_str = f", +{len(expansions)} expanded" if expansions else ""
         logger.info(

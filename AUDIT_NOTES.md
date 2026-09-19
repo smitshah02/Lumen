@@ -178,7 +178,7 @@ Root cause chain (each step measured):
 
 ## Phase 6 — LangGraph
 - Graph runs END-TO-END on a real input. `python -m src.agents.run_graph --query "most recent
-  creatinine value" --subject 10219419` → trail `triage -> patient_retrieval -> synthesis ->
+  creatinine value" --subject REDACTED_1` → trail `triage -> patient_retrieval -> synthesis ->
   verification -> finalize`, `next=()`, answer cited [S1], verified 1/1.
 - Refuse branch works: out-of-scope query → `triage -> refuse`, terminates.
 - Checkpointer: **real PostgresSaver** on a psycopg3 pool; `checkpoints` table has 143 rows.
@@ -445,16 +445,16 @@ operator and the `vector_cosine_ops` index. The NaN→zeros fallback never fired
 
 ## Phase 4/9 — TEMPORAL EVAL RESULT (`python -m src.evals.eval_temporal`) — the differentiator fails
 ```
-Selected patients: [(10882916, 354 notes, 345 times), (11296936, 326, 312)]
+Selected patients: [(REDACTED_2, 354 notes, 345 times), (REDACTED_3, 326, 312)]
 
---- patient 10882916 ---
+--- patient REDACTED_2 ---
   temp_latest_creatinine  hit@1 temporal=False all=False  (newest at rank 6 / 6)
   temp_latest_hgb         hit@1 temporal=False all=False  (newest at rank 9 / 10)
   temp_latest_meds        hit@1 temporal=False all=False  (newest at rank 5 / 10)
   temp_trend_creatinine   monotonicity temporal=0.00 all=1.00  (2 timepoints)
   temp_trend_potassium    monotonicity temporal=0.50 all=0.50  (7 timepoints)
   temp_window_labs        same-admission temporal=0.33 all=0.10  (n=3)
---- patient 11296936 ---
+--- patient REDACTED_3 ---
   temp_latest_creatinine  hit@1 temporal=False all=False  (newest at rank 4 / 5)
   temp_latest_hgb         hit@1 temporal=False all=False  (newest at rank 7 / 10)
   temp_latest_meds        hit@1 temporal=False all=False  (newest at rank 5 / 10)
@@ -473,7 +473,7 @@ Selected patients: [(10882916, 354 notes, 345 times), (11296936, 326, 312)]
 - Display bug: the lift is printed as `+{value:+.2f}` so a negative lift renders `+-0.23`.
 - Sample is tiny: 2 patients, 6 cases, 1 n/a.
 
-### ROOT CAUSE — proven with before/after on patient 10882916
+### ROOT CAUSE — proven with before/after on patient REDACTED_2
 `apply_temporal_filter` runs at **stage 6**; `BGEReranker.rerank` runs at **stage 8** and does
 `result.final_score = sigmoid(logit)` then `results.sort(key=rerank_score, reverse=True)` —
 it **never reads rrf_score**, so everything stage 6 did to the ordering is discarded.
@@ -498,14 +498,14 @@ fell back to RRF order), so here the boost magnitude — not the reranker — is
 checked 6 patients x 7 queries -> 420 returned chunks
 chunks belonging to a DIFFERENT subject_id: 0
 nonexistent subject_id=999999999 -> 0 results (expect 0)
-subject_id=0 (falsy) -> 5 results, subjects=[10493948, 10505380, 10853368, 10980491, 11312381]
+subject_id=0 (falsy) -> 5 results, subjects=[REDACTED_4, REDACTED_5, REDACTED_6, REDACTED_7, REDACTED_8]
 ```
 - **0 cross-patient leaks in 420 chunks.** Scoping is enforced in SQL in BOTH branches and is
   parameterised, so query text cannot reach the filter. NOT a critical finding. VERIFIED WORKING.
 - A nonexistent patient returns 0 results — no silent fallback to corpus-wide search.
 - **CONFIRMED latent defect:** `subject_id=0` returns 5 chunks from **5 different patients**.
   `if subject_id:` (falsy) at hybrid_retriever_v2.py:194,340 silently drops the filter.
-  Not reachable today (MIMIC subject_ids start at 10000032; MCP and the graph pass None or a
+  Not reachable today (MIMIC subject_ids are positive 8-digit integers; MCP and the graph pass None or a
   real id), but a caller that coerces a missing value to 0 would get unscoped corpus-wide search.
   Fix: `if subject_id is not None:` — 2 lines.
 
