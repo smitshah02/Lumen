@@ -32,6 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
 from src.llm import local_client
+from src.obs import tracing
 from src.mcp_server.planes import VALID_PLANES
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
                              current_timings, Timer)
@@ -76,7 +77,11 @@ async def lifespan(app: FastAPI):
     if DATA_PLANE not in VALID_PLANES:
         raise RuntimeError(f"LUMEN_DATA_PLANE={DATA_PLANE!r}; expected one of {sorted(VALID_PLANES)}")
     log_event(logger, "startup", database=EXPECTED_DB, model=local_client.MAIN_MODEL)
+    ts = tracing.status()
+    log_event(logger, "tracing_config", tracing_enabled=ts["enabled"], tracing_host=ts["host"],
+              tracing_state=ts["state"], reason=ts.get("policy"))
     yield
+    tracing.flush()                  # send buffered spans before the process exits
     if _graph is not None:
         from src.agents.graph import close_pools
         close_pools()
@@ -238,6 +243,8 @@ async def ready(request: Request):
     request.state.outcome = "ready" if ok else "not_ready"
     body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "database": EXPECTED_DB,
             "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL}, "dependencies": deps,
+            # informational only: an unreachable observability backend never makes the API unready
+            "tracing": tracing.status(),
             "request_id": request.state.request_id}
     return JSONResponse(status_code=200 if ok else 503, content=body)
 

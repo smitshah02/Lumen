@@ -29,7 +29,7 @@ ALLOWED_FIELDS = frozenset({
     "data_plane", "thread_id", "result_count", "top_k", "temporal_mode", "model", "tier",
     "prompt_tokens", "completion_tokens", "query_type", "review_status", "needs_human_review",
     "n_citations", "llm_calls", "llm_ms", "retrieval_ms", "error", "error_type", "dependency",
-    "database", "client",
+    "database", "client", "reason", "tracing_host", "tracing_enabled", "tracing_state",
 })
 
 _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("lumen_request_id", default=None)

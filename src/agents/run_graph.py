@@ -30,9 +30,19 @@ def build_config(thread_id: str, tags=("lumen", "agent-graph"), metadata: dict |
 def run_once(graph, query: str, subject_id, thread_id: str, tags=("lumen", "agent-graph"),
              metadata: dict | None = None) -> tuple[dict, dict]:
     """One end-to-end graph run. Returns (invoke output, config). An output
-    containing "__interrupt__" means the run is checkpointed at human_review."""
+    containing "__interrupt__" means the run is checkpointed at human_review.
+
+    With tracing on, the run is one Langfuse trace: a root span (session =
+    thread_id, safe ids as metadata) with the graph callbacks, node spans and
+    LLM generations nested under it."""
+    from src.storage import DATA_PLANE
+    from src.llm.local_client import MAIN_MODEL
     config = build_config(thread_id, tags, metadata)
-    out = graph.invoke({"query": query, "subject_id": subject_id, "thread_id": thread_id}, config=config)
+    trace_md = {"thread_id": thread_id, "data_plane": DATA_PLANE, "model": MAIN_MODEL, **(metadata or {})}
+    with tracing.root_trace("lumen.graph", session_id=thread_id, metadata=trace_md, tags=list(tags)):
+        out = graph.invoke({"query": query, "subject_id": subject_id, "thread_id": thread_id}, config=config)
+        tracing.annotate(query_type=out.get("query_type"), review_status=out.get("review_status"),
+                         human_review_required="__interrupt__" in out)
     return out, config
 
 

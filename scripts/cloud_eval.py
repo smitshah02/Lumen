@@ -6,6 +6,7 @@ Writes aggregate-only JSON — no note text, no answers, no secrets:
     results/cloud_run/deployment_manifest.json   environment, versions, corpus counts
     results/cloud_run/smoke_test.json            health/ready/retrieve/ask/human-review + GPU checks
     results/cloud_run/performance.json           1 warm-up (excluded) + golden-QA /ask timings
+    results/cloud_run/tracing_smoke.json         optional: one /ask + tracing status (mode `tracing`)
 
     cd /workspace/lumen/repo && set -a && . /root/lumen-runtime/lumen.env && set +a
     /root/lumen-runtime/venv/bin/python scripts/cloud_eval.py all --out /workspace/lumen/results/cloud_run
@@ -19,6 +20,7 @@ import math
 import sys
 import json
 import time
+import uuid
 import argparse
 import platform
 import statistics
@@ -109,7 +111,19 @@ def manifest(out: Path) -> None:
         "data_plane": storage.DATA_PLANE, "database": storage.engine.url.database,
         "synthetic_counts": counts,
         "api_bind": os.environ.get("LUMEN_API_BIND", "127.0.0.1"),
+        "tracing": _tracing_view(),
     })
+
+
+def _tracing_view() -> dict:
+    """The API process's own tracing status (/ready), else this process's config. No keys."""
+    try:
+        tr = requests.get(f"{API}/ready", timeout=30).json().get("tracing") or {}
+    except Exception:
+        from src.obs import tracing
+        tr = tracing.status()
+    return {"tracing_enabled": bool(tr.get("enabled")), "tracing_provider": "langfuse",
+            "tracing_host": tr.get("host"), "tracing_state": tr.get("state")}
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +233,45 @@ def perf(out: Path) -> None:
     })
 
 
+def tracing_smoke(out: Path) -> None:
+    """One synthetic /ask with tracing status. PASS/FAIL reflects the application only;
+    an unreachable or unverifiable observability backend is reported, never fatal."""
+    rid = f"cloud-trace-{uuid.uuid4().hex[:8]}"
+    code, a, client_ms = _ask(CREAT, rid)
+    app_ok = code == 200 and a.get("status") in ("completed", "human_review_required")
+    view = _tracing_view()                     # after the /ask, so the API has tried to connect
+    backend = {"checked": False, "trace_found": None}
+    if view["tracing_state"] == "active" and os.environ.get("LANGFUSE_PUBLIC_KEY") and a.get("thread_id"):
+        backend["checked"] = True
+        try:
+            from langfuse import get_client
+            lf = get_client()
+            for _ in range(10):                # the API exports spans in the background
+                time.sleep(3)
+                if lf.api.trace.list(session_id=a["thread_id"], limit=5).data:
+                    backend["trace_found"] = True
+                    break
+            else:
+                backend["trace_found"] = False
+        except Exception as e:
+            backend["error_type"] = type(e).__name__
+    tracing_result = ("disabled" if not view["tracing_enabled"] else
+                      "verified" if backend.get("trace_found") else
+                      view["tracing_state"] if view["tracing_state"] != "active" else "enabled_unverified")
+    _write(out, "tracing_smoke.json", {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "request_id": rid, "thread_id": a.get("thread_id"), "http": code, "status": a.get("status"),
+        "client_ms": client_ms, "app_result": "PASS" if app_ok else "FAIL",
+        "tracing": view, "backend": backend, "tracing_result": tracing_result,
+    })
+
+
 def main() -> int:
     if os.environ.get("LUMEN_DATA_PLANE") != "demo":
         print("refusing: LUMEN_DATA_PLANE must be demo", file=sys.stderr)
         return 2
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all"])
+    ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all", "tracing"])
     ap.add_argument("--out", default=str(LUMEN_ROOT / "results" / "cloud_run"))
     a = ap.parse_args()
     out = Path(a.out)
@@ -234,6 +281,8 @@ def main() -> int:
         smoke(out)
     if a.mode in ("perf", "all"):
         perf(out)
+    if a.mode == "tracing":
+        tracing_smoke(out)
     return 0
 
 
