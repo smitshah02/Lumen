@@ -74,6 +74,29 @@ def _write(out: Path, name: str, obj: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def read_provenance(path: Path) -> dict:
+    """Source provenance written by scripts/sync_to_pod.sh from the LOCAL git repo.
+    The Pod has no .git, so nothing is inferred remotely: anything missing or
+    malformed is reported as null / "unknown", never guessed."""
+    out = {"git_sha": None, "branch": None, "dirty_worktree": "unknown", "generated_at": None,
+           "provenance_source": "missing"}
+    try:
+        d = json.loads(path.read_text())
+    except FileNotFoundError:
+        return out
+    except Exception:
+        return {**out, "provenance_source": "unreadable"}
+    sha, branch, dirty = d.get("git_sha"), d.get("branch"), d.get("dirty_worktree")
+    return {"git_sha": sha if isinstance(sha, str) and _SHA_RE.fullmatch(sha) else None,
+            "branch": branch if isinstance(branch, str) and branch else None,
+            "dirty_worktree": dirty if isinstance(dirty, bool) else "unknown",
+            "generated_at": d.get("generated_at") if isinstance(d.get("generated_at"), str) else None,
+            "provenance_source": "sync_metadata"}
+
+
 def manifest(out: Path) -> None:
     import torch
     from sqlalchemy import text
@@ -82,8 +105,7 @@ def manifest(out: Path) -> None:
     sys.path.insert(0, str(ROOT / "scripts"))
     from fetch_models import MODELS
 
-    rev = (ROOT / "REVISION").read_text().strip() if (ROOT / "REVISION").exists() else _sh("git", "-C", str(ROOT), "rev-parse", "HEAD")
-    sha, _, dirty = rev.partition(" dirty=")
+    prov = read_provenance(ROOT / ".deployment_source.json")
     gpu = [g.strip() for g in _sh("nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader").split(",")]
     mem_kb = next((int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemTotal")), 0)
     tags = requests.get(f"{OLLAMA}/api/tags", timeout=10).json().get("models", [])
@@ -95,7 +117,8 @@ def manifest(out: Path) -> None:
                   "non_synthetic_subjects": q("SELECT COUNT(*) FROM patients WHERE subject_id NOT BETWEEN 90000000 AND 90999999")}
     _write(out, "deployment_manifest.json", {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "git_sha": sha, "dirty_worktree": dirty or "unknown",
+        "git_sha": prov["git_sha"], "branch": prov["branch"], "dirty_worktree": prov["dirty_worktree"],
+        "source_generated_at": prov["generated_at"], "provenance_source": prov["provenance_source"],
         "platform": f"{platform.system()}/{platform.machine()}",
         "gpu": {"name": gpu[0] if gpu else None, "vram": gpu[1] if len(gpu) > 1 else None,
                 "driver": gpu[2] if len(gpu) > 2 else None},
@@ -144,6 +167,65 @@ def _gpu_evidence() -> dict:
     }
 
 
+# Controlled post-verification states. Synthetic, fixed text; no LLM involved.
+_REVIEW_EVIDENCE = [{"label": "S1", "chunk_id": -1, "source_type": "note", "note_type": "discharge",
+                     "charttime": None, "score": 0.0, "text": "SYNTHETIC controlled evidence for routing check."}]
+_REVIEW_CASES = {
+    # name: (state after `verification`, expected route, expected pause, expected review_status)
+    "unsupported_claim": ({"needs_human_review": True, "review_status": "pending",
+                           "verification": {"checked": 1, "unsupported": 1, "synthesis_failed": False},
+                           "citations": [{"claim": "Claim [S1].", "label": "S1", "chunk_id": -1, "verified": False,
+                                          "verification_note": "unsupported: controlled routing check"}]},
+                          "human_review", True, "pending"),
+    "all_verified": ({"needs_human_review": False, "review_status": "auto_approved",
+                      "verification": {"checked": 1, "unsupported": 0, "synthesis_failed": False},
+                      "citations": [{"claim": "Claim [S1].", "label": "S1", "chunk_id": -1, "verified": True,
+                                     "verification_note": "supported: controlled routing check"}]},
+                     "finalize", False, "auto_approved"),
+    "synthesis_failed": ({"needs_human_review": True, "review_status": "failed", "draft_answer": "",
+                          "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": True},
+                          "citations": []},
+                         "human_review", False, "failed"),
+}
+
+
+def review_routing_check(graph) -> dict:
+    """Deterministic human-review routing check on the REAL compiled graph.
+
+    For each case, a fresh thread is seeded with a controlled state as if the
+    production `verification` node had just produced it (update_state(...,
+    as_node="verification")), then resumed with invoke(None). Execution goes
+    through the production conditional edge (route_after_verification) and the
+    real human_review/finalize nodes — neither calls an LLM. PASS requires, per
+    case, the expected route, pause (interrupt) and review_status. A pause is
+    what the API reports as status "human_review_required"."""
+    from src.agents.graph import route_after_verification
+    cases, ok_all = {}, True
+    for name, (seed, want_route, want_pause, want_status) in _REVIEW_CASES.items():
+        tid = f"smoke-routing-{name}-{uuid.uuid4().hex[:8]}"
+        cfg = {"configurable": {"thread_id": tid}}
+        state = {"query": "controlled routing check", "subject_id": 90000001, "thread_id": tid,
+                 "draft_answer": "Claim [S1].", "patient_evidence": _REVIEW_EVIDENCE, **seed}
+        route = route_after_verification(state)
+        graph.update_state(cfg, state, as_node="verification")
+        next_node = list(graph.get_state(cfg).next)
+        out = graph.invoke(None, cfg)
+        after = graph.get_state(cfg).values
+        paused = "__interrupt__" in out
+        got = {"route": route, "next_node": next_node[0] if next_node else None, "paused": paused,
+               "review_status": after.get("review_status"),
+               "flagged": len(out["__interrupt__"][0].value.get("flagged", [])) if paused else 0,
+               "api_status_equivalent": "human_review_required" if paused else
+                                        ("failed" if after.get("review_status") == "failed" else "completed")}
+        ok = (route == want_route and got["next_node"] == want_route and paused == want_pause
+              and got["review_status"] == want_status)
+        ok_all &= ok
+        cases[name] = {**got, "expected": {"route": want_route, "paused": want_pause, "review_status": want_status},
+                       "result": "PASS" if ok else "FAIL"}
+    return {"method": "controlled post-verification states resumed through the production graph (no LLM)",
+            "cases": cases, "result": "PASS" if ok_all else "FAIL"}
+
+
 def smoke(out: Path) -> None:
     res = {}
     r = requests.get(f"{API}/health", timeout=10)
@@ -166,10 +248,18 @@ def smoke(out: Path) -> None:
     fact = {"creatinine", "1.4", "mg/dl"} <= _tokens(a.get("answer", ""))
     res["ask"] = {"http": code, "status": a.get("status"), "fact_1.4_mg_dL": fact, "valid_citation": cites_ok,
                   "timings": a.get("timings"), "result": "PASS" if code == 200 and a.get("status") == "completed" and fact and cites_ok else "FAIL"}
+    from src.agents.graph import build_graph, close_pools
+    graph, _ = build_graph()                  # the production graph + its Postgres checkpointer
+    try:
+        res["human_review_routing"] = review_routing_check(graph)
+    finally:
+        close_pools()
+    # Informational only: whether a live LLM answer gets flagged is stochastic.
     code, b, _ = _ask(BREATH, "cloud-smoke-review")
-    res["human_review"] = {"http": code, "status": b.get("status"), "flagged_claims": b.get("flagged_claims"),
-                           "answer_is_draft": b.get("answer_is_draft"),
-                           "result": "PASS" if code == 200 and b.get("status") == "human_review_required" else "FAIL"}
+    res["human_review_live_observation"] = {
+        "http": code, "status": b.get("status"), "flagged_claims": b.get("flagged_claims"),
+        "observed_human_review": b.get("status") == "human_review_required",
+        "note": "stochastic LLM output; informational, not a pass/fail criterion"}
     res["gpu"] = _gpu_evidence()
     _write(out, "smoke_test.json", {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), **res})
 
