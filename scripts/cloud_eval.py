@@ -7,8 +7,8 @@ Writes aggregate-only JSON — no note text, no answers, no secrets:
     results/cloud_run/smoke_test.json            health/ready/retrieve/ask/human-review + GPU checks
     results/cloud_run/performance.json           1 warm-up (excluded) + golden-QA /ask timings
 
-    cd /workspace/lumen/repo && set -a && . ../lumen.env && set +a
-    ../venv/bin/python scripts/cloud_eval.py all --out /workspace/lumen/results/cloud_run
+    cd /workspace/lumen/repo && set -a && . /root/lumen-runtime/lumen.env && set +a
+    /root/lumen-runtime/venv/bin/python scripts/cloud_eval.py all --out /workspace/lumen/results/cloud_run
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 API = "http://127.0.0.1:8000"
 OLLAMA = os.environ.get("LUMEN_LLM_HOST", "http://127.0.0.1:11434")
-LUMEN_ROOT = Path(os.environ.get("LUMEN_ROOT", "/workspace/lumen"))
+LUMEN_ROOT = Path(os.environ.get("LUMEN_ROOT", "/workspace/lumen"))                    # persistent: results
+RUNTIME_ROOT = Path(os.environ.get("LUMEN_RUNTIME_ROOT", "/root/lumen-runtime"))      # Pod-local: logs, pid
 GOLDEN = json.loads((ROOT / "src/demo_data/golden_qa.json").read_text())
 CREAT = {"subject_id": 90000001, "query": "What was the most recent creatinine?"}
 BREATH = {"subject_id": 90000003, "query": "Why was the patient having trouble breathing?"}
@@ -116,10 +117,10 @@ def _gpu_evidence() -> dict:
     ps = requests.get(f"{OLLAMA}/api/ps", timeout=10).json().get("models", [])
     q = next((m for m in ps if m.get("name", "").startswith("qwen3")), {})
     frac = (q.get("size_vram", 0) / q["size"]) if q.get("size") else 0.0
-    log = LUMEN_ROOT / "logs" / "api.log"
+    log = RUNTIME_ROOT / "logs" / "api.log"
     reranker_cuda = log.exists() and any("Reranker loaded" in l and "on cuda" in l for l in log.read_text().splitlines())
     apps = _sh("nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader")
-    api_pid = (LUMEN_ROOT / "api.pid").read_text().strip() if (LUMEN_ROOT / "api.pid").exists() else ""
+    api_pid = (RUNTIME_ROOT / "api.pid").read_text().strip() if (RUNTIME_ROOT / "api.pid").exists() else ""
     api_on_gpu = any(l.split(",")[0].strip() == api_pid for l in apps.splitlines()) if api_pid else False
     return {
         "ollama": {"model_loaded": bool(q), "vram_fraction": round(frac, 3), "result": "PASS" if frac >= 0.99 else "FAIL"},
