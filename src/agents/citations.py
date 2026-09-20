@@ -29,6 +29,89 @@ def split_claims(answer: str) -> list[str]:
     return [s.strip() for s in _SENT_RE.split(answer.strip()) if s.strip()]
 
 
+# A fragment made of nothing but citation markers (plus stray whitespace or a
+# trailing period). Models emit these as a line of their own after the sentence
+# they belong to — "The patient is taking furosemide.\n[S5]" — which the
+# sentence splitter then reads as two claims: one uncited and one meaningless.
+_CITE_ONLY_RE = re.compile(r"^(?:\s*\[[SLGP]\d+\]\s*)+\.?\s*$")
+_PARA_RE = re.compile(r"(\n[ \t]*\n)")
+_TRAILING_PUNCT_RE = re.compile(r"([.!?]+)\s*$")
+
+
+def normalize_orphan_citations(answer: str) -> str:
+    """Attach a citation-only fragment to the sentence IMMEDIATELY before it.
+
+    Purely a formatting repair, applied before any claim is verified. It moves
+    a marker the model already wrote onto the claim it already wrote it for.
+    It never invents a marker, never searches the rest of the answer for one to
+    rescue an uncited claim, and never reasons about whether a source supports
+    anything.
+
+    Deliberately narrow:
+      * the fragment must consist only of citation markers
+      * it attaches to the directly preceding claim, nothing further back
+      * it never crosses a blank line, so an orphan opening a new paragraph
+        stays where it is
+      * with no preceding claim in the paragraph it is left alone
+    A substantive sentence with no adjacent marker stays uncited, and an
+    uncited claim is still an unsupported claim.
+    """
+    if not answer or "[" not in answer:
+        return answer
+    parts = _PARA_RE.split(answer)
+    return "".join(p if _PARA_RE.fullmatch(p) else _normalize_paragraph(p) for p in parts)
+
+
+def _attach(prev: str, fragment: str) -> str:
+    """Move the fragment's markers onto `prev`, inside its trailing punctuation."""
+    # Scope the duplicate check to the sentence being attached to. `prev` may be
+    # a whole line of several sentences, and an [S1] belonging to an earlier one
+    # must not suppress the [S1] the model wrote for this one.
+    tail_claim = (split_claims(prev) or [prev])[-1]
+    already = set(CITE_RE.findall(tail_claim))
+    add = [f"[{m}]" for m in CITE_RE.findall(fragment) if m not in already]
+    if not add:
+        return prev
+    m = _TRAILING_PUNCT_RE.search(prev)
+    tail, base = (m.group(1), prev[:m.start()]) if m else ("", prev)
+    return f"{base.rstrip()} {' '.join(add)}{tail}"
+
+
+def _normalize_paragraph(text: str) -> str:
+    if not text.strip():
+        return text
+    lead = text[:len(text) - len(text.lstrip())]
+
+    # Pass 1, by line. A marker on a line of its own belongs to the line above.
+    # This has to run before the sentence splitter, which only breaks after
+    # .!? — so an orphan line was being absorbed into the sentence that FOLLOWS
+    # it, crediting the next claim with a citation written for the previous one.
+    lines, changed = [], False
+    for line in text.splitlines():
+        if lines and line.strip() and _CITE_ONLY_RE.match(line):
+            prev_i = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip()), None)
+            if prev_i is not None:
+                lines[prev_i] = _attach(lines[prev_i], line)
+                changed = True
+                continue
+        lines.append(line)
+    body = "\n".join(lines)
+
+    # Pass 2, by claim. Catches a trailing orphan on the same line, e.g.
+    # "... heart failure. [S1] [S3]".
+    claims = split_claims(body)
+    merged: list[str] = []
+    for claim in claims:
+        if merged and _CITE_ONLY_RE.match(claim):
+            merged[-1] = _attach(merged[-1], claim)
+            changed = True
+            continue
+        merged.append(claim)
+    if not changed:
+        return text
+    return lead + (" ".join(merged) if len(merged) != len(claims) else body)
+
+
 def validate(answer: str, evidence: list[dict]) -> dict:
     """
     Returns:

@@ -10,7 +10,8 @@ numbered procedure for that reason.
 """
 
 TRIAGE_VERSION = "t1"
-SYNTHESIS_VERSION = "s3"   # s3: answer-only-what-was-asked + no uncited sentences
+SYNTHESIS_VERSION = "s4"   # s4: inline end-of-sentence markers, no orphan/prose citations
+                           # s3: answer-only-what-was-asked + no uncited sentences
                            # s2: evidence fenced as data + the prompt-injection rule
 VERIFY_VERSION = "v1"
 
@@ -37,8 +38,15 @@ SYNTHESIS_SYSTEM = """You are a clinical evidence assistant. You answer ONLY fro
 
 RULES — follow all of them.
 
-1. Every factual sentence must end with a citation marker naming its source, like [S1] or [G2].
+1. Every factual sentence must END with a citation marker naming its source, like [S1] or [G2], placed inside the sentence before the full stop: "Creatinine was 1.4 mg/dL [S1]." A sentence may carry more than one marker: "Creatinine rose from 1.3 to 1.8 mg/dL [S1] [S2]."
 2. Use ONLY marker labels that appear in the EVIDENCE block. Never invent a label. If you cannot support a statement with a listed label, do not write the statement.
+2a. NEVER put a marker on a line of its own, and never write a line that is only markers. This is wrong:
+      The patient is taking furosemide.
+      [S5]
+    Write this instead:
+      The patient is taking furosemide [S5].
+2b. NEVER refer to a source in prose. Do not write "as reported in S1", "according to S1", "source S1 states" or "per [S1], ...". The only valid form is a bracketed marker at the end of the sentence.
+2c. Do not open with an uncited restatement of the question. Do not write "Yes, the patient has a history of heart failure." and then cite the fact in the next sentence — write the single cited sentence: "The record documents heart failure with reduced ejection fraction [S1]."
 3. Never state a number, date, dose, or value that does not appear verbatim in the evidence.
 4. If the evidence does not answer the question, say exactly: "The available records do not contain enough information to answer this." Then stop. Do not speculate.
 5. Patient evidence [S#] describes THIS patient. Guideline evidence [G#] describes general recommendations and is NOT a statement about this patient. Never write a guideline recommendation as though it were something the patient received.

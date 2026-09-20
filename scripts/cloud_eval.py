@@ -79,6 +79,23 @@ def _tokens(text: str) -> set:
     return {t.strip(".,;:()") for t in re.sub(r"[\[\]]", " ", (text or "").lower()).split()}
 
 
+# One id per process run. /ask derives the LangGraph thread from the request id
+# (thread_id = f"api-{rid}"), and the checkpointer persists that thread. Fixed
+# ids like "cloud-perf-demo_q01" therefore RESUMED the previous benchmark's
+# thread: node_trail carries an operator.add reducer, so the trail accumulated
+# across runs, `errors` accumulated with it, and a run left paused at
+# human_review would have taken the next invoke as a resume value instead of a
+# fresh question. Scoping the id to this process gives every evaluation request
+# clean graph state while leaving the production API's conversational threading
+# exactly as it was.
+RUN_ID = uuid.uuid4().hex[:8]
+
+
+def _run_rid(name: str) -> str:
+    """A request id unique to this evaluation run, and therefore a fresh thread."""
+    return f"{name}-{RUN_ID}"
+
+
 def _ask(payload: dict, rid: str) -> tuple[int, dict, float]:
     t0 = time.perf_counter()
     r = requests.post(f"{API}/ask", json=payload, headers={"X-Request-ID": rid}, timeout=900)
@@ -273,7 +290,7 @@ def smoke(out: Path) -> None:
     hits = [x["rank"] for x in rr.get("results", []) if "creatinine 1.4 mg/dl" in " ".join(x["text"].lower().split())]
     res["retrieve"] = {"http": r.status_code, "first_rank_with_1.4_mg_dL": hits[0] if hits else None,
                        "latency_ms": rr.get("latency_ms"), "result": "PASS" if r.status_code == 200 and hits else "FAIL"}
-    code, a, _ = _ask(CREAT, "cloud-smoke-creat")
+    code, a, _ = _ask(CREAT, _run_rid("cloud-smoke-creat"))
     labels = {s["label"] for s in a.get("sources", [])}
     cites_ok = any(c["label"] in labels and c["verified"] for c in a.get("citations", [])) and \
         all(c["label"] in labels for c in a.get("citations", []) if c["label"])
@@ -287,7 +304,7 @@ def smoke(out: Path) -> None:
     finally:
         close_pools()
     # Informational only: whether a live LLM answer gets flagged is stochastic.
-    code, b, _ = _ask(BREATH, "cloud-smoke-review")
+    code, b, _ = _ask(BREATH, _run_rid("cloud-smoke-review"))
     res["human_review_live_observation"] = {
         "http": code, "status": b.get("status"), "flagged_claims": b.get("flagged_claims"),
         "observed_human_review": b.get("status") == "human_review_required",
@@ -357,11 +374,29 @@ def _summarise(rows: list[dict]) -> dict:
     }
 
 
-def perf(out: Path) -> None:
-    code, _, warm_ms = _ask({"subject_id": GOLDEN[0]["subject_id"], "query": GOLDEN[0]["query"]}, "cloud-perf-warmup")
+def _select(ids: list[str] | None) -> list[dict]:
+    """The golden questions to evaluate, in the order the caller asked for.
+
+    No ids -> the whole set. An unknown id is a hard failure: silently running
+    a different subset than the one requested makes every number in the report
+    unattributable."""
+    if not ids:
+        return list(GOLDEN)
+    by_id = {g["id"]: g for g in GOLDEN}
+    unknown = [i for i in ids if i not in by_id]
+    if unknown:
+        raise SystemExit(f"unknown query id(s): {', '.join(unknown)}. "
+                         f"Known ids: {by_id and min(by_id)}..{max(by_id)} ({len(by_id)} total)")
+    return [by_id[i] for i in ids]
+
+
+def perf(out: Path, ids: list[str] | None = None) -> None:
+    selected = _select(ids)
+    code, _, warm_ms = _ask({"subject_id": selected[0]["subject_id"], "query": selected[0]["query"]},
+                            _run_rid("cloud-perf-warmup"))
     rows = []
-    for g in GOLDEN:
-        code, a, client_ms = _ask({"subject_id": g["subject_id"], "query": g["query"]}, f"cloud-perf-{g['id']}")
+    for g in selected:
+        code, a, client_ms = _ask({"subject_id": g["subject_id"], "query": g["query"]}, _run_rid(f"cloud-perf-{g['id']}"))
         t = a.get("timings") or {}
         rows.append({"query_id": g["id"], "http": code, "status": a.get("status"),
                      "total_ms": t.get("total_ms"), "client_ms": client_ms, "retrieval_ms": t.get("retrieval_ms"),
@@ -379,10 +414,15 @@ def perf(out: Path) -> None:
 
     from src.llm import local_client
     legacy = [r for r in rows if r["query_id"] in LEGACY_IDS]
+    evaluated = [r["query_id"] for r in rows]
     _write(out, "performance.json", {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_id": RUN_ID,
         "method": "sequential /ask over src/demo_data/golden_qa.json after 1 excluded warm-up; server-side timings; "
                   "p50/p95 by nearest rank",
+        "subset": {"requested_ids": ids, "evaluated_ids": evaluated,
+                   "full_golden_set": ids is None, "n_evaluated": len(evaluated),
+                   "n_golden_total": len(GOLDEN)},
         "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL,
                    "roles": local_client.runtime_config()["roles"]},
         "warmup": {"http": code, "client_ms": warm_ms, "excluded": True},
@@ -390,7 +430,9 @@ def perf(out: Path) -> None:
         "summary": _summarise(rows),
         # demo_q01-demo_q15 are the questions the pre-optimization A40 run used.
         # Compare THIS row against a40_baseline_before; the full set is larger now.
-        "legacy_subset": {"ids": LEGACY_IDS, "summary": _summarise(legacy)},
+        "legacy_subset": {"ids": LEGACY_IDS, "evaluated": [r["query_id"] for r in legacy],
+                          "complete": len(legacy) == len(LEGACY_IDS),
+                          "summary": _summarise(legacy) if legacy else None},
         "a40_baseline_before": A40_BASELINE,
         "ollama_speed": _ollama_speed(),
         "reference_local_single_requests": REFERENCE,
@@ -403,7 +445,7 @@ def perf(out: Path) -> None:
 def tracing_smoke(out: Path) -> None:
     """One synthetic /ask with tracing status. PASS/FAIL reflects the application only;
     an unreachable or unverifiable observability backend is reported, never fatal."""
-    rid = f"cloud-trace-{uuid.uuid4().hex[:8]}"
+    rid = _run_rid("cloud-trace")
     code, a, client_ms = _ask(CREAT, rid)
     app_ok = code == 200 and a.get("status") in ("completed", "human_review_required")
     view = _tracing_view()                     # after the /ask, so the API has tried to connect
@@ -483,16 +525,15 @@ def audit(out: Path, ids: list[str] | None = None) -> None:
     from src.agents.graph import build_graph, close_pools
     from src.llm import local_client
 
-    wanted = ids or LEGACY_IDS
-    golden = {g["id"]: g for g in GOLDEN}
-    missing = [i for i in wanted if i not in golden]
-    if missing:
-        print(f"warning: not in the golden set, skipping: {missing}", file=sys.stderr)
+    selected = _select(ids or LEGACY_IDS)
+    wanted = [g["id"] for g in selected]
     rows, graph = [], build_graph()[0]
     try:
-        for qid in [i for i in wanted if i in golden]:
-            g = golden[qid]
-            tid = f"audit-{qid}-{uuid.uuid4().hex[:6]}"
+        for g in selected:
+            qid = g["id"]
+            # Run-scoped and per-query unique: an audit must never resume the
+            # checkpointed thread of an earlier audit or benchmark.
+            tid = f"audit-{qid}-{RUN_ID}-{uuid.uuid4().hex[:6]}"
             t0 = time.perf_counter()
             res = graph.invoke({"query": g["query"], "subject_id": g["subject_id"], "thread_id": tid},
                                config={"configurable": {"thread_id": tid}})
@@ -560,6 +601,7 @@ def audit(out: Path, ids: list[str] | None = None) -> None:
     escalated = [r for r in rows if r["needs_human_review"]]
     _write(out, "human_review_audit.json", {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_id": RUN_ID,
         "subset": wanted,
         "method": "production graph in-process; per-claim verifier trace from graph state. "
                   "No note text, chunks, prompts or secrets are recorded.",
@@ -597,7 +639,8 @@ def main() -> int:
     ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all", "tracing", "audit"])
     ap.add_argument("--out", default=str(LUMEN_ROOT / "results" / "cloud_run"))
     ap.add_argument("--ids", nargs="+", default=None,
-                    help="audit only: query ids to run (default: the legacy demo_q01-demo_q15 subset)")
+                    help="query ids to run, in order. perf: default is the full golden set. "
+                         "audit: default is the legacy demo_q01-demo_q15 subset.")
     a = ap.parse_args()
     out = Path(a.out)
     if a.mode in ("manifest", "all"):
@@ -605,7 +648,7 @@ def main() -> int:
     if a.mode in ("smoke", "all"):
         smoke(out)
     if a.mode in ("perf", "all"):
-        perf(out)
+        perf(out, a.ids)
     if a.mode == "tracing":
         tracing_smoke(out)
     if a.mode == "audit":

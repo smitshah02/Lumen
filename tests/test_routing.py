@@ -798,3 +798,227 @@ def test_every_claim_appears_exactly_once_in_the_audit_trace(graph_mod, spy):
     assert [t["stage"] for t in trace] == ["deterministic", "fast_model", "deterministic"]
     assert [t["final"] for t in trace] == ["supported", "unsupported", "unsupported"]
     assert all("text" not in t for t in trace)          # no source text in the trace
+
+
+# ===========================================================================
+# Citation discipline: orphan markers, prose citations, uncited claims
+# ===========================================================================
+from src.agents import citations as C  # noqa: E402
+
+
+def _labels_of(answer, evidence):
+    return [c["valid_labels"] for c in C.validate(answer, evidence).get("claims", [])]
+
+
+def test_inline_end_of_sentence_citation_is_left_alone():
+    a = "Creatinine was 1.4 mg/dL on 2024-03-18 [S1]."
+    assert C.normalize_orphan_citations(a) == a
+
+
+def test_adjacent_orphan_line_is_attached_to_the_preceding_claim():
+    out = C.normalize_orphan_citations("The patient is taking furosemide.\n[S5]")
+    assert out == "The patient is taking furosemide [S5]."
+    ev = [_ev("S5", "Furosemide 40 mg PO daily.")]
+    assert _labels_of(out, ev) == [["S5"]]
+
+
+def test_adjacent_orphan_with_several_markers_is_attached():
+    out = C.normalize_orphan_citations("He has HF [S1]. Creatinine rose.\n[S1] [S3]")
+    assert out.endswith("Creatinine rose [S1] [S3].")
+
+
+def test_orphan_on_the_same_line_after_the_sentence_is_attached():
+    out = C.normalize_orphan_citations("He has heart failure. [S1] [S3]")
+    assert out == "He has heart failure [S1] [S3]."
+
+
+def test_orphan_is_never_attached_across_a_paragraph_break():
+    a = "He has heart failure [S1].\n\n[S3]"
+    assert C.normalize_orphan_citations(a) == a
+
+
+def test_orphan_is_never_attached_to_the_sentence_that_follows_it():
+    """The marker belongs to the line above it, never the one below."""
+    out = C.normalize_orphan_citations("A [S1]. B.\n[S2]\nC [S3].")
+    ev = [_ev(l, "x") for l in ("S1", "S2", "S3")]
+    assert _labels_of(out, ev) == [["S1"], ["S2"], ["S3"]]
+
+
+def test_orphan_with_no_preceding_claim_is_left_alone():
+    a = "[S1] He has heart failure."
+    assert C.normalize_orphan_citations(a) == a
+
+
+def test_normalization_never_invents_a_marker():
+    a = "The patient is taking furosemide. The dose was increased."
+    assert C.normalize_orphan_citations(a) == a
+    assert C.extract_labels(C.normalize_orphan_citations(a)) == []
+
+
+def test_prose_citation_is_not_treated_as_a_citation():
+    """'as reported in S1' has no marker and must stay uncited — inferring one
+    would be inventing support."""
+    out = C.normalize_orphan_citations("He is on furosemide, as reported in S1.")
+    assert C.extract_labels(out) == []
+    assert C.validate(out, [_ev("S1", "x")])["claims"][0]["valid_labels"] == []
+
+
+def test_hallucinated_orphan_label_does_not_rescue_the_claim(graph_mod, spy):
+    """[S9] on its own line attaches, then gets stripped as hallucinated, and
+    the sentence is left uncited — which is unsupported."""
+    spy.reply = lambda role, m: "The patient is taking furosemide.\n[S9]"
+    out = graph_mod.synthesis({"query": "meds?", "patient_evidence": [_ev("S1", "Furosemide 40 mg.")],
+                               "guideline_evidence": [], "literature_evidence": [],
+                               "query_complexity": "simple", "classified_by": "rules"})
+    assert out["citations"][0]["labels"] == []
+    assert "[S9]" not in out["draft_answer"]
+
+
+def test_synthesis_normalizes_before_building_claims(graph_mod, spy):
+    spy.reply = lambda role, m: "The patient is taking furosemide.\n[S1]"
+    out = graph_mod.synthesis({"query": "meds?", "patient_evidence": [_ev("S1", "Furosemide 40 mg PO daily.")],
+                               "guideline_evidence": [], "literature_evidence": [],
+                               "query_complexity": "simple", "classified_by": "rules"})
+    assert out["draft_answer"] == "The patient is taking furosemide [S1]."
+    assert len(out["citations"]) == 1 and out["citations"][0]["labels"] == ["S1"]
+
+
+def test_draft_answer_and_claims_describe_the_same_text(graph_mod, spy):
+    """Stripping used to happen after validate(), so the claim list quoted text
+    the reader was never shown."""
+    spy.reply = lambda role, m: "He has heart failure [S1]. He is on dialysis [S9]."
+    out = graph_mod.synthesis({"query": "q", "patient_evidence": [_ev("S1", "Heart failure.")],
+                               "guideline_evidence": [], "literature_evidence": [],
+                               "query_complexity": "complex", "classified_by": "rules"})
+    for c in out["citations"]:
+        assert c["claim"] in out["draft_answer"]
+
+
+# --- the escalations that MUST survive --------------------------------------
+def test_uncited_substantive_claim_without_an_adjacent_marker_stays_unsupported(graph_mod, spy):
+    out = graph_mod.verification(_state([_ev()], [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),
+        _cite("The patient is taking furosemide.", [])]))
+    assert out["citations"][1]["verified"] is False
+    assert out["needs_human_review"] is True
+
+
+def test_unsupported_interpretation_still_escalates(graph_mod, spy):
+    """q07/q12-style: a trend or rhythm interpretation the source does not state."""
+    spy.reply = lambda role, m: json.dumps({"results": [
+        {"i": 1, "verdict": "unsupported", "reason": "the source does not state this"}]})
+    out = graph_mod.verification(_state(
+        [_ev(text="Creatinine 1.9 mg/dL. Creatinine 2.4 mg/dL.")],
+        [_cite("Kidney function is progressively declining toward dialysis [S1].", ["S1"])]))
+    assert out["citations"][0]["verified"] is False
+    assert out["needs_human_review"] is True and out["review_status"] == "pending"
+
+
+def test_partial_evidence_still_escalates(graph_mod, spy):
+    """q06/q09-style: the general point is present, a specific detail is not."""
+    spy.reply = lambda role, m: json.dumps({"results": [
+        {"i": 1, "verdict": "partial", "reason": "resolution is not stated"}]})
+    out = graph_mod.verification(_state(
+        [_ev(text="Near complete resolution of the consolidation.")],
+        [_cite("The pneumonia resolved completely [S1].", ["S1"])]))
+    assert out["citations"][0]["verified"] is False
+    assert out["needs_human_review"] is True
+
+
+def test_normalization_cannot_rescue_an_unsupported_claim(graph_mod, spy):
+    """An adjacent marker fixes FORMATTING, never support: the claim still has
+    to survive verification."""
+    spy.reply = lambda role, m: json.dumps({"results": [
+        {"i": 1, "verdict": "unsupported", "reason": "absent from the source"}]})
+    answer = C.normalize_orphan_citations("He was started on dialysis.\n[S1]")
+    assert answer == "He was started on dialysis [S1]."
+    out = graph_mod.verification(_state([_ev(text="Heart failure with reduced ejection fraction.")],
+                                        [_cite(answer, ["S1"])]))
+    assert out["needs_human_review"] is True
+
+
+def test_supported_cited_answer_auto_approves(graph_mod, spy):
+    ev = [_ev(text="Creatinine 1.4 mg/dL on 2024-03-18. Torsemide 20 mg PO daily.")]
+    answer = C.normalize_orphan_citations(
+        "Creatinine was 1.4 mg/dL on 2024-03-18.\n[S1] He takes torsemide 20 mg daily [S1].")
+    out = graph_mod.verification(_state(ev, [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),
+        _cite("He takes torsemide 20 mg daily [S1].", ["S1"])], draft=answer))
+    assert spy == []
+    assert all(c["verified"] for c in out["citations"])
+    assert out["review_status"] == "auto_approved"
+    assert graph_mod.route_after_verification(out) == "finalize"
+
+
+# ===========================================================================
+# Evaluation tooling: clean state per run, and --ids
+# ===========================================================================
+@pytest.fixture
+def cloud_eval_mod():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import cloud_eval
+    return cloud_eval
+
+
+def test_evaluation_request_ids_are_unique_per_run(cloud_eval_mod):
+    """/ask derives the graph thread from the request id, so a fixed id resumed
+    the previous benchmark's checkpoint and node_trail accumulated."""
+    a = cloud_eval_mod._run_rid("cloud-perf-demo_q01")
+    b = cloud_eval_mod._run_rid("cloud-perf-demo_q01")
+    assert a == b                                  # stable within one run
+    assert a.endswith(cloud_eval_mod.RUN_ID)
+    assert a != f"cloud-perf-demo_q01-{'0' * 8}"   # and scoped to this run
+
+
+def test_repeated_evaluation_runs_do_not_share_graph_threads(cloud_eval_mod, monkeypatch):
+    seen = set()
+    for run in ("run1aaaa", "run2bbbb"):
+        monkeypatch.setattr(cloud_eval_mod, "RUN_ID", run)
+        seen.add(cloud_eval_mod._run_rid("cloud-perf-demo_q01"))
+    assert len(seen) == 2
+
+
+def test_second_execution_carries_only_its_own_trail(graph_mod):
+    """node_trail has an operator.add reducer; a fresh thread must start empty."""
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.checkpoint.memory import MemorySaver
+    from src.agents.state import AgentState
+
+    b = StateGraph(AgentState)
+    b.add_node("triage", lambda s: {"node_trail": ["triage"]})
+    b.add_node("finalize", lambda s: {"node_trail": ["finalize"], "final_answer": "a"})
+    b.add_edge(START, "triage"); b.add_edge("triage", "finalize"); b.add_edge("finalize", END)
+    g = b.compile(checkpointer=MemorySaver())
+
+    payload = {"query": "same question", "subject_id": 90000001}
+    reused = {"configurable": {"thread_id": "fixed"}}
+    g.invoke({**payload, "thread_id": "fixed"}, reused)
+    again = g.invoke({**payload, "thread_id": "fixed"}, reused)
+    assert again["node_trail"] == ["triage", "finalize", "triage", "finalize"]   # the bug
+
+    fresh = {"configurable": {"thread_id": "fixed-run2"}}
+    clean = g.invoke({**payload, "thread_id": "fixed-run2"}, fresh)
+    assert clean["node_trail"] == ["triage", "finalize"]                          # the fix
+
+
+def test_perf_select_defaults_to_the_full_golden_set(cloud_eval_mod):
+    assert len(cloud_eval_mod._select(None)) == len(cloud_eval_mod.GOLDEN)
+
+
+def test_perf_select_runs_exactly_the_requested_ids_in_order(cloud_eval_mod):
+    ids = ["demo_q03", "demo_q01", "demo_q02"]
+    assert [g["id"] for g in cloud_eval_mod._select(ids)] == ids
+
+
+def test_perf_select_runs_only_the_legacy_subset(cloud_eval_mod):
+    got = cloud_eval_mod._select(cloud_eval_mod.LEGACY_IDS)
+    assert len(got) == 15
+    assert [g["id"] for g in got] == cloud_eval_mod.LEGACY_IDS
+
+
+def test_perf_select_rejects_an_unknown_id(cloud_eval_mod):
+    with pytest.raises(SystemExit) as e:
+        cloud_eval_mod._select(["demo_q01", "demo_q99"])
+    assert "demo_q99" in str(e.value)

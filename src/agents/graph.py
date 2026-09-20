@@ -404,10 +404,20 @@ def synthesis(state: AgentState) -> dict:
                 "errors": [f"synthesis: {e}"],   # reducer appends; see AgentState
                 "node_trail": _trail(state, "synthesis")}
 
-    report = citations.validate(answer, pt + gl + lit)
-    if report["bad_labels"]:
-        logger.warning(f"[synthesis] hallucinated labels {report['bad_labels']} — stripped")
-        answer = citations.strip_bad_labels(answer, pt + gl + lit)
+    ev_all = pt + gl + lit
+    # Formatting repair first: a marker the model put on a line of its own gets
+    # moved onto the sentence it was written for, so the splitter does not read
+    # one claim as an uncited sentence plus a meaningless fragment. Then strip
+    # hallucinated labels, THEN validate — so draft_answer and the claim list
+    # describe the same text. Validating before stripping left the citations
+    # carrying sentences that no longer matched the answer the user is shown.
+    answer = citations.normalize_orphan_citations(answer)
+    pre = citations.validate(answer, ev_all)
+    if pre["bad_labels"]:
+        logger.warning(f"[synthesis] hallucinated labels {pre['bad_labels']} — stripped")
+        answer = citations.strip_bad_labels(answer, ev_all)
+    report = citations.validate(answer, ev_all)
+    report["bad_labels"] = pre["bad_labels"]
 
     # `label`/`chunk_id` stay single-valued for the API contract; `labels` keeps
     # EVERY citation the sentence carried, because verification must check a
@@ -416,7 +426,7 @@ def synthesis(state: AgentState) -> dict:
         "claim": c["claim"],
         "label": c["valid_labels"][0] if c["valid_labels"] else "",
         "labels": list(c["valid_labels"]),
-        "chunk_id": next((e["chunk_id"] for e in pt + gl + lit if e["label"] == (c["valid_labels"] or [None])[0]), -1),
+        "chunk_id": next((e["chunk_id"] for e in ev_all if e["label"] == (c["valid_labels"] or [None])[0]), -1),
         "verified": False,
         "verification_note": "",
     } for c in report["claims"]]
