@@ -4,23 +4,23 @@
  "synthetic": true,
  "source": "authored fictional scenarios (src/demo_data/generate.py)",
  "counts": {
-  "synthetic_patients": 13,
-  "synthetic_admissions": 30,
-  "synthetic_diagnoses": 106,
-  "synthetic_lab_items": 14,
-  "synthetic_labs": 489,
-  "synthetic_prescriptions": 148,
-  "synthetic_notes": 52,
-  "golden_qa": 15
+  "synthetic_patients": 36,
+  "synthetic_admissions": 81,
+  "synthetic_diagnoses": 269,
+  "synthetic_lab_items": 25,
+  "synthetic_labs": 1359,
+  "synthetic_prescriptions": 385,
+  "synthetic_notes": 136,
+  "golden_qa": 40
  },
  "sha256": {
-  "synthetic_patients.json": "b0bb8e0d354e5e608e15a5b1b4943716092fbd8144eb296704629d494b52f08e",
-  "synthetic_admissions.json": "f2fff8f5810d46a973e6bdf8fe16f7809005c78d72a1bb0e3c92b8f4c537798b",
-  "synthetic_diagnoses.json": "1138a180be68a93ff89f18f5651e25fde7bbe350c975d5576810685b2dcd18eb",
-  "synthetic_lab_items.json": "8c27e8aeceb58dd0e996daebbd0f59b6adcdff41c44b3e0c2346218192d3bd2d",
-  "synthetic_labs.json": "307d80fa71640282973d229ff0b7614327d87423d57072ff02030d445faee951",
-  "synthetic_prescriptions.json": "a58e8090ff2b3eac1011152f5d07b2b1c56b4de0c48cbb2388d6eeb8cb847dad",
-  "synthetic_notes.json": "a7e35e55f59b81f5ea6b2140c04882a0faae34d5c2da07f3909ee4ae6f85231b",
-  "golden_qa.json": "d265803f08329638c72612756b04ee218b74661f5b33becf66379e0c1409b009"
+  "synthetic_patients.json": "8a8ca11600fa8531aa6938e287d11c9f341f1ac0bf6e5bf9c6163aaaae1ba247",
+  "synthetic_admissions.json": "20d81405fb595a25d596e3666d6d1ac48eead98d1a0163b5b78e73c33e9e3d97",
+  "synthetic_diagnoses.json": "992e7bdf2ab340a79d662f2cc4e26b7f045bbbd4b21160a9ec5d803359945511",
+  "synthetic_lab_items.json": "1d6a17173ea18968ddf7612a4d8cd41616c2e0b3413197fa0e84c458dfc797e0",
+  "synthetic_labs.json": "4e90e9d4dc9ac6c5c7a513afc6153cda23e927fc17af69edc1bbd784164930ac",
+  "synthetic_prescriptions.json": "672b25d5ddfa02e60968807ffc7b60e2853c6afdc3bf8292db6995189a766254",
+  "synthetic_notes.json": "bf5bf9c441cba2e1709e04c7d0ce9176b6f4ab9b3f288b3a06c95ec3fb9ac66b",
+  "golden_qa.json": "c8ee927af54b35d7a766d44726e919adf93c8679e9c3284e978a741985e4be73"
  }
 }

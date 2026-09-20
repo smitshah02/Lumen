@@ -19,10 +19,21 @@ clinical scenarios in `generate.py` (fixed seed, deterministic output).
 
 ```bash
 python -m src.demo_data.generate --check                  # files match the generator
+python -m src.demo_data.generate --validate               # integrity checks, writes nothing
 LUMEN_DATA_PLANE=demo python scripts/load_synthetic_demo.py
 LUMEN_DATA_PLANE=demo python -m src.retrieval.index_notes
 LUMEN_DATA_PLANE=demo python scripts/demo_smoke_test.py safety
 ```
 
-`golden_qa.json` holds 15 questions with deterministic expected facts.
-`manifest.json` records the seed, row counts and file hashes.
+36 fictional patients, 81 admissions and 136 notes covering readmissions, elective
+and emergency episodes, longitudinal lab trends, medication starts/stops/restarts,
+improving and deteriorating courses, and two deliberately ambiguous records.
+
+`golden_qa.json` holds 40 questions with deterministic expected facts, plus a short
+reference answer, difficulty, answer type and evidence admissions for future
+retrieval and answer-level scoring. Two questions are deliberately unanswerable or
+ambiguous. `manifest.json` records the seed, row counts and file hashes.
+
+Every build runs `validate()`: identifier ranges and uniqueness, orphan rows,
+admission date ordering and overlap, events inside their admission window, PHI
+patterns in note text, and golden questions pointing at real synthetic records.

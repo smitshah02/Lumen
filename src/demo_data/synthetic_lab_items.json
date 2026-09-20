@@ -82,5 +82,71 @@
   "label": "Bicarbonate",
   "fluid": "Blood",
   "category": "Chemistry"
+ },
+ {
+  "itemid": 990015,
+  "label": "Albumin",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990016,
+  "label": "Total Bilirubin",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990017,
+  "label": "INR",
+  "fluid": "Blood",
+  "category": "Coagulation"
+ },
+ {
+  "itemid": 990018,
+  "label": "Alanine Aminotransferase",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990019,
+  "label": "Lipase",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990020,
+  "label": "C-Reactive Protein",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990021,
+  "label": "Magnesium",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990022,
+  "label": "Calcium",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990023,
+  "label": "Thyroid Stimulating Hormone",
+  "fluid": "Blood",
+  "category": "Chemistry"
+ },
+ {
+  "itemid": 990024,
+  "label": "Absolute Neutrophil Count",
+  "fluid": "Blood",
+  "category": "Hematology"
+ },
+ {
+  "itemid": 990025,
+  "label": "Vitamin B12",
+  "fluid": "Blood",
+  "category": "Chemistry"
  }
 ]

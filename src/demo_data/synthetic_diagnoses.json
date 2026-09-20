@@ -846,5 +846,1309 @@
   "icd_code": "I129",
   "icd_version": 10,
   "description": "Hypertensive chronic kidney disease"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000141,
+  "seq_num": 1,
+  "icd_code": "K7031",
+  "icd_version": 10,
+  "description": "Alcoholic cirrhosis of liver with ascites"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000141,
+  "seq_num": 2,
+  "icd_code": "R188",
+  "icd_version": 10,
+  "description": "Other ascites"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000141,
+  "seq_num": 3,
+  "icd_code": "K766",
+  "icd_version": 10,
+  "description": "Portal hypertension"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000141,
+  "seq_num": 4,
+  "icd_code": "E119",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus without complications"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000142,
+  "seq_num": 1,
+  "icd_code": "K652",
+  "icd_version": 10,
+  "description": "Spontaneous bacterial peritonitis"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000142,
+  "seq_num": 2,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000142,
+  "seq_num": 3,
+  "icd_code": "K7031",
+  "icd_version": 10,
+  "description": "Alcoholic cirrhosis of liver with ascites"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000142,
+  "seq_num": 4,
+  "icd_code": "E871",
+  "icd_version": 10,
+  "description": "Hypo-osmolality and hyponatremia"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000143,
+  "seq_num": 1,
+  "icd_code": "K7290",
+  "icd_version": 10,
+  "description": "Hepatic failure, unspecified without coma"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000143,
+  "seq_num": 2,
+  "icd_code": "K7031",
+  "icd_version": 10,
+  "description": "Alcoholic cirrhosis of liver with ascites"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000143,
+  "seq_num": 3,
+  "icd_code": "E871",
+  "icd_version": 10,
+  "description": "Hypo-osmolality and hyponatremia"
+ },
+ {
+  "subject_id": 90000014,
+  "hadm_id": 91000143,
+  "seq_num": 4,
+  "icd_code": "K766",
+  "icd_version": 10,
+  "description": "Portal hypertension"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000151,
+  "seq_num": 1,
+  "icd_code": "K5190",
+  "icd_version": 10,
+  "description": "Ulcerative colitis, unspecified, without complications"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000151,
+  "seq_num": 2,
+  "icd_code": "D509",
+  "icd_version": 10,
+  "description": "Iron deficiency anemia"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000151,
+  "seq_num": 3,
+  "icd_code": "E876",
+  "icd_version": 10,
+  "description": "Hypokalemia"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000152,
+  "seq_num": 1,
+  "icd_code": "K5190",
+  "icd_version": 10,
+  "description": "Ulcerative colitis, unspecified, without complications"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000152,
+  "seq_num": 2,
+  "icd_code": "Z1211",
+  "icd_version": 10,
+  "description": "Encounter for screening for malignant neoplasm of colon"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000153,
+  "seq_num": 1,
+  "icd_code": "K5190",
+  "icd_version": 10,
+  "description": "Ulcerative colitis, unspecified, without complications"
+ },
+ {
+  "subject_id": 90000015,
+  "hadm_id": 91000153,
+  "seq_num": 2,
+  "icd_code": "D509",
+  "icd_version": 10,
+  "description": "Iron deficiency anemia"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000161,
+  "seq_num": 1,
+  "icd_code": "I63511",
+  "icd_version": 10,
+  "description": "Cerebral infarction due to occlusion of right middle cerebral artery"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000161,
+  "seq_num": 2,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000161,
+  "seq_num": 3,
+  "icd_code": "E785",
+  "icd_version": 10,
+  "description": "Hyperlipidemia"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000161,
+  "seq_num": 4,
+  "icd_code": "R4701",
+  "icd_version": 10,
+  "description": "Aphasia"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000162,
+  "seq_num": 1,
+  "icd_code": "G459",
+  "icd_version": 10,
+  "description": "Transient cerebral ischemic attack, unspecified"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000162,
+  "seq_num": 2,
+  "icd_code": "I480",
+  "icd_version": 10,
+  "description": "Paroxysmal atrial fibrillation"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000162,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000016,
+  "hadm_id": 91000162,
+  "seq_num": 4,
+  "icd_code": "Z8673",
+  "icd_version": 10,
+  "description": "Personal history of transient ischemic attack and cerebral infarction"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000171,
+  "seq_num": 1,
+  "icd_code": "N10",
+  "icd_version": 10,
+  "description": "Acute pyelonephritis"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000171,
+  "seq_num": 2,
+  "icd_code": "B9620",
+  "icd_version": 10,
+  "description": "Escherichia coli as the cause of diseases classified elsewhere"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000172,
+  "seq_num": 1,
+  "icd_code": "A4151",
+  "icd_version": 10,
+  "description": "Sepsis due to Escherichia coli"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000172,
+  "seq_num": 2,
+  "icd_code": "N10",
+  "icd_version": 10,
+  "description": "Acute pyelonephritis"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000172,
+  "seq_num": 3,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000173,
+  "seq_num": 1,
+  "icd_code": "N390",
+  "icd_version": 10,
+  "description": "Urinary tract infection, site not specified"
+ },
+ {
+  "subject_id": 90000017,
+  "hadm_id": 91000173,
+  "seq_num": 2,
+  "icd_code": "Z87440",
+  "icd_version": 10,
+  "description": "Personal history of urinary system disease"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000181,
+  "seq_num": 1,
+  "icd_code": "D5700",
+  "icd_version": 10,
+  "description": "Hb-SS disease with crisis, unspecified"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000181,
+  "seq_num": 2,
+  "icd_code": "M87051",
+  "icd_version": 10,
+  "description": "Idiopathic aseptic necrosis of right femur"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000181,
+  "seq_num": 3,
+  "icd_code": "G8929",
+  "icd_version": 10,
+  "description": "Other chronic pain"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000182,
+  "seq_num": 1,
+  "icd_code": "D5700",
+  "icd_version": 10,
+  "description": "Hb-SS disease with crisis, unspecified"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000182,
+  "seq_num": 2,
+  "icd_code": "Z9114",
+  "icd_version": 10,
+  "description": "Patient's other noncompliance with medication regimen"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000183,
+  "seq_num": 1,
+  "icd_code": "D5701",
+  "icd_version": 10,
+  "description": "Hb-SS disease with acute chest syndrome"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000183,
+  "seq_num": 2,
+  "icd_code": "J189",
+  "icd_version": 10,
+  "description": "Pneumonia, unspecified organism"
+ },
+ {
+  "subject_id": 90000018,
+  "hadm_id": 91000183,
+  "seq_num": 3,
+  "icd_code": "D5700",
+  "icd_version": 10,
+  "description": "Hb-SS disease with crisis, unspecified"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000191,
+  "seq_num": 1,
+  "icd_code": "K8510",
+  "icd_version": 10,
+  "description": "Biliary acute pancreatitis without necrosis or infection"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000191,
+  "seq_num": 2,
+  "icd_code": "K8020",
+  "icd_version": 10,
+  "description": "Calculus of gallbladder without cholecystitis"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000191,
+  "seq_num": 3,
+  "icd_code": "E669",
+  "icd_version": 10,
+  "description": "Obesity, unspecified"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000192,
+  "seq_num": 1,
+  "icd_code": "K811",
+  "icd_version": 10,
+  "description": "Chronic cholecystitis"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000192,
+  "seq_num": 2,
+  "icd_code": "K8020",
+  "icd_version": 10,
+  "description": "Calculus of gallbladder without cholecystitis"
+ },
+ {
+  "subject_id": 90000019,
+  "hadm_id": 91000192,
+  "seq_num": 3,
+  "icd_code": "Z98890",
+  "icd_version": 10,
+  "description": "Other specified postprocedural states"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000201,
+  "seq_num": 1,
+  "icd_code": "R042",
+  "icd_version": 10,
+  "description": "Hemoptysis"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000201,
+  "seq_num": 2,
+  "icd_code": "R911",
+  "icd_version": 10,
+  "description": "Solitary pulmonary nodule"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000201,
+  "seq_num": 3,
+  "icd_code": "J449",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease, unspecified"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000202,
+  "seq_num": 1,
+  "icd_code": "C3411",
+  "icd_version": 10,
+  "description": "Malignant neoplasm of upper lobe, right bronchus or lung"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000202,
+  "seq_num": 2,
+  "icd_code": "J9311",
+  "icd_version": 10,
+  "description": "Primary spontaneous pneumothorax"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000202,
+  "seq_num": 3,
+  "icd_code": "J449",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease, unspecified"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000203,
+  "seq_num": 1,
+  "icd_code": "J910",
+  "icd_version": 10,
+  "description": "Malignant pleural effusion"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000203,
+  "seq_num": 2,
+  "icd_code": "C3411",
+  "icd_version": 10,
+  "description": "Malignant neoplasm of upper lobe, right bronchus or lung"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000203,
+  "seq_num": 3,
+  "icd_code": "E222",
+  "icd_version": 10,
+  "description": "Syndrome of inappropriate secretion of antidiuretic hormone"
+ },
+ {
+  "subject_id": 90000020,
+  "hadm_id": 91000203,
+  "seq_num": 4,
+  "icd_code": "J449",
+  "icd_version": 10,
+  "description": "Chronic obstructive pulmonary disease, unspecified"
+ },
+ {
+  "subject_id": 90000021,
+  "hadm_id": 91000211,
+  "seq_num": 1,
+  "icd_code": "K4090",
+  "icd_version": 10,
+  "description": "Unilateral inguinal hernia without obstruction or gangrene"
+ },
+ {
+  "subject_id": 90000021,
+  "hadm_id": 91000211,
+  "seq_num": 2,
+  "icd_code": "J302",
+  "icd_version": 10,
+  "description": "Other seasonal allergic rhinitis"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000221,
+  "seq_num": 1,
+  "icd_code": "M86171",
+  "icd_version": 10,
+  "description": "Other acute osteomyelitis, right ankle and foot"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000221,
+  "seq_num": 2,
+  "icd_code": "E11621",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with foot ulcer"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000221,
+  "seq_num": 3,
+  "icd_code": "E1142",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic polyneuropathy"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000221,
+  "seq_num": 4,
+  "icd_code": "I70219",
+  "icd_version": 10,
+  "description": "Atherosclerosis of native arteries of extremities with intermittent claudication"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000222,
+  "seq_num": 1,
+  "icd_code": "I96",
+  "icd_version": 10,
+  "description": "Gangrene, not elsewhere classified"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000222,
+  "seq_num": 2,
+  "icd_code": "E1152",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with diabetic peripheral angiopathy with gangrene"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000222,
+  "seq_num": 3,
+  "icd_code": "Z89431",
+  "icd_version": 10,
+  "description": "Acquired absence of right foot"
+ },
+ {
+  "subject_id": 90000022,
+  "hadm_id": 91000222,
+  "seq_num": 4,
+  "icd_code": "I70261",
+  "icd_version": 10,
+  "description": "Atherosclerosis of native arteries of right leg with gangrene"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000231,
+  "seq_num": 1,
+  "icd_code": "I2699",
+  "icd_version": 10,
+  "description": "Other pulmonary embolism without acute cor pulmonale"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000231,
+  "seq_num": 2,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000231,
+  "seq_num": 3,
+  "icd_code": "M170",
+  "icd_version": 10,
+  "description": "Bilateral primary osteoarthritis of knee"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000232,
+  "seq_num": 1,
+  "icd_code": "K922",
+  "icd_version": 10,
+  "description": "Gastrointestinal hemorrhage, unspecified"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000232,
+  "seq_num": 2,
+  "icd_code": "K264",
+  "icd_version": 10,
+  "description": "Chronic or unspecified duodenal ulcer with hemorrhage"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000232,
+  "seq_num": 3,
+  "icd_code": "D62",
+  "icd_version": 10,
+  "description": "Acute posthemorrhagic anemia"
+ },
+ {
+  "subject_id": 90000023,
+  "hadm_id": 91000232,
+  "seq_num": 4,
+  "icd_code": "B9681",
+  "icd_version": 10,
+  "description": "Helicobacter pylori as the cause of diseases classified elsewhere"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000241,
+  "seq_num": 1,
+  "icd_code": "J189",
+  "icd_version": 10,
+  "description": "Pneumonia, unspecified organism"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000241,
+  "seq_num": 2,
+  "icd_code": "M0579",
+  "icd_version": 10,
+  "description": "Rheumatoid arthritis with rheumatoid factor, multiple sites"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000241,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000242,
+  "seq_num": 1,
+  "icd_code": "L03115",
+  "icd_version": 10,
+  "description": "Cellulitis of right lower limb"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000242,
+  "seq_num": 2,
+  "icd_code": "M0579",
+  "icd_version": 10,
+  "description": "Rheumatoid arthritis with rheumatoid factor, multiple sites"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000242,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000243,
+  "seq_num": 1,
+  "icd_code": "M0579",
+  "icd_version": 10,
+  "description": "Rheumatoid arthritis with rheumatoid factor, multiple sites"
+ },
+ {
+  "subject_id": 90000024,
+  "hadm_id": 91000243,
+  "seq_num": 2,
+  "icd_code": "M170",
+  "icd_version": 10,
+  "description": "Bilateral primary osteoarthritis of knee"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000251,
+  "seq_num": 1,
+  "icd_code": "F10239",
+  "icd_version": 10,
+  "description": "Alcohol dependence with withdrawal, unspecified"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000251,
+  "seq_num": 2,
+  "icd_code": "E876",
+  "icd_version": 10,
+  "description": "Hypokalemia"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000251,
+  "seq_num": 3,
+  "icd_code": "K760",
+  "icd_version": 10,
+  "description": "Fatty (change of) liver, not elsewhere classified"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000252,
+  "seq_num": 1,
+  "icd_code": "K7010",
+  "icd_version": 10,
+  "description": "Alcoholic hepatitis without ascites"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000252,
+  "seq_num": 2,
+  "icd_code": "F10239",
+  "icd_version": 10,
+  "description": "Alcohol dependence with withdrawal, unspecified"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000252,
+  "seq_num": 3,
+  "icd_code": "K760",
+  "icd_version": 10,
+  "description": "Fatty (change of) liver, not elsewhere classified"
+ },
+ {
+  "subject_id": 90000025,
+  "hadm_id": 91000252,
+  "seq_num": 4,
+  "icd_code": "R17",
+  "icd_version": 10,
+  "description": "Unspecified jaundice"
+ },
+ {
+  "subject_id": 90000026,
+  "hadm_id": 91000261,
+  "seq_num": 1,
+  "icd_code": "S72001A",
+  "icd_version": 10,
+  "description": "Fracture of unspecified part of neck of right femur, initial encounter"
+ },
+ {
+  "subject_id": 90000026,
+  "hadm_id": 91000261,
+  "seq_num": 2,
+  "icd_code": "F05",
+  "icd_version": 10,
+  "description": "Delirium due to known physiological condition"
+ },
+ {
+  "subject_id": 90000026,
+  "hadm_id": 91000261,
+  "seq_num": 3,
+  "icd_code": "M810",
+  "icd_version": 10,
+  "description": "Age-related osteoporosis without current pathological fracture"
+ },
+ {
+  "subject_id": 90000026,
+  "hadm_id": 91000261,
+  "seq_num": 4,
+  "icd_code": "D62",
+  "icd_version": 10,
+  "description": "Acute posthemorrhagic anemia"
+ },
+ {
+  "subject_id": 90000026,
+  "hadm_id": 91000261,
+  "seq_num": 5,
+  "icd_code": "E039",
+  "icd_version": 10,
+  "description": "Hypothyroidism, unspecified"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000271,
+  "seq_num": 1,
+  "icd_code": "J4541",
+  "icd_version": 10,
+  "description": "Moderate persistent asthma with acute exacerbation"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000271,
+  "seq_num": 2,
+  "icd_code": "J301",
+  "icd_version": 10,
+  "description": "Allergic rhinitis due to pollen"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000271,
+  "seq_num": 3,
+  "icd_code": "E876",
+  "icd_version": 10,
+  "description": "Hypokalemia"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000272,
+  "seq_num": 1,
+  "icd_code": "J4541",
+  "icd_version": 10,
+  "description": "Moderate persistent asthma with acute exacerbation"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000272,
+  "seq_num": 2,
+  "icd_code": "J3081",
+  "icd_version": 10,
+  "description": "Allergic rhinitis due to animal hair and dander"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000273,
+  "seq_num": 1,
+  "icd_code": "J4540",
+  "icd_version": 10,
+  "description": "Moderate persistent asthma, uncomplicated"
+ },
+ {
+  "subject_id": 90000027,
+  "hadm_id": 91000273,
+  "seq_num": 2,
+  "icd_code": "J3081",
+  "icd_version": 10,
+  "description": "Allergic rhinitis due to animal hair and dander"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000281,
+  "seq_num": 1,
+  "icd_code": "E0500",
+  "icd_version": 10,
+  "description": "Thyrotoxicosis with diffuse goiter without thyrotoxic crisis"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000281,
+  "seq_num": 2,
+  "icd_code": "H0520",
+  "icd_version": 10,
+  "description": "Unspecified exophthalmos"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000281,
+  "seq_num": 3,
+  "icd_code": "R002",
+  "icd_version": 10,
+  "description": "Palpitations"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000282,
+  "seq_num": 1,
+  "icd_code": "E0500",
+  "icd_version": 10,
+  "description": "Thyrotoxicosis with diffuse goiter without thyrotoxic crisis"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000282,
+  "seq_num": 2,
+  "icd_code": "E892",
+  "icd_version": 10,
+  "description": "Postprocedural hypoparathyroidism"
+ },
+ {
+  "subject_id": 90000028,
+  "hadm_id": 91000282,
+  "seq_num": 3,
+  "icd_code": "E890",
+  "icd_version": 10,
+  "description": "Postprocedural hypothyroidism"
+ },
+ {
+  "subject_id": 90000029,
+  "hadm_id": 91000291,
+  "seq_num": 1,
+  "icd_code": "N201",
+  "icd_version": 10,
+  "description": "Calculus of ureter"
+ },
+ {
+  "subject_id": 90000029,
+  "hadm_id": 91000291,
+  "seq_num": 2,
+  "icd_code": "N132",
+  "icd_version": 10,
+  "description": "Hydronephrosis with renal and ureteral calculous obstruction"
+ },
+ {
+  "subject_id": 90000029,
+  "hadm_id": 91000291,
+  "seq_num": 3,
+  "icd_code": "M109",
+  "icd_version": 10,
+  "description": "Gout, unspecified"
+ },
+ {
+  "subject_id": 90000029,
+  "hadm_id": 91000292,
+  "seq_num": 1,
+  "icd_code": "N201",
+  "icd_version": 10,
+  "description": "Calculus of ureter"
+ },
+ {
+  "subject_id": 90000029,
+  "hadm_id": 91000292,
+  "seq_num": 2,
+  "icd_code": "Z466",
+  "icd_version": 10,
+  "description": "Encounter for fitting and adjustment of urinary device"
+ },
+ {
+  "subject_id": 90000030,
+  "hadm_id": 91000301,
+  "seq_num": 1,
+  "icd_code": "B181",
+  "icd_version": 10,
+  "description": "Chronic viral hepatitis B without delta-agent"
+ },
+ {
+  "subject_id": 90000030,
+  "hadm_id": 91000301,
+  "seq_num": 2,
+  "icd_code": "K7400",
+  "icd_version": 10,
+  "description": "Hepatic fibrosis, unspecified"
+ },
+ {
+  "subject_id": 90000030,
+  "hadm_id": 91000301,
+  "seq_num": 3,
+  "icd_code": "Z8615",
+  "icd_version": 10,
+  "description": "Personal history of latent tuberculosis infection"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000311,
+  "seq_num": 1,
+  "icd_code": "I350",
+  "icd_version": 10,
+  "description": "Nonrheumatic aortic (valve) stenosis"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000311,
+  "seq_num": 2,
+  "icd_code": "R55",
+  "icd_version": 10,
+  "description": "Syncope and collapse"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000311,
+  "seq_num": 3,
+  "icd_code": "N1831",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 3a"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000311,
+  "seq_num": 4,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000312,
+  "seq_num": 1,
+  "icd_code": "I350",
+  "icd_version": 10,
+  "description": "Nonrheumatic aortic (valve) stenosis"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000312,
+  "seq_num": 2,
+  "icd_code": "Z952",
+  "icd_version": 10,
+  "description": "Presence of prosthetic heart valve"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000312,
+  "seq_num": 3,
+  "icd_code": "N1831",
+  "icd_version": 10,
+  "description": "Chronic kidney disease, stage 3a"
+ },
+ {
+  "subject_id": 90000031,
+  "hadm_id": 91000312,
+  "seq_num": 4,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000032,
+  "hadm_id": 91000321,
+  "seq_num": 1,
+  "icd_code": "L03116",
+  "icd_version": 10,
+  "description": "Cellulitis of left lower limb"
+ },
+ {
+  "subject_id": 90000032,
+  "hadm_id": 91000321,
+  "seq_num": 2,
+  "icd_code": "I872",
+  "icd_version": 10,
+  "description": "Venous insufficiency (chronic) (peripheral)"
+ },
+ {
+  "subject_id": 90000032,
+  "hadm_id": 91000321,
+  "seq_num": 3,
+  "icd_code": "E1165",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hyperglycemia"
+ },
+ {
+  "subject_id": 90000032,
+  "hadm_id": 91000321,
+  "seq_num": 4,
+  "icd_code": "Z880",
+  "icd_version": 10,
+  "description": "Allergy status to penicillin"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000331,
+  "seq_num": 1,
+  "icd_code": "D701",
+  "icd_version": 10,
+  "description": "Agranulocytosis secondary to cancer chemotherapy"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000331,
+  "seq_num": 2,
+  "icd_code": "R5081",
+  "icd_version": 10,
+  "description": "Fever presenting with conditions classified elsewhere"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000331,
+  "seq_num": 3,
+  "icd_code": "C50912",
+  "icd_version": 10,
+  "description": "Malignant neoplasm of unspecified site of left female breast"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000331,
+  "seq_num": 4,
+  "icd_code": "E039",
+  "icd_version": 10,
+  "description": "Hypothyroidism, unspecified"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000332,
+  "seq_num": 1,
+  "icd_code": "D701",
+  "icd_version": 10,
+  "description": "Agranulocytosis secondary to cancer chemotherapy"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000332,
+  "seq_num": 2,
+  "icd_code": "R5081",
+  "icd_version": 10,
+  "description": "Fever presenting with conditions classified elsewhere"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000332,
+  "seq_num": 3,
+  "icd_code": "C50912",
+  "icd_version": 10,
+  "description": "Malignant neoplasm of unspecified site of left female breast"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000333,
+  "seq_num": 1,
+  "icd_code": "C50912",
+  "icd_version": 10,
+  "description": "Malignant neoplasm of unspecified site of left female breast"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000333,
+  "seq_num": 2,
+  "icd_code": "Z452",
+  "icd_version": 10,
+  "description": "Encounter for adjustment and management of vascular access device"
+ },
+ {
+  "subject_id": 90000033,
+  "hadm_id": 91000333,
+  "seq_num": 3,
+  "icd_code": "E039",
+  "icd_version": 10,
+  "description": "Hypothyroidism, unspecified"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000341,
+  "seq_num": 1,
+  "icd_code": "G40209",
+  "icd_version": 10,
+  "description": "Localization-related symptomatic epilepsy with complex partial seizures, not intractable"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000341,
+  "seq_num": 2,
+  "icd_code": "Q043",
+  "icd_version": 10,
+  "description": "Other reduction deformities of brain"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000341,
+  "seq_num": 3,
+  "icd_code": "G43109",
+  "icd_version": 10,
+  "description": "Migraine with aura, not intractable"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000342,
+  "seq_num": 1,
+  "icd_code": "G40209",
+  "icd_version": 10,
+  "description": "Localization-related symptomatic epilepsy with complex partial seizures, not intractable"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000342,
+  "seq_num": 2,
+  "icd_code": "Z9114",
+  "icd_version": 10,
+  "description": "Patient's other noncompliance with medication regimen"
+ },
+ {
+  "subject_id": 90000034,
+  "hadm_id": 91000342,
+  "seq_num": 3,
+  "icd_code": "Q043",
+  "icd_version": 10,
+  "description": "Other reduction deformities of brain"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000351,
+  "seq_num": 1,
+  "icd_code": "E1100",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hyperosmolarity without nonketotic hyperglycemic-hyperosmolar coma"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000351,
+  "seq_num": 2,
+  "icd_code": "N179",
+  "icd_version": 10,
+  "description": "Acute kidney injury"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000351,
+  "seq_num": 3,
+  "icd_code": "E871",
+  "icd_version": 10,
+  "description": "Hypo-osmolality and hyponatremia"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000351,
+  "seq_num": 4,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000352,
+  "seq_num": 1,
+  "icd_code": "E11649",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus with hypoglycemia without coma"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000352,
+  "seq_num": 2,
+  "icd_code": "E162",
+  "icd_version": 10,
+  "description": "Hypoglycemia, unspecified"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000352,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000353,
+  "seq_num": 1,
+  "icd_code": "E119",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus without complications"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000353,
+  "seq_num": 2,
+  "icd_code": "Z4681",
+  "icd_version": 10,
+  "description": "Encounter for fitting and adjustment of insulin pump"
+ },
+ {
+  "subject_id": 90000035,
+  "hadm_id": 91000353,
+  "seq_num": 3,
+  "icd_code": "I10",
+  "icd_version": 10,
+  "description": "Essential hypertension"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000361,
+  "seq_num": 1,
+  "icd_code": "E6601",
+  "icd_version": 10,
+  "description": "Morbid (severe) obesity due to excess calories"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000361,
+  "seq_num": 2,
+  "icd_code": "Z9884",
+  "icd_version": 10,
+  "description": "Bariatric surgery status"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000361,
+  "seq_num": 3,
+  "icd_code": "G4733",
+  "icd_version": 10,
+  "description": "Obstructive sleep apnea"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000361,
+  "seq_num": 4,
+  "icd_code": "E119",
+  "icd_version": 10,
+  "description": "Type 2 diabetes mellitus without complications"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000362,
+  "seq_num": 1,
+  "icd_code": "E538",
+  "icd_version": 10,
+  "description": "Deficiency of other specified B group vitamins"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000362,
+  "seq_num": 2,
+  "icd_code": "D519",
+  "icd_version": 10,
+  "description": "Vitamin B12 deficiency anemia, unspecified"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000362,
+  "seq_num": 3,
+  "icd_code": "D509",
+  "icd_version": 10,
+  "description": "Iron deficiency anemia"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000362,
+  "seq_num": 4,
+  "icd_code": "Z9884",
+  "icd_version": 10,
+  "description": "Bariatric surgery status"
+ },
+ {
+  "subject_id": 90000036,
+  "hadm_id": 91000362,
+  "seq_num": 5,
+  "icd_code": "G629",
+  "icd_version": 10,
+  "description": "Polyneuropathy, unspecified"
  }
 ]

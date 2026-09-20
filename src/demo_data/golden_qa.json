@@ -8,7 +8,18 @@
   "expected_facts": [
    "creatinine 1.4 mg/dL"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "latest_value",
+  "difficulty": "easy",
+  "expected_answer": "1.4 mg/dL, measured on 2024-03-18 at discharge from the third heart failure admission.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000013
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q02",
@@ -21,7 +32,21 @@
    "creatinine 2.1 mg/dL",
    "creatinine 1.4 mg/dL"
   ],
-  "min_facts": 2
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "hard",
+  "expected_answer": "It rose during each diuresis (peak 1.8 mg/dL in January 2023, 2.1 mg/dL in August 2023) and recovered each time, reaching 1.4 mg/dL at the March 2024 discharge.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000011,
+   91000012,
+   91000013
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
  },
  {
   "id": "demo_q03",
@@ -33,7 +58,18 @@
    "torsemide 20 mg",
    "sacubitril-valsartan 24-26 mg"
   ],
-  "min_facts": 2
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Torsemide 20 mg daily, sacubitril-valsartan 24-26 mg twice daily, metoprolol succinate 100 mg daily, spironolactone, atorvastatin and aspirin.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000013
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q04",
@@ -44,7 +80,20 @@
   "expected_facts": [
    "heart failure with reduced ejection fraction"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "diagnosis_history",
+  "difficulty": "easy",
+  "expected_answer": "Yes. Heart failure with reduced ejection fraction (LVEF 30%) from ischemic cardiomyopathy, with three admissions.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000011,
+   91000012,
+   91000013
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q05",
@@ -55,7 +104,19 @@
   "expected_facts": [
    "pulmonary edema"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "exact_fact",
+  "difficulty": "easy",
+  "expected_answer": "Yes. The January 2023 chest radiograph showed moderate pulmonary edema with small bilateral effusions.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000011
+  ],
+  "evidence_note_types": [
+   "radiology",
+   "discharge"
+  ]
  },
  {
   "id": "demo_q06",
@@ -66,7 +127,18 @@
   "expected_facts": [
    "pneumonia"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "exact_fact",
+  "difficulty": "easy",
+  "expected_answer": "A right lower lobe community-acquired pneumonia on a background of severe COPD.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000031
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q07",
@@ -79,7 +151,20 @@
    "creatinine 2.4 mg/dL",
    "creatinine 3.1 mg/dL"
   ],
-  "min_facts": 2
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "hard",
+  "expected_answer": "It has risen steadily across admissions, from 1.9 mg/dL to 2.4 mg/dL and then 3.1 mg/dL.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000021,
+   91000022,
+   91000023
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q08",
@@ -90,7 +175,18 @@
   "expected_facts": [
    "hemoglobin A1c 7.1%"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "latest_value",
+  "difficulty": "easy",
+  "expected_answer": "7.1%.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000023
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q09",
@@ -101,7 +197,19 @@
   "expected_facts": [
    "interval resolution"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "temporal_reasoning",
+  "difficulty": "medium",
+  "expected_answer": "Yes. Follow-up imaging showed interval resolution of the right lower lobe consolidation.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000031,
+   91000032
+  ],
+  "evidence_note_types": [
+   "radiology"
+  ]
  },
  {
   "id": "demo_q10",
@@ -112,7 +220,18 @@
   "expected_facts": [
    "4 liters"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "exact_fact",
+  "difficulty": "medium",
+  "expected_answer": "Up to 4 liters by nasal cannula.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000031
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q11",
@@ -123,7 +242,20 @@
   "expected_facts": [
    "apixaban 5 mg"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "medication_history",
+  "difficulty": "easy",
+  "expected_answer": "Yes, apixaban 5 mg twice daily.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000041,
+   91000042,
+   91000043
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q12",
@@ -135,7 +267,19 @@
    "diltiazem",
    "metoprolol succinate 50 mg"
   ],
-  "min_facts": 2
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Diltiazem extended-release was replaced by metoprolol succinate 50 mg daily.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000042,
+   91000043
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q13",
@@ -147,7 +291,18 @@
    "not previously been prescribed a loop diuretic",
    "furosemide was started"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "temporal_reasoning",
+  "difficulty": "hard",
+  "expected_answer": "Furosemide was started during the January 2023 admission; he had not been on a loop diuretic before it.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000011
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  },
  {
   "id": "demo_q14",
@@ -158,7 +313,19 @@
   "expected_facts": [
    "hemoglobin 11.2 g/dL"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "latest_value",
+  "difficulty": "easy",
+  "expected_answer": "11.2 g/dL.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000052
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
  },
  {
   "id": "demo_q15",
@@ -169,6 +336,590 @@
   "expected_facts": [
    "torsemide 20 mg"
   ],
-  "min_facts": 1
+  "min_facts": 1,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Torsemide 20 mg daily, which replaced furosemide in March 2024.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000013
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q16",
+  "subject_id": 90000014,
+  "query": "What was the patient's most recent sodium?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [
+   "sodium 131 mEq/L"
+  ],
+  "min_facts": 1,
+  "answer_type": "latest_value",
+  "difficulty": "medium",
+  "expected_answer": "131 mEq/L, from the outpatient hepatology visit on 2024-08-06.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [],
+  "evidence_note_types": [
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q17",
+  "subject_id": 90000014,
+  "query": "Why were the diuretics stopped?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "spironolactone",
+   "held for acute kidney injury"
+  ],
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Spironolactone and furosemide were held during the September 2023 admission because of acute kidney injury with spontaneous bacterial peritonitis, and were not restarted at discharge.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000142
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q18",
+  "subject_id": 90000014,
+  "query": "How has the total bilirubin changed over time?",
+  "category": "labs",
+  "temporal": "trend",
+  "expected_facts": [
+   "total bilirubin 2.4 mg/dL",
+   "total bilirubin 3.6 mg/dL",
+   "total bilirubin 4.1 mg/dL"
+  ],
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "hard",
+  "expected_answer": "It has risen across admissions: 2.4 mg/dL in February 2023, 3.6 mg/dL in September 2023 and 4.1 mg/dL in April 2024, indicating worsening liver function.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000141,
+   91000142,
+   91000143
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q19",
+  "subject_id": 90000015,
+  "query": "Why was the infliximab dose increased in 2024?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "dose intensified from 5 mg/kg",
+   "insurance interruption"
+  ],
+  "min_facts": 2,
+  "answer_type": "multi_note_synthesis",
+  "difficulty": "hard",
+  "expected_answer": "Her infusion schedule was interrupted for five weeks by an insurance problem, the trough level was undetectable without antibodies, so the dose was intensified from 5 mg/kg to 10 mg/kg every 8 weeks.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000153
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q20",
+  "subject_id": 90000016,
+  "query": "What medication replaced clopidogrel and why?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "apixaban 5 mg",
+   "atrial fibrillation"
+  ],
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Apixaban 5 mg twice daily replaced clopidogrel in November 2023 after paroxysmal atrial fibrillation was found on the ambulatory monitor.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000162
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q21",
+  "subject_id": 90000017,
+  "query": "What was the patient's most recent hemoglobin A1c?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [],
+  "min_facts": 0,
+  "answer_type": "unsupported",
+  "difficulty": "medium",
+  "expected_answer": "Not documented. No hemoglobin A1c result appears anywhere in this patient's record.",
+  "unsupported": true,
+  "must_not_contain": [
+   "hemoglobin a1c",
+   "hba1c"
+  ],
+  "evidence_hadm_ids": [],
+  "evidence_note_types": []
+ },
+ {
+  "id": "demo_q22",
+  "subject_id": 90000017,
+  "query": "Which antibiotic should not be used for future urinary infections?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "cephalexin",
+   "resistant"
+  ],
+  "min_facts": 2,
+  "answer_type": "multi_note_synthesis",
+  "difficulty": "hard",
+  "expected_answer": "Cephalexin. The January 2024 organism was an extended-spectrum beta-lactamase producing E. coli and cephalexin was stopped as resistant.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000172
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q23",
+  "subject_id": 90000018,
+  "query": "How much oxygen did the patient need during the acute chest syndrome admission?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "6 liters of oxygen"
+  ],
+  "min_facts": 1,
+  "answer_type": "exact_fact",
+  "difficulty": "medium",
+  "expected_answer": "Up to 6 liters by nasal cannula, weaned to room air by hospital day 6.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000183
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q24",
+  "subject_id": 90000019,
+  "query": "When was the gallbladder removed relative to the pancreatitis admission?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "laparoscopic cholecystectomy",
+   "2023-07-10"
+  ],
+  "min_facts": 2,
+  "answer_type": "temporal_reasoning",
+  "difficulty": "hard",
+  "expected_answer": "About four weeks later: gallstone pancreatitis was treated from 2023-06-11 and the elective laparoscopic cholecystectomy admission began on 2023-07-10.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000191,
+   91000192
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q25",
+  "subject_id": 90000020,
+  "query": "What did the lung biopsy show?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "non-small cell lung cancer",
+   "adenocarcinoma"
+  ],
+  "min_facts": 2,
+  "answer_type": "diagnosis_history",
+  "difficulty": "medium",
+  "expected_answer": "Non-small cell lung cancer, adenocarcinoma subtype, with subcarinal nodal involvement, clinical stage IIIA.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000202
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q26",
+  "subject_id": 90000020,
+  "query": "Why was the patient's sodium low during the January 2024 admission?",
+  "category": "labs",
+  "temporal": "all",
+  "expected_facts": [
+   "syndrome of inappropriate antidiuretic hormone"
+  ],
+  "min_facts": 1,
+  "answer_type": "multi_note_synthesis",
+  "difficulty": "hard",
+  "expected_answer": "Hyponatremia attributed to the syndrome of inappropriate antidiuretic hormone secretion in the setting of progressive lung cancer; sodium was 129 mEq/L and improved to 132 mEq/L with fluid restriction.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000203
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q27",
+  "subject_id": 90000022,
+  "query": "How did the hemoglobin A1c change between the two admissions?",
+  "category": "labs",
+  "temporal": "trend",
+  "expected_facts": [
+   "hemoglobin A1c 9.8%",
+   "hemoglobin A1c 8.1%"
+  ],
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "medium",
+  "expected_answer": "It improved from 9.8% in September 2023 to 8.1% in March 2024.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000221,
+   91000222
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q28",
+  "subject_id": 90000023,
+  "query": "Should the patient restart apixaban after discharge?",
+  "category": "medications",
+  "temporal": "latest",
+  "expected_facts": [
+   "apixaban",
+   "on hold pending gastroenterology review"
+  ],
+  "min_facts": 2,
+  "answer_type": "ambiguous",
+  "difficulty": "hard",
+  "expected_answer": "No, not yet. The record is inconsistent: the hospital day 3 progress note plans to resume apixaban, while the discharge summary keeps it on hold pending gastroenterology review at 6 weeks. The discharge instruction governs, and the conflict should be flagged for a clinician.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000232
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q29",
+  "subject_id": 90000024,
+  "query": "Has methotrexate ever been stopped, and why?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "held for active pneumonia",
+   "restarted at discharge after being held for cellulitis"
+  ],
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "hard",
+  "expected_answer": "Twice, both times for infection: held in August 2023 for pneumonia, and held again in May 2024 for cellulitis before being restarted at 15 mg weekly on the day of that discharge.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000241,
+   91000242
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q30",
+  "subject_id": 90000025,
+  "query": "Why was the patient readmitted in November 2023?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "alcohol-associated hepatitis"
+  ],
+  "min_facts": 1,
+  "answer_type": "temporal_reasoning",
+  "difficulty": "medium",
+  "expected_answer": "He returned nine days after discharge with jaundice from alcohol-associated hepatitis after resuming drinking, rather than the isolated alcohol withdrawal of the first admission.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000252
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q31",
+  "subject_id": 90000026,
+  "query": "What was the most recent hemoglobin?",
+  "category": "labs",
+  "temporal": "latest",
+  "expected_facts": [
+   "hemoglobin 11.2 g/dL"
+  ],
+  "min_facts": 1,
+  "answer_type": "latest_value",
+  "difficulty": "medium",
+  "expected_answer": "11.2 g/dL at the geriatrics follow-up on 2024-01-15, recovered from 8.9 g/dL after hip surgery.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [],
+  "evidence_note_types": [
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q32",
+  "subject_id": 90000027,
+  "query": "How was the inhaler treatment changed after the second admission?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "stepped up from 200-6 mcg"
+  ],
+  "min_facts": 1,
+  "answer_type": "medication_history",
+  "difficulty": "medium",
+  "expected_answer": "Budesonide-formoterol was stepped up from 200-6 mcg to 400-12 mcg twice daily and montelukast was added.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000272
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q33",
+  "subject_id": 90000028,
+  "query": "What happened to the calcium after thyroid surgery?",
+  "category": "labs",
+  "temporal": "all",
+  "expected_facts": [
+   "calcium 7.6 mg/dL"
+  ],
+  "min_facts": 1,
+  "answer_type": "temporal_reasoning",
+  "difficulty": "medium",
+  "expected_answer": "It fell to 7.6 mg/dL on postoperative day 1 from 9.8 mg/dL in May 2023 (transient hypoparathyroidism) and improved to 8.4 mg/dL on calcium and calcitriol.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000282
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q34",
+  "subject_id": 90000031,
+  "query": "What was the aortic valve gradient before and after the procedure?",
+  "category": "labs",
+  "temporal": "all",
+  "expected_facts": [
+   "mean gradient of 52 mmHg",
+   "mean gradient of 9 mmHg"
+  ],
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "hard",
+  "expected_answer": "A mean gradient of 52 mmHg before transcatheter aortic valve replacement and 9 mmHg afterwards.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000311,
+   91000312
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q35",
+  "subject_id": 90000032,
+  "query": "Is the patient allergic to penicillin?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "penicillin allergy",
+   "could not be clarified"
+  ],
+  "min_facts": 2,
+  "answer_type": "ambiguous",
+  "difficulty": "hard",
+  "expected_answer": "Unclear and unresolved. The allergy list records a penicillin allergy with an unspecified reaction, but he reports tolerating amoxicillin last year. It was not clarified during the admission, he was treated with vancomycin, and an allergy clinic referral was made. This needs clinician review before any beta-lactam is given.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000321
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q36",
+  "subject_id": 90000033,
+  "query": "What was the lowest neutrophil count?",
+  "category": "labs",
+  "temporal": "all",
+  "expected_facts": [
+   "absolute neutrophil count 0.2 K/uL"
+  ],
+  "min_facts": 1,
+  "answer_type": "trend",
+  "difficulty": "medium",
+  "expected_answer": "0.2 K/uL on 2023-04-27, during the first febrile neutropenia admission.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000331
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q37",
+  "subject_id": 90000035,
+  "query": "How has the hemoglobin A1c changed across admissions?",
+  "category": "labs",
+  "temporal": "trend",
+  "expected_facts": [
+   "hemoglobin A1c 13.2%",
+   "hemoglobin A1c 7.4%",
+   "hemoglobin A1c 6.8%"
+  ],
+  "min_facts": 2,
+  "answer_type": "trend",
+  "difficulty": "hard",
+  "expected_answer": "It improved from 13.2% during the hyperosmolar hyperglycemic state in March 2023 to 7.4% in December 2023 and 6.8% in August 2024.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000351,
+   91000352,
+   91000353
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q38",
+  "subject_id": 90000036,
+  "query": "Why did the patient become deficient in vitamin B12?",
+  "category": "diagnosis",
+  "temporal": "all",
+  "expected_facts": [
+   "stopped taking her bariatric supplements"
+  ],
+  "min_facts": 1,
+  "answer_type": "multi_note_synthesis",
+  "difficulty": "hard",
+  "expected_answer": "She stopped her lifelong post-sleeve-gastrectomy supplements about six months after surgery and missed her monitoring blood tests; vitamin B12 fell from 388 to 96 pg/mL.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000361,
+   91000362
+  ],
+  "evidence_note_types": [
+   "discharge",
+   "progress"
+  ]
+ },
+ {
+  "id": "demo_q39",
+  "subject_id": 90000021,
+  "query": "What medications was the patient discharged on?",
+  "category": "medications",
+  "temporal": "latest",
+  "expected_facts": [
+   "acetaminophen 1 g",
+   "ibuprofen 400 mg"
+  ],
+  "min_facts": 2,
+  "answer_type": "medication_history",
+  "difficulty": "easy",
+  "expected_answer": "Acetaminophen 1 g as needed, a short course of ibuprofen 400 mg as needed, and his usual loratadine.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000211
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
+ },
+ {
+  "id": "demo_q40",
+  "subject_id": 90000030,
+  "query": "What treatment was started for hepatitis B?",
+  "category": "medications",
+  "temporal": "all",
+  "expected_facts": [
+   "tenofovir alafenamide 25 mg"
+  ],
+  "min_facts": 1,
+  "answer_type": "exact_fact",
+  "difficulty": "easy",
+  "expected_answer": "Tenofovir alafenamide 25 mg daily, started after the biopsy showed stage 2 fibrosis.",
+  "unsupported": false,
+  "must_not_contain": [],
+  "evidence_hadm_ids": [
+   91000301
+  ],
+  "evidence_note_types": [
+   "discharge"
+  ]
  }
 ]
