@@ -409,9 +409,13 @@ def synthesis(state: AgentState) -> dict:
         logger.warning(f"[synthesis] hallucinated labels {report['bad_labels']} — stripped")
         answer = citations.strip_bad_labels(answer, pt + gl + lit)
 
+    # `label`/`chunk_id` stay single-valued for the API contract; `labels` keeps
+    # EVERY citation the sentence carried, because verification must check a
+    # claim against the union of its sources, not just the first one.
     cites = [{
         "claim": c["claim"],
         "label": c["valid_labels"][0] if c["valid_labels"] else "",
+        "labels": list(c["valid_labels"]),
         "chunk_id": next((e["chunk_id"] for e in pt + gl + lit if e["label"] == (c["valid_labels"] or [None])[0]), -1),
         "verified": False,
         "verification_note": "",
@@ -431,6 +435,14 @@ def verification(state: AgentState) -> dict:
     This used to be one MAIN generation per citation, run serially. The code
     path that decides human review is unchanged — unsupported > 0 still routes
     to a clinician — only the way a verdict is reached has changed.
+
+    Every claim ends in exactly one of three states, recorded per claim in
+    `verification["claims"]` so an audit can say WHY a run escalated:
+      supported    deterministic anchors matched, or the model said so
+      unsupported  no citation, a model verdict of partial/unsupported, or no
+                   verdict came back at all
+    A claim never silently disappears, and nothing turns "unresolved" into
+    "supported".
     """
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
@@ -440,51 +452,98 @@ def verification(state: AgentState) -> dict:
     out: list[dict] = [dict(c) for c in cites]
     unsupported = 0
     pending: list[dict] = []          # claims the deterministic pass could not settle
+    trace: list[dict] = []            # per-claim audit record (no source text)
 
-    # --- pass 1: no model ---------------------------------------------------
-    for i, c in enumerate(out):
-        src = ev.get(c["label"])
-        if not src:
-            # Deterministically unsupported: the cited label is not in evidence.
-            out[i] = {**c, "verified": False, "verification_note": "no valid citation"}
-            unsupported += 1
-            continue
-        verdict, note = verify_util.deterministic_verdict(c["claim"], src["text"], c["label"])
-        if verdict == "supported":
-            out[i] = {**c, "verified": True, "verification_note": note}
-        else:
-            pending.append({"i": i, "claim": c["claim"], "label": c["label"], "source": src["text"]})
+    def _labels_of(c: dict) -> list[str]:
+        """Every citation the claim carries. `label` stays the primary one for
+        the API; `labels` is what verification must actually check against."""
+        ls = [l for l in (c.get("labels") or []) if l in ev]
+        if not ls and c.get("label") in ev:
+            ls = [c["label"]]
+        return ls
 
-    deterministic = len(out) - len(pending) - sum(1 for c in out if c["verification_note"] == "no valid citation")
-    checked = len(pending)
+    # A correctly declined answer is not an unsupported claim. Synthesis is
+    # instructed to emit this exact sentence, uncited, when the evidence does
+    # not answer the question — and the uncited sentence was then failing
+    # verification and escalating every "not documented" answer to a clinician.
+    # The same sentence produced on the no-evidence path already auto-approved,
+    # so the two routes disagreed about identical output.
+    draft_now = (state.get("draft_answer") or "").strip()
+    refusal = bool(draft_now) and citations.validate(draft_now, list(ev.values()))["is_refusal"]
+    pure_refusal = refusal and not any(_labels_of(c) for c in out)
 
-    # --- pass 2: one batched call for the remainder -------------------------
-    if pending:
-        for batch in (pending[k:k + verify_util.MAX_BATCH]
-                      for k in range(0, len(pending), verify_util.MAX_BATCH)):
-            idx = [it["i"] for it in batch]
+    if pure_refusal:
+        for i, c in enumerate(out):
+            out[i] = {**c, "verified": True,
+                      "verification_note": "declined: evidence does not answer the question"}
+            trace.append({"i": i, "labels": [], "stage": "refusal", "verdict": "declined",
+                          "reason": "answer correctly states the record does not support an answer",
+                          "final": "supported"})
+        deterministic, checked = len(out), 0
+    else:
+        # --- pass 1: no model -----------------------------------------------
+        for i, c in enumerate(out):
+            labels = _labels_of(c)
+            if not labels:
+                # Deterministically unsupported: nothing valid is cited.
+                out[i] = {**c, "verified": False, "verification_note": "no valid citation"}
+                unsupported += 1
+                trace.append({"i": i, "labels": [], "stage": "deterministic",
+                              "verdict": "unsupported", "reason": "no valid citation",
+                              "final": "unsupported"})
+                continue
+            src_text = "\n\n".join(ev[l]["text"] for l in labels)
+            verdict, note = verify_util.deterministic_verdict(c["claim"], src_text, labels)
+            if verdict == "supported":
+                out[i] = {**c, "verified": True, "verification_note": note}
+                trace.append({"i": i, "labels": labels, "stage": "deterministic",
+                              "verdict": "supported", "reason": note, "final": "supported"})
+            else:
+                pending.append({"i": i, "claim": c["claim"], "labels": labels,
+                                "sources": [ev[l]["text"] for l in labels],
+                                "det_reason": note})
+
+        deterministic = sum(1 for t in trace if t["final"] == "supported")
+        checked = len(pending)
+
+        # --- pass 2: one batched call for the remainder ----------------------
+        # Identical claims cited identically get one verdict, not one each.
+        by_key: dict[tuple, list[dict]] = {}
+        for it in pending:
+            by_key.setdefault((it["claim"], tuple(it["labels"])), []).append(it)
+        unique = [group[0] for group in by_key.values()]
+
+        for batch in (unique[k:k + verify_util.MAX_BATCH]
+                      for k in range(0, len(unique), verify_util.MAX_BATCH)):
+            prompt, mapping = verify_util.build_batch_prompt(batch)
             try:
                 raw = chat_for("verify", [
                     {"role": "system", "content": prompts.VERIFY_BATCH_SYSTEM},
-                    {"role": "user", "content": verify_util.build_batch_prompt(batch)},
+                    {"role": "user", "content": prompt},
                     # room for one compact JSON verdict per claim, bounded so a
                     # large batch cannot blow past the role's budget
-                ], max_tokens=min(480, max(120, 80 * len(batch))))
-                verdicts = verify_util.parse_batch(raw, idx)
+                ], max_tokens=min(480, max(160, 90 * len(batch))))
+                verdicts = verify_util.parse_batch(raw, mapping)
             except Exception as e:
                 logger.error(f"[verification] batch call failed: {e}")
                 verdicts = {}
             for it in batch:
                 verdict, note = verdicts.get(it["i"], ("unsupported", "no verdict returned"))
                 ok = verdict == "supported"
-                if not ok:
-                    unsupported += 1
-                out[it["i"]] = {**out[it["i"]], "verified": ok,
-                                "verification_note": f"{verdict}: {note}"}
+                for twin in by_key[(it["claim"], tuple(it["labels"]))]:
+                    if not ok:
+                        unsupported += 1
+                    out[twin["i"]] = {**out[twin["i"]], "verified": ok,
+                                      "verification_note": f"{verdict}: {note}"}
+                    trace.append({"i": twin["i"], "labels": twin["labels"], "stage": "fast_model",
+                                  "verdict": verdict, "reason": note,
+                                  "det_reason": twin["det_reason"],
+                                  "final": "supported" if ok else "unsupported"})
 
     bump("deterministic_verified", deterministic)
     bump("llm_verified", checked)
     prior = state.get("verification", {}) or {}
+    trace.sort(key=lambda t: t["i"])
 
     # An empty draft is a FAILURE, not a clean bill of health. Without this, a
     # synthesis outage produced zero citations, `unsupported > 0` was False, and
@@ -498,11 +557,13 @@ def verification(state: AgentState) -> dict:
         errors.append("verification: no draft answer produced (synthesis failed)")
 
     logger.info(f"[verification] {len(out)} claims: {deterministic} deterministic, "
-                f"{checked} via model, {unsupported} unsupported")
+                f"{checked} via model, {unsupported} unsupported"
+                f"{' (declined answer)' if pure_refusal else ''}")
     return {
         "citations": out,
         "verification": {**prior, "checked": checked, "unsupported": unsupported,
                          "deterministic": deterministic, "llm_checked": checked,
+                         "refusal": pure_refusal, "claims": trace,
                          "synthesis_failed": synthesis_failed},
         "errors": errors,
         "needs_human_review": unsupported > 0 or synthesis_failed,

@@ -22,8 +22,11 @@ import json
 import time
 import uuid
 import argparse
+import time
+import hashlib
 import platform
 import statistics
+from collections import Counter
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -430,13 +433,171 @@ def tracing_smoke(out: Path) -> None:
     })
 
 
+# ---------------------------------------------------------------------------
+# Human-review audit: WHY each legacy query escalated
+# ---------------------------------------------------------------------------
+CLAIM_PREVIEW_CHARS = 100
+
+
+def _claim_id(text: str) -> str:
+    """Stable short id for a claim, so two runs can be diffed without storing
+    the sentence twice."""
+    return hashlib.sha256((text or "").encode()).hexdigest()[:12]
+
+
+def _escalation_reason(st: dict, trace: list[dict]) -> str:
+    """One label per query, for the grouped summary."""
+    v = st.get("verification") or {}
+    if v.get("synthesis_failed"):
+        return "synthesis_failed"
+    bad = [t for t in trace if t.get("final") == "unsupported"]
+    if not bad:
+        return "none"
+    reasons = {t.get("reason", "") for t in bad}
+    stages = {t.get("stage") for t in bad}
+    if any(r == "no valid citation" for r in reasons):
+        return "uncited_claim"
+    if any(r == "no verdict returned" for r in reasons):
+        return "missing_batch_verdict"
+    if stages == {"fast_model"}:
+        verdicts = {t.get("verdict") for t in bad}
+        if verdicts == {"partial"}:
+            return "fast_partial"
+        return "fast_unsupported"
+    return "other"
+
+
+def audit(out: Path, ids: list[str] | None = None) -> None:
+    """Run the legacy golden subset through the PRODUCTION graph in-process and
+    record, per claim, how each verdict was reached and why a run escalated.
+
+    In-process rather than over /ask because the per-claim verifier trace is
+    graph state, not part of the API contract — this adds no endpoint and
+    changes no response shape.
+
+    Privacy: no note text, no retrieved chunks, no prompts, no secrets. Claims
+    are generated sentences over synthetic demo data; they are stored truncated
+    and alongside a hash so runs can be compared without the full text.
+    """
+    import uuid
+    from src.agents.graph import build_graph, close_pools
+    from src.llm import local_client
+
+    wanted = ids or LEGACY_IDS
+    golden = {g["id"]: g for g in GOLDEN}
+    missing = [i for i in wanted if i not in golden]
+    if missing:
+        print(f"warning: not in the golden set, skipping: {missing}", file=sys.stderr)
+    rows, graph = [], build_graph()[0]
+    try:
+        for qid in [i for i in wanted if i in golden]:
+            g = golden[qid]
+            tid = f"audit-{qid}-{uuid.uuid4().hex[:6]}"
+            t0 = time.perf_counter()
+            res = graph.invoke({"query": g["query"], "subject_id": g["subject_id"], "thread_id": tid},
+                               config={"configurable": {"thread_id": tid}})
+            st = graph.get_state({"configurable": {"thread_id": tid}}).values
+            ms = round((time.perf_counter() - t0) * 1000, 1)
+
+            v = st.get("verification") or {}
+            trace = v.get("claims") or []
+            cites = st.get("citations") or []
+            interrupted = "__interrupt__" in res
+            by_i = {t["i"]: t for t in trace}
+
+            claims = []
+            for i, c in enumerate(cites):
+                t = by_i.get(i, {})
+                claims.append({
+                    "index": i,
+                    "claim_id": _claim_id(c.get("claim", "")),
+                    "claim_preview": (c.get("claim", "") or "")[:CLAIM_PREVIEW_CHARS],
+                    "citation_labels": t.get("labels", c.get("labels") or
+                                             ([c["label"]] if c.get("label") else [])),
+                    "stage": t.get("stage"),
+                    "deterministic_verdict": ("supported" if t.get("stage") == "deterministic"
+                                              and t.get("final") == "supported" else "unresolved"),
+                    "deterministic_reason": t.get("det_reason") or (
+                        t.get("reason") if t.get("stage") == "deterministic" else None),
+                    "sent_to_fast_verifier": t.get("stage") == "fast_model",
+                    "fast_verdict": t.get("verdict") if t.get("stage") == "fast_model" else None,
+                    "fast_verdict_parsed": (t.get("stage") == "fast_model"
+                                            and t.get("reason") != "no verdict returned"),
+                    "fast_reason": t.get("reason") if t.get("stage") == "fast_model" else None,
+                    "final": t.get("final", "unsupported" if not c.get("verified") else "supported"),
+                })
+
+            rows.append({
+                "query_id": qid,
+                "status": ("human_review_required" if interrupted
+                           else "refused" if st.get("query_type") == "unsupported" else "completed"),
+                "review_status": st.get("review_status"),
+                "needs_human_review": bool(interrupted or st.get("needs_human_review")),
+                "escalation_reason": ("none" if not (interrupted or st.get("needs_human_review"))
+                                      else _escalation_reason(st, trace)),
+                "query_complexity": st.get("query_complexity"),
+                "classified_by": st.get("classified_by"),
+                "query_type": st.get("query_type"),
+                "synthesis_model": (local_client.role_spec(v["synthesis_role"])["model"]
+                                    if v.get("synthesis_role") else None),
+                "synthesis_role": v.get("synthesis_role"),
+                "node_trail": st.get("node_trail") or [],
+                "n_claims": len(cites),
+                "n_flagged_claims": sum(1 for c in cites if not c.get("verified")),
+                "deterministic_supported": v.get("deterministic"),
+                "sent_to_fast_verifier": v.get("llm_checked"),
+                "unsupported": v.get("unsupported"),
+                "declined_answer": bool(v.get("refusal")),
+                "synthesis_failed": bool(v.get("synthesis_failed")),
+                "total_ms": ms,
+                "claims": claims,
+            })
+            print(f"  {qid} {rows[-1]['review_status']:<16} claims={len(cites)} "
+                  f"flagged={rows[-1]['n_flagged_claims']} reason={rows[-1]['escalation_reason']}", flush=True)
+    finally:
+        close_pools()
+
+    escalated = [r for r in rows if r["needs_human_review"]]
+    _write(out, "human_review_audit.json", {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "subset": wanted,
+        "method": "production graph in-process; per-claim verifier trace from graph state. "
+                  "No note text, chunks, prompts or secrets are recorded.",
+        "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL},
+        "prompt_versions": {"synthesis": _prompt_versions()[0], "verify_batch": _prompt_versions()[1]},
+        "summary": {
+            "queries": len(rows),
+            "human_review": len(escalated),
+            "by_escalation_reason": dict(Counter(r["escalation_reason"] for r in rows)),
+            "claims_total": sum(r["n_claims"] for r in rows),
+            "claims_supported_deterministically": sum(r["deterministic_supported"] or 0 for r in rows),
+            "claims_sent_to_fast_verifier": sum(r["sent_to_fast_verifier"] or 0 for r in rows),
+            "claims_unsupported": sum(r["unsupported"] or 0 for r in rows),
+            "declined_answers": sum(1 for r in rows if r["declined_answer"]),
+            "synthesis_failures": sum(1 for r in rows if r["synthesis_failed"]),
+            "by_final_claim_state": dict(Counter(c["final"] for r in rows for c in r["claims"])),
+            "by_fast_verdict": dict(Counter(c["fast_verdict"] for r in rows for c in r["claims"]
+                                            if c["fast_verdict"])),
+            "by_synthesis_role": dict(Counter(r["synthesis_role"] for r in rows if r["synthesis_role"])),
+        },
+        "queries": rows,
+    })
+
+
+def _prompt_versions() -> tuple[str, str]:
+    from src.agents import prompts
+    return prompts.SYNTHESIS_VERSION, prompts.VERIFY_BATCH_VERSION
+
+
 def main() -> int:
     if os.environ.get("LUMEN_DATA_PLANE") != "demo":
         print("refusing: LUMEN_DATA_PLANE must be demo", file=sys.stderr)
         return 2
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all", "tracing"])
+    ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all", "tracing", "audit"])
     ap.add_argument("--out", default=str(LUMEN_ROOT / "results" / "cloud_run"))
+    ap.add_argument("--ids", nargs="+", default=None,
+                    help="audit only: query ids to run (default: the legacy demo_q01-demo_q15 subset)")
     a = ap.parse_args()
     out = Path(a.out)
     if a.mode in ("manifest", "all"):
@@ -447,6 +608,8 @@ def main() -> int:
         perf(out)
     if a.mode == "tracing":
         tracing_smoke(out)
+    if a.mode == "audit":
+        audit(out, a.ids)
     return 0
 
 

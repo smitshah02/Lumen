@@ -75,22 +75,23 @@ def test_deterministic_lab_gate():
 # Deterministic verification
 # ===========================================================================
 def test_anchors_ignore_citation_markers():
-    dates, nums = verify_util.anchors("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].")
+    dates, qty, nums = verify_util.anchors("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].")
     assert dates == {"2024-03-18"}
-    assert nums == {"1.4"}           # not "1" from [S1]
+    assert qty == {"1.4 mg/dl"}      # value + unit, not a bare "1.4"
+    assert nums == set()             # and never "1" from [S1]
 
 
 def test_exact_numeric_match_is_supported_without_a_model():
     verdict, note = verify_util.deterministic_verdict(
         "Creatinine was 1.4 mg/dL on 2024-03-18 [S1].",
-        "LABORATORY DATA:\nCreatinine 1.4 mg/dL on 2024-03-18 (discharge)", "S1")
+        "LABORATORY DATA:\nCreatinine 1.4 mg/dL on 2024-03-18 (discharge)", ["S1"])
     assert verdict == "supported"
     assert "deterministic" in note
 
 
 def test_number_must_match_on_a_whole_token():
     verdict, _ = verify_util.deterministic_verdict(
-        "Creatinine was 1.4 mg/dL [S1].", "Creatinine 21.4 mg/dL", "S1")
+        "Creatinine was 1.4 mg/dL [S1].", "Creatinine 21.4 mg/dL", ["S1"])
     assert verdict == "unresolved"
 
 
@@ -98,47 +99,50 @@ def test_missing_anchor_is_unresolved_not_unsupported():
     """A one-sided check: only the model may call something unsupported, so a
     derived value ('rose by 0.4') cannot silently trigger human review."""
     verdict, _ = verify_util.deterministic_verdict(
-        "Creatinine rose by 0.4 mg/dL [S1].", "Creatinine 1.4 then 1.8 mg/dL", "S1")
+        "Creatinine rose by 0.4 mg/dL [S1].", "Creatinine 1.4 then 1.8 mg/dL", ["S1"])
     assert verdict == "unresolved"
 
 
 def test_prose_claim_without_anchors_goes_to_the_model():
     verdict, _ = verify_util.deterministic_verdict(
-        "The patient has heart failure [S1].", "Heart failure with reduced ejection fraction", "S1")
+        "The patient has heart failure [S1].", "Heart failure with reduced ejection fraction", ["S1"])
     assert verdict == "unresolved"
 
 
 def test_guideline_claims_are_never_auto_supported():
     verdict, _ = verify_util.deterministic_verdict(
-        "Guidelines advise a target below 130 mmHg [G1].", "target below 130 mmHg", "G1")
+        "Guidelines advise a target below 130 mmHg [G1].", "target below 130 mmHg", ["G1"])
     assert verdict == "unresolved"
 
 
 def test_batch_prompt_sends_each_source_once():
-    items = [{"i": 0, "claim": "a [S1]", "label": "S1", "source": "SOURCE ONE"},
-             {"i": 1, "claim": "b [S1]", "label": "S1", "source": "SOURCE ONE"},
-             {"i": 2, "claim": "c [S2]", "label": "S2", "source": "SOURCE TWO"}]
-    prompt = verify_util.build_batch_prompt(items)
+    items = [{"i": 4, "claim": "a [S1]", "labels": ["S1"], "sources": ["SOURCE ONE"]},
+             {"i": 7, "claim": "b [S1]", "labels": ["S1"], "sources": ["SOURCE ONE"]},
+             {"i": 9, "claim": "c [S2]", "labels": ["S2"], "sources": ["SOURCE TWO"]}]
+    prompt, mapping = verify_util.build_batch_prompt(items)
     assert prompt.count("SOURCE ONE") == 1
     assert prompt.count("SOURCE TWO") == 1
-    for n in ("0.", "1.", "2."):
+    # numbered 1..n locally, whatever the claims' positions in the whole answer
+    assert mapping == {1: 4, 2: 7, 3: 9}
+    for n in ("1.", "2.", "3."):
         assert n in prompt
+    assert "exactly 3 results" in prompt
 
 
 def test_parse_batch_drops_unknown_and_malformed_rows():
     raw = json.dumps({"results": [
-        {"i": 0, "verdict": "supported", "reason": "ok"},
+        {"i": 1, "verdict": "supported", "reason": "ok"},
         {"i": 9, "verdict": "supported"},          # not in this batch
-        {"i": 1, "verdict": "nonsense"},           # not a verdict
+        {"i": 2, "verdict": "nonsense"},           # not a verdict
         "garbage",
     ]})
-    out = verify_util.parse_batch(raw, [0, 1])
+    out = verify_util.parse_batch(raw, {1: 0, 2: 1})
     assert set(out) == {0}
     assert out[0][0] == "supported"
 
 
 def test_parse_batch_survives_non_json():
-    assert verify_util.parse_batch("I think claim 1 is fine", [0]) == {}
+    assert verify_util.parse_batch("I think claim 1 is fine", {1: 0}) == {}
 
 
 # ===========================================================================
@@ -295,7 +299,7 @@ def test_triage_keeps_the_deterministic_class_when_the_model_fails(graph_mod, mo
 def test_verification_makes_zero_calls_when_anchors_match(graph_mod, spy):
     state = {"patient_evidence": [_ev()], "draft_answer": "Creatinine was 1.4 mg/dL on 2024-03-18 [S1].",
              "citations": [{"claim": "Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", "label": "S1",
-                            "chunk_id": 1, "verified": False, "verification_note": ""}]}
+                            "labels": ["S1"], "chunk_id": 1, "verified": False, "verification_note": ""}]}
     out = graph_mod.verification(state)
     assert spy == []
     assert out["citations"][0]["verified"] is True
@@ -305,10 +309,11 @@ def test_verification_makes_zero_calls_when_anchors_match(graph_mod, spy):
 
 def test_verification_batches_the_rest_into_one_call(graph_mod, spy):
     spy.reply = lambda role, m: json.dumps({"results": [
-        {"i": 0, "verdict": "supported", "reason": "ok"},
         {"i": 1, "verdict": "supported", "reason": "ok"},
+        {"i": 2, "verdict": "supported", "reason": "ok"},
     ]})
-    claim = lambda t: {"claim": t, "label": "S1", "chunk_id": 1, "verified": False, "verification_note": ""}
+    claim = lambda t: {"claim": t, "label": "S1", "labels": ["S1"], "chunk_id": 1,
+                       "verified": False, "verification_note": ""}
     state = {"patient_evidence": [_ev(text="He has heart failure and chronic kidney disease. "
                                            "Creatinine 1.4 mg/dL on 2024-03-18.")],
              "draft_answer": "x",
@@ -326,8 +331,9 @@ def test_verification_batches_the_rest_into_one_call(graph_mod, spy):
 
 def test_claim_the_model_omits_is_treated_as_unsupported(graph_mod, spy):
     """Batching must not let a claim pass just because the model forgot it."""
-    spy.reply = lambda role, m: json.dumps({"results": [{"i": 0, "verdict": "supported", "reason": "ok"}]})
-    claim = lambda t: {"claim": t, "label": "S1", "chunk_id": 1, "verified": False, "verification_note": ""}
+    spy.reply = lambda role, m: json.dumps({"results": [{"i": 1, "verdict": "supported", "reason": "ok"}]})
+    claim = lambda t: {"claim": t, "label": "S1", "labels": ["S1"], "chunk_id": 1,
+                       "verified": False, "verification_note": ""}
     out = graph_mod.verification({
         "patient_evidence": [_ev(text="He has heart failure and chronic kidney disease.")],
         "draft_answer": "x",
@@ -340,16 +346,16 @@ def test_claim_the_model_omits_is_treated_as_unsupported(graph_mod, spy):
 def test_verification_still_routes_unsupported_to_human_review(graph_mod, spy):
     spy.reply = lambda role, m: json.dumps({"results": [{"i": 0, "verdict": "unsupported", "reason": "absent"}]})
     state = {"patient_evidence": [_ev(text="unrelated text")], "draft_answer": "x",
-             "citations": [{"claim": "He has heart failure [S1].", "label": "S1", "chunk_id": 1,
-                            "verified": False, "verification_note": ""}]}
+             "citations": [{"claim": "He has heart failure [S1].", "label": "S1", "labels": ["S1"],
+                            "chunk_id": 1, "verified": False, "verification_note": ""}]}
     out = graph_mod.verification(state)
     assert out["needs_human_review"] is True and out["review_status"] == "pending"
 
 
 def test_missing_citation_label_needs_no_model_call(graph_mod, spy):
     state = {"patient_evidence": [_ev()], "draft_answer": "x",
-             "citations": [{"claim": "Invented fact [S9].", "label": "S9", "chunk_id": -1,
-                            "verified": False, "verification_note": ""}]}
+             "citations": [{"claim": "Invented fact [S9].", "label": "S9", "labels": [],
+                            "chunk_id": -1, "verified": False, "verification_note": ""}]}
     out = graph_mod.verification(state)
     assert spy == []
     assert out["citations"][0]["verification_note"] == "no valid citation"
@@ -360,8 +366,8 @@ def test_batch_failure_falls_back_to_unsupported(graph_mod, monkeypatch, graph_m
     import src.agents.graph as g
     monkeypatch.setattr(g, "chat_for", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
     state = {"patient_evidence": [_ev(text="unrelated")], "draft_answer": "x",
-             "citations": [{"claim": "He has heart failure [S1].", "label": "S1", "chunk_id": 1,
-                            "verified": False, "verification_note": ""}]}
+             "citations": [{"claim": "He has heart failure [S1].", "label": "S1", "labels": ["S1"],
+                            "chunk_id": 1, "verified": False, "verification_note": ""}]}
     out = g.verification(state)
     assert out["needs_human_review"] is True      # fails safe, as the per-claim loop did
 
@@ -537,3 +543,258 @@ def test_percent_units_render_the_way_notes_render_them(graph_mod):
     assert graph_mod._uom("%") == "%"
     assert graph_mod._uom("mg/dL") == " mg/dL"
     assert graph_mod._uom("") == ""
+
+
+# ===========================================================================
+# Verification calibration — every defect that manufactured a human review
+# ===========================================================================
+def _cite(text, labels, chunk_id=1):
+    return {"claim": text, "label": labels[0] if labels else "", "labels": list(labels),
+            "chunk_id": chunk_id, "verified": False, "verification_note": ""}
+
+
+def _state(evidence, citations, draft="x"):
+    return {"patient_evidence": evidence, "draft_answer": draft, "citations": citations}
+
+
+# --- batch numbering -------------------------------------------------------
+def test_batch_numbers_are_local_not_global(graph_mod, spy):
+    """The headline bug: a batch of the 2nd and 4th claims used to be presented
+    as 'claim 1' and 'claim 3' while telling the model there were 2 of them."""
+    seen = {}
+
+    def reply(role, messages):
+        seen["prompt"] = messages[-1]["content"]
+        return json.dumps({"results": [{"i": 1, "verdict": "supported", "reason": "ok"},
+                                       {"i": 2, "verdict": "supported", "reason": "ok"}]})
+    spy.reply = reply
+    ev = [_ev(text="He has heart failure and chronic kidney disease. Creatinine 1.4 mg/dL on 2024-03-18.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),   # deterministic
+        _cite("He has heart failure [S1].", ["S1"]),                     # -> batch no. 1
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),   # deterministic
+        _cite("He has chronic kidney disease [S1].", ["S1"]),            # -> batch no. 2
+    ]))
+    claims = seen["prompt"].split("CLAIMS:")[1]
+    assert "1. (cites [S1]) He has heart failure" in claims
+    assert "2. (cites [S1]) He has chronic kidney disease" in claims
+    assert "3." not in claims
+    assert all(c["verified"] for c in out["citations"])
+    assert out["needs_human_review"] is False
+
+
+def test_verdicts_map_back_to_the_right_claims(graph_mod, spy):
+    """A 'supported' for batch item 1 must not land on a different sentence."""
+    spy.reply = lambda role, m: json.dumps({"results": [
+        {"i": 1, "verdict": "supported", "reason": "stated"},
+        {"i": 2, "verdict": "unsupported", "reason": "absent"}]})
+    ev = [_ev(text="He has heart failure.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("He has heart failure [S1].", ["S1"]),
+        _cite("He has diabetes [S1].", ["S1"])]))
+    assert out["citations"][0]["verified"] is True
+    assert out["citations"][1]["verified"] is False
+    assert out["needs_human_review"] is True
+
+
+# --- truncation / malformed output -----------------------------------------
+def test_truncated_batch_json_salvages_the_verdicts_that_arrived(graph_mod, spy):
+    """A response cut off by the token budget used to discard EVERY verdict and
+    escalate the whole answer."""
+    full = json.dumps({"results": [{"i": 1, "verdict": "supported", "reason": "stated in the source"},
+                                   {"i": 2, "verdict": "supported", "reason": "stated in the source"}]})
+    spy.reply = lambda role, m: full[:full.index('{"i": 2')] + '{"i": 2, "verdict": "supp'
+    ev = [_ev(text="He has heart failure and diabetes.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("He has heart failure [S1].", ["S1"]),
+        _cite("He has diabetes [S1].", ["S1"])]))
+    assert out["citations"][0]["verified"] is True          # salvaged
+    assert out["citations"][1]["verified"] is False         # incomplete -> fails safe
+    assert out["needs_human_review"] is True
+
+
+def test_unindexed_verdicts_are_taken_in_order_only_on_an_exact_count(graph_mod, spy):
+    spy.reply = lambda role, m: json.dumps({"results": [
+        {"verdict": "supported", "reason": "a"}, {"verdict": "supported", "reason": "b"}]})
+    ev = [_ev(text="He has heart failure and diabetes.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("He has heart failure [S1].", ["S1"]),
+        _cite("He has diabetes [S1].", ["S1"])]))
+    assert all(c["verified"] for c in out["citations"])
+
+
+def test_unindexed_verdicts_with_the_wrong_count_fail_safe(graph_mod, spy):
+    """Never guess an alignment that could attribute 'supported' to the wrong claim."""
+    spy.reply = lambda role, m: json.dumps({"results": [{"verdict": "supported", "reason": "a"}]})
+    ev = [_ev(text="He has heart failure and diabetes.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("He has heart failure [S1].", ["S1"]),
+        _cite("He has diabetes [S1].", ["S1"])]))
+    assert not any(c["verified"] for c in out["citations"])
+    assert out["needs_human_review"] is True
+
+
+def test_completely_malformed_output_fails_safe(graph_mod, spy):
+    spy.reply = lambda role, m: "I think both claims look fine to me."
+    ev = [_ev(text="He has heart failure.")]
+    out = graph_mod.verification(_state(ev, [_cite("He has heart failure [S1].", ["S1"])]))
+    assert out["needs_human_review"] is True
+    assert "no verdict returned" in out["citations"][0]["verification_note"]
+
+
+# --- multi-source and repeated citations ------------------------------------
+def test_claim_is_checked_against_the_union_of_its_citations(graph_mod, spy):
+    """'creatinine rose from 1.3 to 1.8 [S1][S2]' is supported by both chunks
+    and by neither alone; only the first used to be consulted."""
+    ev = [_ev("S1", "Creatinine 1.3 mg/dL on admission."),
+          _ev("S2", "Creatinine peaked at 1.8 mg/dL on day 3.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("Creatinine rose from 1.3 mg/dL to 1.8 mg/dL [S1][S2].", ["S1", "S2"])]))
+    assert spy == []                                   # resolved without a model call
+    assert out["citations"][0]["verified"] is True
+    assert out["needs_human_review"] is False
+
+
+def test_identical_claims_cost_one_verdict(graph_mod, spy):
+    calls = []
+    spy.reply = lambda role, m: calls.append(m[-1]["content"]) or json.dumps(
+        {"results": [{"i": 1, "verdict": "supported", "reason": "ok"}]})
+    ev = [_ev(text="He has heart failure.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("He has heart failure [S1].", ["S1"]),
+        _cite("He has heart failure [S1].", ["S1"])]))
+    claims_block = calls[0].split("CLAIMS:")[1]
+    assert claims_block.count("He has heart failure") == 1   # deduplicated
+    assert spy == ["verify"]                                 # and one call, not two
+    assert all(c["verified"] for c in out["citations"])
+
+
+# --- anchors ---------------------------------------------------------------
+def test_quantity_anchor_blocks_a_wrong_dose(graph_mod):
+    """'lisinopril 5 mg' must not be auto-supported by an unrelated '5'."""
+    src = "Discharge date: 2024-03-18. Lisinopril 50 mg PO daily."
+    verdict, _ = verify_util.deterministic_verdict(
+        "He was discharged on lisinopril 5 mg on 2024-03-18 [S1].", src, ["S1"])
+    assert verdict == "unresolved"
+
+
+def test_correct_dose_with_a_date_is_supported_without_a_model(graph_mod):
+    src = "Discharge date: 2024-03-18. Lisinopril 5 mg PO daily."
+    verdict, note = verify_util.deterministic_verdict(
+        "He was discharged on lisinopril 5 mg on 2024-03-18 [S1].", src, ["S1"])
+    assert verdict == "supported" and "2 anchor" in note
+
+
+def test_spacing_variants_of_a_quantity_match():
+    assert verify_util._quantity_in("40 mg", "Furosemide 40mg daily")
+    assert verify_util._quantity_in("40 mg", "Furosemide 40  MG daily")
+    assert not verify_util._quantity_in("40 mg", "Furosemide 140 mg daily")
+
+
+def test_paraphrased_supported_claim_reaches_the_model_not_a_refusal(graph_mod, spy):
+    """Wording differences are the model's job; code must not fail them."""
+    spy.reply = lambda role, m: json.dumps(
+        {"results": [{"i": 1, "verdict": "supported", "reason": "same fact, different words"}]})
+    ev = [_ev(text="Admitted with acute decompensated heart failure and volume overload.")]
+    out = graph_mod.verification(_state(ev, [_cite("He was admitted with fluid overload [S1].", ["S1"])]))
+    assert spy == ["verify"]
+    assert out["citations"][0]["verified"] is True
+    assert out["needs_human_review"] is False
+
+
+# --- declined / "not documented" answers ------------------------------------
+REFUSAL = "The available records do not contain enough information to answer this."
+
+
+def test_declined_answer_is_not_an_unsupported_claim(graph_mod, spy):
+    """A correct 'not documented' answer is uncited by design and was escalating
+    every single time."""
+    out = graph_mod.verification(_state([_ev()], [_cite(REFUSAL, [])], draft=REFUSAL))
+    assert spy == []
+    assert out["needs_human_review"] is False
+    assert out["review_status"] == "auto_approved"
+    assert out["verification"]["refusal"] is True
+    assert out["citations"][0]["verified"] is True
+
+
+def test_declined_answer_matches_the_no_evidence_path(graph_mod, spy):
+    """Same sentence, same routing, whether or not evidence was retrieved."""
+    empty = graph_mod.synthesis({"query": "q", "patient_evidence": [], "guideline_evidence": [],
+                                 "literature_evidence": []})
+    assert empty["citations"] == []
+    with_ev = graph_mod.verification(_state([_ev()], [_cite(REFUSAL, [])], draft=REFUSAL))
+    assert with_ev["needs_human_review"] is False
+
+
+def test_a_refusal_sentence_among_cited_claims_is_still_verified(graph_mod, spy):
+    """The shortcut applies only to a wholly declined answer."""
+    spy.reply = lambda role, m: json.dumps(
+        {"results": [{"i": 1, "verdict": "unsupported", "reason": "absent"}]})
+    draft = f"He has diabetes [S1]. {REFUSAL}"
+    out = graph_mod.verification(_state([_ev(text="Heart failure.")], [
+        _cite("He has diabetes [S1].", ["S1"]), _cite(REFUSAL, [])], draft=draft))
+    assert out["verification"]["refusal"] is False
+    assert out["needs_human_review"] is True
+
+
+# --- safety: genuine problems still escalate ---------------------------------
+def test_genuinely_unsupported_claim_still_escalates(graph_mod, spy):
+    spy.reply = lambda role, m: json.dumps(
+        {"results": [{"i": 1, "verdict": "unsupported", "reason": "the source does not state this"}]})
+    out = graph_mod.verification(_state([_ev(text="Heart failure with reduced ejection fraction.")],
+                                        [_cite("He was started on dialysis [S1].", ["S1"])]))
+    assert out["needs_human_review"] is True and out["review_status"] == "pending"
+
+
+def test_partial_still_escalates(graph_mod, spy):
+    """'partial' means a specific detail is not in the source. That is a real
+    grounding gap and must not be reclassified as supported."""
+    spy.reply = lambda role, m: json.dumps(
+        {"results": [{"i": 1, "verdict": "partial", "reason": "the date is not stated"}]})
+    out = graph_mod.verification(_state([_ev(text="Heart failure.")],
+                                        [_cite("He had heart failure in March [S1].", ["S1"])]))
+    assert out["citations"][0]["verified"] is False
+    assert out["needs_human_review"] is True
+
+
+def test_uncited_sentence_still_escalates(graph_mod, spy):
+    out = graph_mod.verification(_state([_ev()], [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),
+        _cite("This suggests worsening kidney function.", [])]))
+    assert out["citations"][1]["verified"] is False
+    assert out["needs_human_review"] is True
+
+
+def test_hallucinated_label_still_escalates(graph_mod, spy):
+    out = graph_mod.verification(_state([_ev()], [_cite("Invented fact [S9].", ["S9"])]))
+    assert spy == []
+    assert out["citations"][0]["verification_note"] == "no valid citation"
+    assert out["needs_human_review"] is True
+
+
+def test_fully_supported_answer_finalizes_automatically(graph_mod, spy):
+    ev = [_ev(text="Creatinine 1.4 mg/dL on 2024-03-18. Torsemide 20 mg PO daily.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),
+        _cite("He takes torsemide 20 mg daily [S1].", ["S1"])]))
+    assert spy == []
+    assert all(c["verified"] for c in out["citations"])
+    assert out["needs_human_review"] is False
+    assert out["review_status"] == "auto_approved"
+    assert graph_mod.route_after_verification(out) == "finalize"
+
+
+# --- audit trace -------------------------------------------------------------
+def test_every_claim_appears_exactly_once_in_the_audit_trace(graph_mod, spy):
+    spy.reply = lambda role, m: json.dumps(
+        {"results": [{"i": 1, "verdict": "unsupported", "reason": "absent"}]})
+    ev = [_ev(text="Creatinine 1.4 mg/dL on 2024-03-18.")]
+    out = graph_mod.verification(_state(ev, [
+        _cite("Creatinine was 1.4 mg/dL on 2024-03-18 [S1].", ["S1"]),
+        _cite("He has diabetes [S1].", ["S1"]),
+        _cite("Uncited prose.", [])]))
+    trace = out["verification"]["claims"]
+    assert [t["i"] for t in trace] == [0, 1, 2]
+    assert [t["stage"] for t in trace] == ["deterministic", "fast_model", "deterministic"]
+    assert [t["final"] for t in trace] == ["supported", "unsupported", "unsupported"]
+    assert all("text" not in t for t in trace)          # no source text in the trace
