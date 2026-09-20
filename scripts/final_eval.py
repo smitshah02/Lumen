@@ -4,11 +4,17 @@ Lumen final answer-level evaluation — CLI
 Deterministic answer-level evaluation, an independent offline LLM judge, and
 versioned run artifacts for the FROZEN Lumen architecture.
 
+    LUMEN_DATA_PLANE=demo python scripts/final_eval.py doctor
     LUMEN_DATA_PLANE=demo python scripts/final_eval.py run --subset smoke
     LUMEN_DATA_PLANE=demo python scripts/final_eval.py run --subset all --run-id my-run
     LUMEN_DATA_PLANE=demo python scripts/final_eval.py judge --run-id my-run --resume
-    python scripts/final_eval.py score --run-id my-run
-    python scripts/final_eval.py show  --run-id my-run
+    python scripts/final_eval.py score     --run-id my-run
+    python scripts/final_eval.py calibrate --run-id my-run
+    python scripts/final_eval.py show      --run-id my-run
+
+`doctor` is diagnostic only: it starts nothing, writes nothing and returns
+non-zero when a prerequisite for a real benchmark is missing. `calibrate` and
+`compare` read existing artifacts and never call a model.
 
 Artifacts land in results/final_eval/<run_id>/ and a completed run is immutable.
 
@@ -246,6 +252,77 @@ def cmd_purge_evidence(args) -> int:
     return 0
 
 
+def cmd_calibrate(args) -> int:
+    """Phase 5 — where the deterministic checks, the runtime routing and the
+    independent judge disagree. Reads artifacts only; calls no model."""
+    from src.evals.final_eval import calibration as cal_mod
+    run = man.RunDir(args.run_id, args.results_root)
+    if not run.file("manifest").exists():
+        raise SystemExit(f"no manifest in {run.path}")
+    say(f"-- phase 5: calibration ({run.run_id}) --")
+    cal = cal_mod.run(run, run.read_json("manifest"), progress=say)
+    say(f"\n   {cal['n_cases_with_disagreements']}/{cal['n_cases']} cases carry a "
+        f"disagreement")
+    for kind, n in (cal["by_kind"] or {}).items():
+        say(f"     {kind}: {n}")
+    say(f"   wrote {run.file('calibration').name}, {run.file('calibration_report').name}")
+    say("\n   Adjudication is pending and is a HUMAN decision: set `adjudication` on "
+        "each finding.\n   LLM-as-judge is not ground truth, and neither is strict "
+        "matching on a paraphrase.")
+    return 0
+
+
+def cmd_compare(args) -> int:
+    """Phase 10 — read-only comparison. Refuses a delta it cannot honestly compute."""
+    from src.evals.final_eval import compare as cmp_mod
+    run = man.RunDir(args.run_id, args.results_root)
+    try:
+        new = cmp_mod.load_run(run)
+        old = (cmp_mod.load_run(man.RunDir(args.baseline_run_id, args.results_root))
+               if args.baseline_run_id else cmp_mod.load_legacy(args.baseline))
+        result = cmp_mod.compare(new, old)
+    except cmp_mod.IncomparableRuns as e:
+        raise SystemExit(f"refusing: {e}")
+    say(cmp_mod.render(result))
+    if not args.no_write:
+        run.write_json("comparison", result)
+        say(f"   wrote {run.file('comparison').name}")
+    return 0
+
+
+def cmd_api_crosscheck(args) -> int:
+    """Post-evaluation HTTP contract check. Never a prerequisite for a score."""
+    from src.evals.final_eval import api_crosscheck as x
+    run = man.RunDir(args.run_id, args.results_root)
+    if not run.file("responses").exists():
+        raise SystemExit(f"no responses.jsonl in {run.path}")
+    p = x.probe(args.base_url)
+    if not p.get("reachable"):
+        raise SystemExit(
+            f"refusing: {args.base_url} is not reachable ({p.get('error') or p.get('http')}). "
+            f"The API cross-check is a deployed-surface check and is skipped when there "
+            f"is no deployment; it is never required for the answer-quality evaluation.")
+    say(f"-- api contract cross-check against {args.base_url} --")
+    rep = x.run(run, args.base_url, progress=say, limit=args.limit)
+    say(f"\n   {rep['n_contract_ok']}/{rep['n_cases']} contract-clean, "
+        f"{rep['n_divergent']} divergent, {len(rep['transport_errors'])} transport error(s)")
+    say(f"   wrote {run.file('api_crosscheck').name}")
+    return 0 if not rep["n_divergent"] and not rep["transport_errors"] else 1
+
+
+def cmd_doctor(args) -> int:
+    """RunPod preflight. Diagnostic only — changes nothing, starts nothing."""
+    from src.evals.final_eval import doctor as doc
+    rep = doc.run_checks(profile=args.profile, judge_model=args.judge_model,
+                         judge_host=args.judge_host, results_root=args.results_root,
+                         run_id=args.run_id)
+    if args.json:
+        say(json.dumps(rep.to_dict(), indent=2))
+    else:
+        say(doc.render(rep))
+    return rep.exit_code
+
+
 def cmd_cases(args) -> int:
     cs = case_mod.load_cases()
     fp = case_mod.dataset_fingerprint()
@@ -329,6 +406,40 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("purge-evidence", help="delete a run's evidence working file")
     p.add_argument("--run-id", required=True)
     p.set_defaults(func=cmd_purge_evidence)
+
+    p = sub.add_parser("calibrate", help="phase 5 — disagreements between the deterministic "
+                                        "checks, the runtime routing and the judge "
+                                        "(reads artifacts only; calls no model)")
+    p.add_argument("--run-id", required=True)
+    p.set_defaults(func=cmd_calibrate)
+
+    p = sub.add_parser("compare", help="phase 10 — read-only comparison against another run "
+                                       "or a cloud_eval performance.json")
+    p.add_argument("--run-id", required=True, help="the newer final_eval run")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--baseline-run-id", help="another final_eval run to compare against")
+    g.add_argument("--baseline", help="path to a cloud_eval performance.json "
+                                      "(operational metrics only)")
+    p.add_argument("--no-write", action="store_true", help="print without writing comparison.json")
+    p.set_defaults(func=cmd_compare)
+
+    p = sub.add_parser("api-crosscheck", help="post-evaluation HTTP contract check against a "
+                                              "deployed /ask (never required for a score)")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--base-url", required=True)
+    p.add_argument("--limit", type=int, default=None)
+    p.set_defaults(func=cmd_api_crosscheck)
+
+    p = sub.add_parser("doctor", help="preflight: verify every prerequisite before spending "
+                                      "GPU time. Diagnostic only; runs no case")
+    _judge_args(p)
+    p.add_argument("--profile", default="final", choices=["final", "local"],
+                   help="final = every prerequisite is required (default); local = demote "
+                        "machine-dependent checks (models, GPU, database) to advisory")
+    p.add_argument("--run-id", default=None,
+                   help="also check that this run id is still available")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("cases", help="print the evaluation set and its fingerprint")
     _cases_args(p)

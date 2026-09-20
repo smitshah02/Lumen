@@ -174,12 +174,21 @@ def _breakdown(dets: list, key: str) -> dict:
 
 # ---------------------------------------------------------------------------
 def judge_section(judges: list) -> dict:
-    from src.evals.final_eval.judge import DIMENSIONS
+    """The independent judge, per dimension, with its failures counted.
+
+    A verdict the judge disowned — `judge_inconsistent`, a parse error, an
+    unavailable backend — contributes NO score to any mean. Its numbers are
+    preserved on the row for a human to read, but averaging a verdict that
+    contradicts itself would launder an evaluation failure into a measurement.
+    """
+    from src.evals.final_eval.judge import DIMENSIONS, CRITERION_STATUSES
+    scorable = [j for j in judges if j["status"] in ("ok", "partial")]
     failures = [j for j in judges if j["status"] not in ("ok", "partial")]
     partial = [j for j in judges if j["status"] == "partial"]
+    inconsistent = [j for j in judges if j["status"] == "judge_inconsistent"]
     dims = {}
     for d in DIMENSIONS:
-        scores = [j["dimensions"][d]["score"] for j in judges
+        scores = [j["dimensions"][d]["score"] for j in scorable
                   if (j.get("dimensions") or {}).get(d, {}).get("applicable")
                   and isinstance(j["dimensions"][d].get("score"), int)]
         applicable = sum(1 for j in judges if d in (j.get("applicable_dimensions") or []))
@@ -191,16 +200,42 @@ def judge_section(judges: list) -> dict:
             "median": statistics.median(scores) if scores else None,
             "distribution": {str(s): sum(1 for x in scores if x == s) for s in range(5)},
         }
+
+    # Criterion-level statistics: the aj2 evidence that each required fact was
+    # actually inspected, and how often one was not met.
+    assessments = [a for j in scorable for a in (j.get("criterion_assessments") or [])]
+    supplied = sum(j.get("n_criteria") or 0 for j in scorable)
+    status_counts = {s: sum(1 for a in assessments if a.get("status") == s)
+                     for s in CRITERION_STATUSES}
     return {
         "n_cases": len(judges),
         "judge_failures": len(failures),
         "judge_failure_ids": [j["query_id"] for j in failures],
         "judge_partial": len(partial),
+        "judge_inconsistent": len(inconsistent),
+        "judge_inconsistent_ids": [j["query_id"] for j in inconsistent],
+        "judge_repairs_attempted": sum(1 for j in judges if j.get("repair_attempted")),
+        "consistency_rules_violated": dict(Counter(
+            v["rule"] for j in judges for v in (j.get("consistency_violations") or []))),
         "judge_failure_statuses": dict(Counter(j["status"] for j in failures)),
         "cached": sum(1 for j in judges if j.get("cached")),
         "dimensions": dims,
+        "criterion_assessments": {
+            "n_criteria_supplied": supplied,
+            "n_assessed": len(assessments),
+            "n_unassessed": max(0, supplied - len(assessments)),
+            "by_status": status_counts,
+            "cases_with_unmet_criteria": sum(
+                1 for j in scorable
+                if any(a.get("status") in ("missing", "partially_supported", "contradicted")
+                       for a in (j.get("criterion_assessments") or []))),
+            "unknown_evidence_labels": sorted({
+                l for j in judges for l in (j.get("unknown_evidence_labels") or [])}),
+        },
         "note": ("Judge failures are counted, never scored as 0 and never treated as a "
-                 "pass. The judge is a second opinion, not ground truth."),
+                 "pass. Scores from a disowned verdict (judge_inconsistent, parse or "
+                 "backend error) are excluded from every mean. The judge is a second "
+                 "opinion, not ground truth."),
     }
 
 
@@ -297,6 +332,8 @@ def build_summary(run_dir, manifest: dict) -> dict:
         "run_id": manifest.get("run_id"),
         "benchmark": manifest.get("benchmark"),
         "evaluator_version": EVALUATOR_VERSION,
+        "results_schema_version": manifest.get("results_schema_version"),
+        "judge_prompt_version": (manifest.get("judge") or {}).get("prompt_version"),
         "generated_from": "this run's raw artifacts only "
                           "(responses.jsonl, deterministic.jsonl, judge.jsonl)",
         "eval_set": {k: (manifest.get("eval_set") or {}).get(k)
@@ -405,8 +442,18 @@ def build_report(summary: dict, failure_counts: dict, manifest: dict) -> str:
                  f"{s['mean'] if s['mean'] is not None else '—'} | "
                  f"{s['median'] if s['median'] is not None else '—'} | "
                  + " | ".join(str(dist[str(k)]) for k in range(5)) + " |")
+    ca = j["criterion_assessments"]
     L += ["", f"**Judge failures: {j['judge_failures']}** {j['judge_failure_ids'] or ''} "
-              f"(partial: {j['judge_partial']}). {j['note']}", "",
+              f"(partial: {j['judge_partial']}, self-inconsistent: {j['judge_inconsistent']} "
+              f"{j['judge_inconsistent_ids'] or ''}). {j['note']}", "",
+          "### Criterion assessments (aj2)", "",
+          f"- criteria supplied {ca['n_criteria_supplied']}, assessed {ca['n_assessed']}, "
+          f"unassessed {ca['n_unassessed']}",
+          "- by status: " + ", ".join(f"{k} {v}" for k, v in ca["by_status"].items()),
+          f"- cases with at least one unmet criterion: {ca['cases_with_unmet_criteria']}",
+          f"- consistency rules violated: {j['consistency_rules_violated'] or 'none'} "
+          f"(repairs attempted: {j['judge_repairs_attempted']})",
+          "",
           "## 4. Operational", "",
           f"- latency ms: mean {o['latency_ms']['mean']}, p50 {o['latency_ms']['p50']}, "
           f"p95 {o['latency_ms']['p95']}",
@@ -430,6 +477,9 @@ def build_report(summary: dict, failure_counts: dict, manifest: dict) -> str:
           "`contradiction` is a deterministic error.",
           "- Judge scores are a second opinion, not ground truth. Judge failures are "
           "counted separately and never scored as 0.",
+          "- A `judge_inconsistent` verdict contradicted its own criterion assessments "
+          "twice. Its scores are kept on the row but excluded from every mean, and the "
+          "case is not counted as passed.",
           "- " + _small_n_note(d),
           "- No composite score is produced.",
           ""]

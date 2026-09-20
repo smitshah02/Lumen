@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import json
 import time
@@ -49,7 +50,9 @@ ARTIFACTS = {
     "summary": "summary.json",
     "report": "report.md",
     "calibration": "calibration.json",
+    "calibration_report": "calibration.md",
     "api_crosscheck": "api_crosscheck.json",
+    "comparison": "comparison.json",
     # Working file, NOT a published result artifact. Holds the exact evidence
     # text the model saw, because the offline judge must grade groundedness
     # against that text and runs as a separate stage. It is gitignored, never
@@ -61,6 +64,13 @@ ARTIFACTS = {
 PUBLISHED_ARTIFACTS = ("manifest", "responses", "deterministic", "judge",
                        "failures", "summary", "report")
 COMPLETE_SENTINEL = ".complete"
+
+# Shape of the per-case rows in responses/deterministic/judge .jsonl. Bumped
+# when a field is added, removed or changes meaning, so a reader can tell at a
+# glance whether two runs' raw artifacts are directly comparable. 2 is the aj2
+# judge row (criterion_assessments, consistency_violations) plus the
+# admission_scope_violation / execution_error / invalid_visible_citation tags.
+RESULTS_SCHEMA_VERSION = 2
 
 
 class RunDirError(RuntimeError):
@@ -76,6 +86,29 @@ def new_run_id(prefix: str = "") -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     sha = (_git("rev-parse", "--short=7", "HEAD") or "nogit")
     return f"{prefix}{stamp}-{sha}"
+
+
+# `git status --porcelain` emits "XY PATH". _git() strips the whole output, so
+# the FIRST line of an unstaged-only status loses its leading blank X and a
+# naive line[3:] then eats the first character of that filename. The manifest
+# would record "rc/evals/..." as the dirty file — a provenance record that
+# names a path which does not exist.
+_PORCELAIN_RE = re.compile(r"^[ MADRCU?!]{1,2}\s+(.*)$")
+
+
+def porcelain_paths(status: str) -> list[str]:
+    """Paths out of `git status --porcelain`, tolerant of that stripped line."""
+    out = []
+    for line in (status or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        m = _PORCELAIN_RE.match(line)
+        path = (m.group(1) if m else line).strip()
+        if " -> " in path:                  # rename/copy: record the destination
+            path = path.split(" -> ", 1)[1]
+        out.append(path.strip('"'))
+    return out
 
 
 def _git(*args) -> str:
@@ -232,8 +265,7 @@ def _provenance() -> dict:
     written by scripts/sync_to_pod.sh — the same file scripts/cloud_eval.py reads."""
     sha = _git("rev-parse", "HEAD")
     if sha:
-        status = _git("status", "--porcelain")
-        dirty_files = sorted({l[3:].strip() for l in status.splitlines() if l.strip()})
+        dirty_files = sorted(set(porcelain_paths(_git("status", "--porcelain"))))
         return {"git_sha": sha, "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
                 "dirty_worktree": bool(dirty_files), "dirty_files": dirty_files[:50],
                 "provenance_source": "git"}
@@ -392,6 +424,7 @@ def build_manifest(*, run_id: str, case_ids: list[str], subset: str,
         "run_id": run_id,
         "created_at_utc": utc_now(),
         "evaluator_version": EVALUATOR_VERSION,
+        "results_schema_version": RESULTS_SCHEMA_VERSION,
         "benchmark": "Lumen Final Answer-Level Quality Baseline v1",
         "notes": notes,
         **prov,

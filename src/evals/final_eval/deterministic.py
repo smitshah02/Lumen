@@ -465,7 +465,8 @@ def evaluate_case(case, row: dict) -> dict:
             "deterministic_lab_path": bool(row.get("deterministic_lab_path")),
         },
         "failure_tags": _failure_tags(execution, cites, facts, mnc, temporal,
-                                      abstention, ambiguity, isolation, review, row),
+                                      abstention, ambiguity, isolation, admission,
+                                      review, row),
     }
 
 
@@ -523,19 +524,34 @@ def _review_worthy(execution, cites, facts, mnc, temporal, abstention, ambiguity
 
 
 def _failure_tags(execution, cites, facts, mnc, temporal, abstention, ambiguity,
-                  isolation, review, row) -> list:
-    """Phase 7 taxonomy. One case may carry several tags."""
+                  isolation, admission, review, row) -> list:
+    """Phase 7 taxonomy. One case may carry several tags.
+
+    The full vocabulary and what each tag means live in
+    src/evals/final_eval/failures.py:TAXONOMY.
+    """
     tags = []
     if execution["evaluator_error"]:
         tags.append("evaluator_error")
     if execution["synthesis_failed"]:
         tags.append("synthesis_failure")
+    # A graph that recorded an error and still answered is distinct from one
+    # that failed outright: the answer exists and is scored, but something went
+    # wrong producing it and that must not vanish from the taxonomy.
+    if execution["graph_errors"] and not execution["synthesis_failed"] \
+            and not execution["evaluator_error"]:
+        tags.append("execution_error")
     if execution["empty_answer"] and not execution["evaluator_error"]:
         tags.append("empty_answer")
     if not execution["valid_schema"]:
         tags.append("invalid_response_schema")
     if cites["hallucinated_labels_pre_strip"]:
         tags.append("invalid_citation_label")
+    # Post-strip is expected to be empty because synthesis repairs the answer.
+    # If one ever survives into the stored answer a reader sees it, so it is
+    # tagged separately rather than folded into the pre-strip count.
+    if cites["hallucinated_labels_post_strip"]:
+        tags.append("invalid_visible_citation")
     if cites["uncited_factual_claims"]:
         tags.append("missing_citation")
     if facts["n_contradictions"]:
@@ -556,6 +572,8 @@ def _failure_tags(execution, cites, facts, mnc, temporal, abstention, ambiguity,
         tags.append("cross_patient_leakage")
     if isolation["unresolved_labels"]:
         tags.append("unresolved_evidence_provenance")
+    if admission["pass"] is False:
+        tags.append("admission_scope_violation")
     if review["is_review_worthy"] and not row.get("needs_human_review"):
         tags.append("review_routing_miss")
     return tags

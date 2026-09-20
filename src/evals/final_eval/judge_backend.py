@@ -29,8 +29,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_JUDGE_MODEL = os.environ.get("LUMEN_JUDGE_MODEL", "qwen2.5:14b")
 DEFAULT_JUDGE_HOST = os.environ.get("LUMEN_JUDGE_HOST",
                                     os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434"))
-JUDGE_NUM_CTX = int(os.environ.get("LUMEN_JUDGE_NUM_CTX", "8192"))
-JUDGE_MAX_TOKENS = int(os.environ.get("LUMEN_JUDGE_MAX_TOKENS", "900"))
+# aj2's verdict carries one object per required criterion before the six
+# dimensions, so both budgets are larger than aj1 needed. A verdict truncated
+# mid-JSON parses as a failure and costs the case a judgement, which is a worse
+# outcome than the extra offline tokens. Both are env-overridable; neither
+# touches the runtime tiers.
+JUDGE_NUM_CTX = int(os.environ.get("LUMEN_JUDGE_NUM_CTX", "12288"))
+JUDGE_MAX_TOKENS = int(os.environ.get("LUMEN_JUDGE_MAX_TOKENS", "1600"))
 
 
 class JudgeUnavailable(RuntimeError):

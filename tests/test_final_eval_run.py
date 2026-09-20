@@ -305,3 +305,160 @@ def test_rescoring_a_sealed_run_is_recorded(run, gold):
     s = agg.build_summary(run, m)
     s["derivation"] = {"regenerated_after_seal": run.is_complete()}
     assert s["derivation"]["regenerated_after_seal"] is True
+
+
+# ===========================================================================
+# aj2 in aggregation and the failure taxonomy
+# ===========================================================================
+def _aj2_judge_row(qid, dims, *, status="ok", statuses=("supported",),
+                   applicable=("factual_correctness", "groundedness", "completeness"),
+                   **over):
+    crits = [{"id": f"c{i}", "kind": "fact", "text": f"fact {i}"}
+             for i in range(1, len(statuses) + 1)]
+    assessments = [{"criterion_id": c["id"], "criterion": c["text"], "status": s,
+                    "evidence_labels": ["S1"], "reason": ""}
+                   for c, s in zip(crits, statuses)]
+    row = {**_judge_row(qid, dims, status=status, applicable=applicable),
+           "criteria": crits, "n_criteria": len(crits),
+           "criterion_assessments": assessments,
+           "criterion_status_counts": {
+               s: sum(1 for a in assessments if a["status"] == s)
+               for s in ("supported", "partially_supported", "missing",
+                         "contradicted", "not_applicable")},
+           "unsupported_content": [], "consistency_violations": [],
+           "repair_attempted": False}
+    row.update(over)
+    return row
+
+
+def test_an_inconsistent_verdict_contributes_no_score_to_any_mean(run, gold):
+    """Its numbers are preserved on the row, but averaging a verdict the judge
+    disowned would launder an evaluation failure into a measurement."""
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001),
+            _row("demo_q40", "Tenofovir alafenamide 25 mg daily was started [S1].", 90000030)]
+    m = _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row("demo_q01", {"groundedness": 2}))
+    run.append("judge", _aj2_judge_row(
+        "demo_q40", {"groundedness": 4, "completeness": 4}, status="judge_inconsistent",
+        statuses=("missing",),
+        consistency_violations=[{"rule": "completeness_inflated", "detail": "d"}],
+        repair_attempted=True))
+    j = agg.build_summary(run, m)["judge_quality"]
+    assert j["judge_inconsistent"] == 1
+    assert j["judge_inconsistent_ids"] == ["demo_q40"]
+    assert j["judge_failures"] == 1
+    assert j["judge_repairs_attempted"] == 1
+    assert j["consistency_rules_violated"] == {"completeness_inflated": 1}
+    # Only demo_q01's 2 is averaged; the disowned 4 is excluded, not clamped.
+    assert j["dimensions"]["groundedness"]["mean"] == 2.0
+    assert j["dimensions"]["groundedness"]["n_scored"] == 1
+
+
+def test_criterion_assessment_statistics_are_reported(run, gold):
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)]
+    m = _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row(
+        "demo_q01", {"completeness": 2},
+        statuses=("supported", "missing", "partially_supported")))
+    ca = agg.build_summary(run, m)["judge_quality"]["criterion_assessments"]
+    assert ca["n_criteria_supplied"] == 3
+    assert ca["n_assessed"] == 3 and ca["n_unassessed"] == 0
+    assert ca["by_status"]["missing"] == 1
+    assert ca["by_status"]["partially_supported"] == 1
+    assert ca["cases_with_unmet_criteria"] == 1
+
+
+def test_judge_failure_statuses_get_their_own_tags(run, gold):
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001),
+            _row("demo_q02", "Creatinine went 1.8 mg/dL, 2.1 mg/dL, 1.4 mg/dL [S1].",
+                 90000001),
+            _row("demo_q19", "Infliximab was intensified from 5 mg/kg after an "
+                             "insurance interruption [S1].", 90000015)]
+    _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row("demo_q01", {}, status="backend_error"))
+    run.append("judge", _aj2_judge_row("demo_q02", {}, status="parse_error"))
+    run.append("judge", _aj2_judge_row("demo_q19", {"completeness": 4},
+                                       status="judge_inconsistent", statuses=("missing",)))
+    tags = fail_mod.build(run)["by_tag"]
+    assert tags["judge_error"] == 1
+    assert tags["judge_parse_error"] == 1
+    assert tags["judge_inconsistent"] == 1
+    assert "judge_failure" not in tags              # the generic tag is gone
+
+
+def test_a_disowned_verdict_contributes_no_low_score_findings(run, gold):
+    """A verdict the judge contradicted itself on must not ALSO be mined for
+    'judge says groundedness is 1' findings."""
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)]
+    _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row("demo_q01", {"groundedness": 1, "completeness": 4},
+                                       status="judge_inconsistent", statuses=("missing",)))
+    tags = fail_mod.build(run)["by_tag"]
+    assert tags["judge_inconsistent"] == 1
+    assert "judge_low_groundedness" not in tags
+
+
+def test_every_emitted_tag_is_documented_in_the_taxonomy(run, gold):
+    """The vocabulary in failures.TAXONOMY must cover what the code emits."""
+    rows = [_row("demo_q01", "The creatinine was 2.6 mg/dL [S1]. Renal function is poor.",
+                 90000001, bad_labels=["S9"]),
+            _row("demo_q21", "Her ejection fraction was 45 percent [S1].", 90000017),
+            _row("demo_q02", "", 90000001, status="failed")]
+    _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row("demo_q01", {}, status="parse_error"))
+    emitted = set(fail_mod.build(run)["by_tag"])
+    assert emitted, "the fixture should produce findings"
+    undocumented = emitted - set(fail_mod.TAXONOMY) - set(fail_mod.JUDGE_TAGS.values())
+    assert undocumented == set()
+
+
+def test_admission_scope_violation_is_tagged(run, gold):
+    """Out-of-scope evidence is reported in its own right; it is deliberately
+    NOT folded into the deterministic case pass."""
+    bad = _row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)
+    bad["sources"][0]["hadm_id"] = 99999999            # outside the gold admissions
+    _seed(run, gold, [bad])
+    det = run.read_jsonl("deterministic")[0]
+    assert det["admission_scope"]["pass"] is False
+    assert "admission_scope_violation" in det["failure_tags"]
+    assert det["case_pass"] is True                     # reported, not a pass component
+    assert "admission_scope_violation" in fail_mod.build(run)["by_tag"]
+
+
+def test_graph_error_with_an_answer_is_tagged_execution_error(run, gold):
+    row = _row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)
+    row["graph_errors"] = ["retrieval: reranker timeout, fell back to RRF"]
+    _seed(run, gold, [row])
+    det = run.read_jsonl("deterministic")[0]
+    assert "execution_error" in det["failure_tags"]
+    assert "synthesis_failure" not in det["failure_tags"]
+
+
+def test_a_label_surviving_into_the_stored_answer_is_tagged_separately(run, gold):
+    """post-strip is expected to be 0; if one ever survives, a reader sees it."""
+    row = _row("demo_q01", "The creatinine was 1.4 mg/dL [S1][S9].", 90000001)
+    _seed(run, gold, [row])
+    det = run.read_jsonl("deterministic")[0]
+    assert det["citations"]["hallucinated_labels_post_strip"] == ["S9"]
+    assert "invalid_visible_citation" in det["failure_tags"]
+
+
+def test_manifest_and_summary_carry_the_results_schema_version(run, gold):
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)]
+    m = _seed(run, gold, rows)
+    m["results_schema_version"] = man.RESULTS_SCHEMA_VERSION
+    m["judge"] = {"model": "judge-x", "prompt_version": "aj2"}
+    s = agg.build_summary(run, m)
+    assert s["results_schema_version"] == man.RESULTS_SCHEMA_VERSION
+    assert s["judge_prompt_version"] == "aj2"
+
+
+def test_report_shows_the_criterion_statistics(run, gold):
+    rows = [_row("demo_q01", "The creatinine was 1.4 mg/dL [S1].", 90000001)]
+    m = _seed(run, gold, rows)
+    run.append("judge", _aj2_judge_row("demo_q01", {"completeness": 2},
+                                       statuses=("supported", "missing")))
+    text = agg.build_report(agg.build_summary(run, m), fail_mod.build(run), m)
+    assert "Criterion assessments (aj2)" in text
+    assert "criteria supplied 2" in text
+    assert "missing 1" in text

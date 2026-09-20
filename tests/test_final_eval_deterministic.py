@@ -271,3 +271,53 @@ def test_incompleteness_is_not_treated_as_review_worthy(gold):
     assert "incomplete_answer" in r["failure_tags"]
     assert r["review_worthy"]["is_review_worthy"] is False
     assert "review_routing_miss" not in r["failure_tags"]
+
+
+# --- admission scope -------------------------------------------------------
+def test_cited_evidence_outside_the_gold_admissions_is_reported(gold):
+    case = gold["demo_q01"]
+    row = {"query_id": "demo_q01", "status": "completed",
+           "answer": "The creatinine was 1.4 mg/dL [S1].",
+           "citations": [{"label": "S1", "labels": ["S1"], "claim": "c", "verified": True}],
+           "sources": [{"label": "S1", "chunk_id": 1, "subject_id": 90000001,
+                        "hadm_id": 99999999, "resolution": "note_chunks"}],
+           "node_trail": [], "citation_report": {}, "graph_errors": []}
+    out = D.check_admission_scope(case, row)
+    assert out["applicable"] is True
+    assert out["pass"] is False
+    assert out["out_of_scope"] == [{"label": "S1", "hadm_id": 99999999}]
+    assert out["expected_hadm_ids"] == sorted(int(h) for h in case.evidence_hadm_ids)
+
+
+def test_uncited_out_of_scope_evidence_is_not_a_violation(gold):
+    """The check is about what the answer CITED, not what retrieval returned."""
+    case = gold["demo_q01"]
+    row = {"query_id": "demo_q01", "status": "completed", "answer": "x [S1].",
+           "citations": [{"label": "S1", "labels": ["S1"], "claim": "c", "verified": True}],
+           "sources": [{"label": "S1", "chunk_id": 1, "subject_id": 90000001,
+                        "hadm_id": int(case.evidence_hadm_ids[0]),
+                        "resolution": "note_chunks"},
+                       {"label": "S2", "chunk_id": 2, "subject_id": 90000001,
+                        "hadm_id": 99999999, "resolution": "note_chunks"}],
+           "node_trail": [], "citation_report": {}, "graph_errors": []}
+    out = D.check_admission_scope(case, row)
+    assert out["pass"] is True and out["out_of_scope"] == []
+
+
+def test_an_unknown_admission_is_reported_not_assumed_in_scope(gold):
+    case = gold["demo_q01"]
+    row = {"query_id": "demo_q01", "status": "completed", "answer": "x [S1].",
+           "citations": [{"label": "S1", "labels": ["S1"], "claim": "c", "verified": True}],
+           "sources": [{"label": "S1", "chunk_id": 1, "subject_id": 90000001,
+                        "hadm_id": None, "resolution": "unresolved"}],
+           "node_trail": [], "citation_report": {}, "graph_errors": []}
+    out = D.check_admission_scope(case, row)
+    assert out["unknown_admission_labels"] == ["S1"]
+
+
+def test_admission_scope_is_not_applicable_without_gold_admissions(gold):
+    case = next((c for c in gold.values() if not c.evidence_hadm_ids), None)
+    if case is None:
+        pytest.skip("every gold case lists admissions")
+    out = D.check_admission_scope(case, {"citations": [], "sources": []})
+    assert out["applicable"] is False and out["pass"] is None

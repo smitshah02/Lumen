@@ -7,4 +7,8 @@ the graph, retriever, API and prompts are read, executed and recorded, never
 modified.
 """
 
-EVALUATOR_VERSION = "final_eval/1.0.0"
+# 1.1.0 — aj2 independent judge (per-criterion assessment + consistency
+# validation + one repair attempt), calibration, preflight doctor, read-only
+# comparison and the API contract cross-check. The measured system is
+# unchanged; this version identifies the EVALUATOR that produced a run.
+EVALUATOR_VERSION = "final_eval/1.1.0"
