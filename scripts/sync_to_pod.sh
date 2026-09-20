@@ -35,7 +35,7 @@ PY
 # /workspace on RunPod can be an object-backed FUSE mount (geesefs): no chown/chmod,
 # no temp-file rename. So no -a (it implies -pgoD): copy content + file mtimes only,
 # never owner/group/perms or directory times, and write files in place.
-rsync -rtzR --omit-dir-times --no-perms --no-owner --no-group --inplace --delete \
+rsync -rtzR --omit-dir-times --no-perms --no-owner --no-group --inplace --delete --no-times \
   --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'src/reranker/' \
   -e "${SSH[*]}" "${FILES[@]}" "$TARGET:$DEST/"
 "${SSH[@]}" "$TARGET" "cat > $DEST/.deployment_source.json" < "$prov"
