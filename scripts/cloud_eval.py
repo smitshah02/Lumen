@@ -40,6 +40,22 @@ GOLDEN = json.loads((ROOT / "src/demo_data/golden_qa.json").read_text())
 CREAT = {"subject_id": 90000001, "query": "What was the most recent creatinine?"}
 BREATH = {"subject_id": 90000003, "query": "Why was the patient having trouble breathing?"}
 
+# The verified A40 run BEFORE the latency work (qwen3:8b serving both tiers,
+# LLM triage on every request, one MAIN verification call per citation).
+# Kept here so `perf` prints the comparison rather than leaving it to memory.
+# LEGACY_IDS is the original 15-question demo set; the corpus has since grown
+# to 40 questions, so the legacy subset is summarised separately to keep an
+# apples-to-apples before/after row.
+A40_BASELINE = {
+    "models": {"main": "qwen3:8b", "fast": "qwen3:8b"},
+    "n": 15, "successful": 15, "mean_ms": 15240, "p50_ms": 15710, "p95_ms": 19380,
+    "mean_retrieval_ms": 503, "mean_llm_ms": 14600, "mean_llm_calls": 3.6,
+    "ollama_decode_tokens_per_s": 39,
+    "note": "measured on RunPod A40 before main/fast split, deterministic triage, "
+            "deterministic + batched verification",
+}
+LEGACY_IDS = [f"demo_q{i:02d}" for i in range(1, 16)]
+
 # Earlier measurements supplied by the user (single warm requests, not re-measured here).
 REFERENCE = {
     "native_mac": {"total_ms": 30952, "retrieval_ms": 2935, "llm_ms": 19589, "llm_calls": 3,
@@ -109,7 +125,12 @@ def manifest(out: Path) -> None:
     gpu = [g.strip() for g in _sh("nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader").split(",")]
     mem_kb = next((int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemTotal")), 0)
     tags = requests.get(f"{OLLAMA}/api/tags", timeout=10).json().get("models", [])
-    qwen = next((m for m in tags if m["name"] == local_client.MAIN_MODEL), {})
+    def _tag(name):
+        m = next((m for m in tags if m["name"] == name), {})
+        return {"tag": name, "digest": (m.get("digest") or "")[:12],
+                "parameter_size": m.get("details", {}).get("parameter_size"),
+                "quantization": m.get("details", {}).get("quantization_level"),
+                "installed": bool(m)}
     with storage.engine.connect() as c:
         q = lambda s: c.execute(text(s)).scalar()
         counts = {"patients": q("SELECT COUNT(*) FROM patients"), "notes": q("SELECT COUNT(*) FROM clinical_notes"),
@@ -126,9 +147,10 @@ def manifest(out: Path) -> None:
         "python": platform.python_version(),
         "torch": torch.__version__, "torch_cuda": torch.version.cuda, "cuda_available": torch.cuda.is_available(),
         "ollama_version": requests.get(f"{OLLAMA}/api/version", timeout=10).json().get("version"),
-        "llm": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL, "digest": (qwen.get("digest") or "")[:12],
-                "parameter_size": qwen.get("details", {}).get("parameter_size"),
-                "quantization": qwen.get("details", {}).get("quantization_level")},
+        "llm": {"main": _tag(local_client.MAIN_MODEL), "fast": _tag(local_client.FAST_MODEL),
+                "roles": local_client.runtime_config()["roles"],
+                "keep_alive": local_client.KEEP_ALIVE,
+                "deterministic_labs": os.environ.get("LUMEN_DETERMINISTIC_LABS", "1")},
         "embedding_model": {k: f"{MODELS[k][0]}@{MODELS[k][1][:10]}" for k in ("medcpt-query", "medcpt-article")},
         "reranker_model": f"{MODELS['bge-reranker'][0]}@{MODELS['bge-reranker'][1][:10]}",
         "data_plane": storage.DATA_PLANE, "database": storage.engine.url.database,
@@ -152,15 +174,22 @@ def _tracing_view() -> dict:
 # ---------------------------------------------------------------------------
 def _gpu_evidence() -> dict:
     ps = requests.get(f"{OLLAMA}/api/ps", timeout=10).json().get("models", [])
-    q = next((m for m in ps if m.get("name", "").startswith("qwen3")), {})
-    frac = (q.get("size_vram", 0) / q["size"]) if q.get("size") else 0.0
+    from src.llm import local_client
+    # Both tiers may be resident at once now; report the worst offloading ratio,
+    # because one tier spilling to CPU is what a latency regression looks like.
+    wanted = {local_client.MAIN_MODEL, local_client.FAST_MODEL}
+    loaded = [m for m in ps if m.get("name") in wanted] or [m for m in ps if m.get("size")]
+    frac = min(((m.get("size_vram", 0) / m["size"]) for m in loaded if m.get("size")), default=0.0)
+    resident = [m.get("name") for m in loaded]
     log = RUNTIME_ROOT / "logs" / "api.log"
     reranker_cuda = log.exists() and any("Reranker loaded" in l and "on cuda" in l for l in log.read_text().splitlines())
     apps = _sh("nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader")
     api_pid = (RUNTIME_ROOT / "api.pid").read_text().strip() if (RUNTIME_ROOT / "api.pid").exists() else ""
     api_on_gpu = any(l.split(",")[0].strip() == api_pid for l in apps.splitlines()) if api_pid else False
     return {
-        "ollama": {"model_loaded": bool(q), "vram_fraction": round(frac, 3), "result": "PASS" if frac >= 0.99 else "FAIL"},
+        "ollama": {"model_loaded": bool(resident), "resident": resident, "expected": sorted(wanted),
+                   "vram_fraction": round(frac, 3),
+                   "result": "PASS" if resident and frac >= 0.99 else "FAIL"},
         "pytorch": {"reranker_logged_on_cuda": reranker_cuda, "api_pid_in_nvidia_smi": api_on_gpu,
                     "result": "PASS" if (reranker_cuda or api_on_gpu) else "FAIL"},
         "gpu_memory_used": _sh("nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader"),
@@ -273,12 +302,20 @@ def _pct(xs: list, p: float):
     return s[max(1, math.ceil(p * len(s))) - 1]
 
 
+def _main_model() -> str:
+    """The MAIN tag as the application resolves it. Never a literal default here:
+    a stale fallback would silently benchmark a different model than /ask uses."""
+    from src.llm import local_client
+    return local_client.MAIN_MODEL
+
+
 def _ollama_speed(runs: int = 3) -> dict:
-    """Decode/prefill speed from Ollama's own counters, on a fixed non-clinical prompt."""
+    """Decode/prefill speed from Ollama's own counters, on a fixed non-clinical prompt.
+    Measured on MAIN, which is the tier the latency work put the most weight on."""
     rates, prefill = [], []
     for _ in range(runs):
         b = requests.post(f"{OLLAMA}/api/generate", timeout=300, json={
-            "model": os.environ.get("LUMEN_LLM_MAIN", "qwen3:8b"), "stream": False, "think": False,
+            "model": _main_model(), "stream": False, "think": False,
             "prompt": "List the integers from 1 to 80, separated by commas.",
             "options": {"temperature": 0, "num_predict": 200}}).json()
         if b.get("eval_duration"):
@@ -290,6 +327,33 @@ def _ollama_speed(runs: int = 3) -> dict:
             "runs": runs, "prompt": "fixed non-clinical counting prompt"}
 
 
+def _summarise(rows: list[dict]) -> dict:
+    """One latency + call-budget summary over a set of /ask results."""
+    ok = [r for r in rows if r["http"] == 200 and r["status"] in ("completed", "human_review_required", "refused")]
+    tot = [r["total_ms"] for r in ok if r["total_ms"] is not None]
+    mean = lambda k: (round(statistics.mean([r[k] for r in ok if r.get(k) is not None]), 2)
+                      if any(r.get(k) is not None for r in ok) else None)
+    total = lambda k: sum(r.get(k) or 0 for r in ok)
+    return {
+        "n": len(rows), "successful": len(ok), "failed": len(rows) - len(ok),
+        "success_rate": round(len(ok) / len(rows), 3) if rows else None,
+        "mean_ms": round(statistics.mean(tot), 1) if tot else None,
+        "p50_ms": _pct(tot, 0.50), "p95_ms": _pct(tot, 0.95),
+        "mean_retrieval_ms": mean("retrieval_ms"), "mean_llm_ms": mean("llm_ms"),
+        # Call budget — the thing this optimization is actually trying to move.
+        "mean_llm_calls": mean("llm_calls"),
+        "mean_main_calls": mean("llm_main_calls"), "mean_fast_calls": mean("llm_fast_calls"),
+        "total_main_calls": total("llm_main_calls"), "total_fast_calls": total("llm_fast_calls"),
+        "requests_with_zero_llm_calls": sum(1 for r in ok if (r.get("llm_calls") or 0) == 0),
+        "deterministic_answers": total("deterministic_answer"),
+        "claims_verified_deterministically": total("deterministic_verified"),
+        "claims_verified_by_model": total("llm_verified"),
+        "query_class": {c: sum(1 for r in ok if r.get("query_complexity") == c) for c in ("simple", "complex")},
+        "human_review_required": sum(1 for r in ok if r["status"] == "human_review_required"),
+        "errors": sum(1 for r in rows if r["http"] != 200),
+    }
+
+
 def perf(out: Path) -> None:
     code, _, warm_ms = _ask({"subject_id": GOLDEN[0]["subject_id"], "query": GOLDEN[0]["query"]}, "cloud-perf-warmup")
     rows = []
@@ -299,27 +363,37 @@ def perf(out: Path) -> None:
         rows.append({"query_id": g["id"], "http": code, "status": a.get("status"),
                      "total_ms": t.get("total_ms"), "client_ms": client_ms, "retrieval_ms": t.get("retrieval_ms"),
                      "llm_ms": t.get("llm_ms"), "llm_calls": t.get("llm_calls"),
+                     "llm_main_calls": t.get("llm_main_calls"), "llm_fast_calls": t.get("llm_fast_calls"),
+                     "llm_main_ms": t.get("llm_main_ms"), "llm_fast_ms": t.get("llm_fast_ms"),
+                     "deterministic_answer": t.get("deterministic_answer"),
+                     "deterministic_verified": t.get("deterministic_verified"),
+                     "llm_verified": t.get("llm_verified"),
+                     "query_complexity": t.get("query_complexity"), "classified_by": t.get("classified_by"),
+                     "node_trail": a.get("node_trail"),
                      "needs_human_review": a.get("needs_human_review")})
-        print(f"  {g['id']} {code} {a.get('status')} {t.get('total_ms')} ms", flush=True)
-    ok = [r for r in rows if r["http"] == 200 and r["status"] in ("completed", "human_review_required", "refused")]
-    tot = [r["total_ms"] for r in ok]
-    mean = lambda k: round(statistics.mean(r[k] for r in ok if r[k] is not None), 1) if ok else None
+        print(f"  {g['id']} {code} {a.get('status')} {t.get('total_ms')} ms "
+              f"calls={t.get('llm_calls')} (main={t.get('llm_main_calls')} fast={t.get('llm_fast_calls')})", flush=True)
+
+    from src.llm import local_client
+    legacy = [r for r in rows if r["query_id"] in LEGACY_IDS]
     _write(out, "performance.json", {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "method": "sequential /ask over src/demo_data/golden_qa.json after 1 excluded warm-up; server-side timings; "
                   "p50/p95 by nearest rank",
+        "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL,
+                   "roles": local_client.runtime_config()["roles"]},
         "warmup": {"http": code, "client_ms": warm_ms, "excluded": True},
         "requests": rows,
-        "summary": {"n": len(rows), "successful": len(ok), "failed": len(rows) - len(ok),
-                    "success_rate": round(len(ok) / len(rows), 3),
-                    "mean_ms": round(statistics.mean(tot), 1) if tot else None,
-                    "p50_ms": _pct(tot, 0.50), "p95_ms": _pct(tot, 0.95),
-                    "mean_retrieval_ms": mean("retrieval_ms"), "mean_llm_ms": mean("llm_ms"),
-                    "mean_llm_calls": mean("llm_calls"),
-                    "human_review_required": sum(1 for r in ok if r["status"] == "human_review_required")},
+        "summary": _summarise(rows),
+        # demo_q01-demo_q15 are the questions the pre-optimization A40 run used.
+        # Compare THIS row against a40_baseline_before; the full set is larger now.
+        "legacy_subset": {"ids": LEGACY_IDS, "summary": _summarise(legacy)},
+        "a40_baseline_before": A40_BASELINE,
         "ollama_speed": _ollama_speed(),
         "reference_local_single_requests": REFERENCE,
-        "comparability": "different hardware and runtimes; the cloud row is a 15-request mean, the local rows are single requests",
+        "comparability": (f"different hardware and runtimes; the cloud row is a {len(rows)}-request mean, "
+                          f"the local rows are single requests. Compare legacy_subset.summary against "
+                          f"a40_baseline_before — the full golden set grew from 15 to {len(GOLDEN)} questions."),
     })
 
 

@@ -117,7 +117,11 @@ def cmd_generation(ids) -> int:
         graph.invoke({"query": g["query"], "subject_id": g["subject_id"], "thread_id": cfg["configurable"]["thread_id"]}, config=cfg)
         st = graph.get_state(cfg).values          # also covers a run paused at human_review
         answer = st.get("final_answer") or st.get("draft_answer") or ""
-        evidence = (st.get("patient_evidence") or []) + (st.get("guideline_evidence") or []) + (st.get("literature_evidence") or [])
+        # lab_evidence carries the [L#] sources the deterministic structured-lab
+        # path cites. Omitting it made a correct deterministic answer look like
+        # a hallucinated label and failed demo_q01 on a healthy deployment.
+        evidence = ((st.get("patient_evidence") or []) + (st.get("guideline_evidence") or [])
+                    + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or []))
         rep = citations.validate(answer, evidence)
         n_cites = sum(len(c["valid_labels"]) > 0 for c in rep["claims"])
         v = st.get("verification") or {}
@@ -126,7 +130,8 @@ def cmd_generation(ids) -> int:
         ok = bool(answer.strip()) and len(found) >= g["min_facts"] and n_cites >= 1 and not rep["bad_labels"]
         fails += not ok
         print(f"{g['id']:<10} {'PASS' if ok else 'FAIL':<6} {n_cites:>5} {len(rep['bad_labels']):>3} "
-              f"{v.get('checked', 0) - v.get('unsupported', 0):>3}/{v.get('checked', 0):<4}  "
+              f"{v.get('deterministic', 0) + v.get('checked', 0) - v.get('unsupported', 0):>3}"
+              f"/{v.get('deterministic', 0) + v.get('checked', 0):<4}  "
               f"{len(found)}/{g['min_facts']} {found}  review={st.get('review_status')} external_calls={len(egress)}")
     close_pools()
     return 1 if fails else 0

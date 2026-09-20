@@ -65,6 +65,25 @@ A claim that is medically reasonable but absent from the source text is "unsuppo
 Respond with ONLY a JSON object: {"verdict": "<supported|partial|unsupported>", "reason": "<one short sentence>"}. No text outside the JSON."""
 
 
+VERIFY_BATCH_VERSION = "vb1"
+
+VERIFY_BATCH_SYSTEM = """You check whether each numbered CLAIM is supported by the SOURCE it cites. Follow these steps for every claim independently.
+
+STEP 1 — List the specific factual assertions in the CLAIM (values, dates, events, medications).
+
+STEP 2 — Find each assertion in the SOURCE the claim cites. An assertion is supported only if that source states it. Plausibility is not support. Related information is not support. A different source stating it is not support.
+
+STEP 3 — Decide:
+  "supported"   = every assertion appears in the cited source
+  "partial"     = the general point appears but a specific detail (a number, date, or name) does not
+  "unsupported" = the cited source does not state this, or states something different
+
+A claim that is medically reasonable but absent from its cited source is "unsupported".
+A [G#] or [P#] source is a general recommendation, never a statement about this patient: a claim that presents one as something the patient received is "unsupported".
+
+Respond with ONLY a JSON object of the form {"results": [{"i": <claim number>, "verdict": "<supported|partial|unsupported>", "reason": "<one short sentence>"}]}. Include every claim number exactly once. No text outside the JSON."""
+
+
 _FENCE_OPEN = "<<<EVIDENCE"
 _FENCE_CLOSE = "EVIDENCE>>>"
 

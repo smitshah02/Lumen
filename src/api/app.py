@@ -15,6 +15,7 @@ text, so — like src.mcp_server.planes — it only answers loopback clients.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import uuid
@@ -50,6 +51,10 @@ _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 # The retriever/reranker share one accelerator and the graph singletons are not
 # re-entrant, so inference is serialized. /health and /ready never take this lock.
 _infer_lock = threading.Lock()
+# Load both model tiers at startup. Off by default so unit tests and local
+# runs never reach for Ollama; the Pod env template turns it on.
+WARMUP = os.environ.get("LUMEN_LLM_WARMUP", "0").strip() in ("1", "true", "yes")
+
 _graph = None
 _graph_lock = threading.Lock()
 
@@ -80,12 +85,25 @@ async def lifespan(app: FastAPI):
     ts = tracing.status()
     log_event(logger, "tracing_config", tracing_enabled=ts["enabled"], tracing_host=ts["host"],
               tracing_state=ts["state"], reason=ts.get("policy"))
+    # Make both tiers resident before the first request rather than paying the
+    # weight load inside it. Daemon thread: warmup must never delay /health or
+    # /ready, and Ollama serialises its own model loads, so this cannot race a
+    # real request into a double load.
+    if WARMUP:
+        threading.Thread(target=_warm_models, name="llm-warmup", daemon=True).start()
     yield
     tracing.flush()                  # send buffered spans before the process exits
     if _graph is not None:
         from src.agents.graph import close_pools
         close_pools()
     log_event(logger, "shutdown")
+
+
+def _warm_models() -> None:
+    try:
+        local_client.warmup()
+    except Exception as e:                               # never fatal
+        log_event(logger, "llm_warmup", level=logging.WARNING, error_type=type(e).__name__)
 
 
 app = FastAPI(title="Lumen", version="0.5.0", lifespan=lifespan)
@@ -242,7 +260,8 @@ async def ready(request: Request):
     ok = all(v == "ok" for v in deps.values())
     request.state.outcome = "ready" if ok else "not_ready"
     body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "database": EXPECTED_DB,
-            "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL}, "dependencies": deps,
+            "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL,
+                       "roles": local_client.runtime_config()["roles"]}, "dependencies": deps,
             # informational only: an unreachable observability backend never makes the API unready
             "tracing": tracing.status(),
             "request_id": request.state.request_id}
@@ -303,13 +322,22 @@ async def ask(req: AskRequest, request: Request):
         status = "refused" if st.get("query_type") == "unsupported" else "completed"
         answer = st.get("final_answer") or st.get("draft_answer") or ""
         flagged = sum(1 for c in cites if not c.get("verified"))
-    evidence = (st.get("patient_evidence") or []) + (st.get("guideline_evidence") or []) + (st.get("literature_evidence") or [])
-    timings = {**current_timings(), "total_ms": t.ms}
+    evidence = ((st.get("patient_evidence") or []) + (st.get("guideline_evidence") or [])
+                + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or []))
+    timings = {"llm_calls": 0, "llm_main_calls": 0, "llm_fast_calls": 0,
+               "deterministic_answer": 0, "deterministic_verified": 0, "llm_verified": 0,
+               **current_timings(), "total_ms": t.ms,
+               "query_complexity": st.get("query_complexity"), "classified_by": st.get("classified_by")}
     request.state.outcome = status
     log_event(logger, "ask_completed", subject_id=req.subject_id, thread_id=thread_id, status=status,
               review_status=st.get("review_status"), query_type=st.get("query_type"),
               n_citations=sum(1 for c in cites if c.get("label")), needs_human_review=interrupted or bool(st.get("needs_human_review")),
-              llm_calls=timings.get("llm_calls"), llm_ms=timings.get("llm_ms"),
+              llm_calls=timings.get("llm_calls", 0), llm_ms=timings.get("llm_ms"),
+              llm_main_calls=timings.get("llm_main_calls", 0), llm_fast_calls=timings.get("llm_fast_calls", 0),
+              query_class=st.get("query_complexity"),
+              deterministic_answer=timings.get("deterministic_answer", 0),
+              deterministic_verified=timings.get("deterministic_verified", 0),
+              llm_verified=timings.get("llm_verified", 0),
               retrieval_ms=timings.get("retrieval_ms"), duration_ms=t.ms)
     return AskResponse(
         request_id=rid, thread_id=thread_id, data_plane=DATA_PLANE, status=status,

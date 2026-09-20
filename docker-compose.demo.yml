@@ -52,8 +52,8 @@ services:
       LUMEN_DATA_PLANE: demo          # fixed: this stack never serves the research plane
       LUMEN_DEMO_DATABASE_URL: postgresql://lumen_demo:${LUMEN_DEMO_PG_PASSWORD:-lumen-demo-local-only}@db:5432/lumen_demo
       LUMEN_LLM_HOST: ${LUMEN_DEMO_LLM_HOST:-http://ollama:11434}
-      LUMEN_LLM_MAIN: qwen3:8b
-      LUMEN_LLM_FAST: qwen3:8b
+      LUMEN_LLM_MAIN: ${LUMEN_LLM_MAIN:-qwen3:30b-a3b-instruct-2507-q4_K_M}
+      LUMEN_LLM_FAST: ${LUMEN_LLM_FAST:-qwen3:4b-instruct-2507-q4_K_M}
       LUMEN_MODELS_DIR: /models
       LUMEN_TRACING: "0"
     volumes:

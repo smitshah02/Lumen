@@ -9,7 +9,7 @@
 #
 # Not installed by pip:
 #   - Postgres 16 + pgvector  -> docker-compose.yml
-#   - Ollama + qwen3:8b       -> `ollama serve && ollama pull qwen3:8b`   (runtime; LUMEN_LLM_MAIN/FAST)
+#   - Ollama + two model tiers -> `ollama serve && ollama pull <tag>`      (runtime; LUMEN_LLM_MAIN/FAST)
 #   - qwen2.5:14b             -> retrieval-eval judge only (src/evals/ollama_backend.py)
 #   - Model weights in models/ -> MedCPT query/article/cross-encoder, BGE reranker
 

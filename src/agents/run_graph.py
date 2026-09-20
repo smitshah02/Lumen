@@ -36,12 +36,16 @@ def run_once(graph, query: str, subject_id, thread_id: str, tags=("lumen", "agen
     thread_id, safe ids as metadata) with the graph callbacks, node spans and
     LLM generations nested under it."""
     from src.storage import DATA_PLANE
-    from src.llm.local_client import MAIN_MODEL
+    from src.llm.local_client import MAIN_MODEL, FAST_MODEL
     config = build_config(thread_id, tags, metadata)
-    trace_md = {"thread_id": thread_id, "data_plane": DATA_PLANE, "model": MAIN_MODEL, **(metadata or {})}
+    # Both tags: a run may use either tier, or neither on the deterministic path.
+    trace_md = {"thread_id": thread_id, "data_plane": DATA_PLANE,
+                "model": MAIN_MODEL, "model_fast": FAST_MODEL, **(metadata or {})}
     with tracing.root_trace("lumen.graph", session_id=thread_id, metadata=trace_md, tags=list(tags)):
         out = graph.invoke({"query": query, "subject_id": subject_id, "thread_id": thread_id}, config=config)
         tracing.annotate(query_type=out.get("query_type"), review_status=out.get("review_status"),
+                         query_complexity=out.get("query_complexity"),
+                         classified_by=out.get("classified_by"),
                          human_review_required="__interrupt__" in out)
     return out, config
 

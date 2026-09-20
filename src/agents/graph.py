@@ -4,9 +4,16 @@ Lumen Agent Graph
 Day 2: real node bodies and conditional routing.
 
     triage ──> patient_retrieval ──> guideline_retrieval ──> synthesis ──> verification
-       │              │                       ▲
-       │              └───────────────────────┘ (skipped unless needed)
+       │  │           │                       ▲
+       │  │           └───────────────────────┘ (skipped unless needed)
+       │  └──> lab_lookup ──> finalize            (structured hit: no LLM at all)
+       │              └──────> patient_retrieval  (miss: normal path)
        └──> refuse ──> END
+
+Latency shape: triage classifies in code and only calls the FAST model on an
+unrecognised phrasing; synthesis picks FAST or MAIN from the query's
+complexity; verification settles what it can in code and batches the rest into
+ONE FAST call instead of one MAIN call per citation.
 
 Retrievers are module-level singletons: MedCPT + BGE are ~3.5GB on MPS
 and must be loaded exactly once per process.
@@ -14,6 +21,7 @@ and must be loaded exactly once per process.
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 from typing import Optional
@@ -25,8 +33,10 @@ from langgraph.checkpoint.postgres import PostgresSaver
 
 from src.storage import engine
 from src.agents.state import AgentState
-from src.agents import prompts, citations
-from src.llm.local_client import chat
+from src.agents import prompts, citations, verify as verify_util
+from src.agents.classify import classify, wants_deterministic_lab
+from src.llm.local_client import chat_for   # every node call goes through a ROLE
+from src.obs.logging import bump
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
 from src.retrieval.guideline_retriever import GuidelineRetriever
 from langgraph.types import Command, interrupt
@@ -39,8 +49,15 @@ logger = logging.getLogger(__name__)
 PATIENT_TOP_K = 5      # keep the synthesis prompt inside num_ctx on 16GB
 GUIDELINE_TOP_K = 3
 
+# The structured-lab shortcut answers "what was the most recent <analyte>"
+# straight from labevents. Set LUMEN_DETERMINISTIC_LABS=0 to force every
+# question back through retrieval + synthesis (used for A/B latency runs).
+DETERMINISTIC_LABS = os.environ.get("LUMEN_DETERMINISTIC_LABS", "1").strip() not in ("0", "false", "no")
+LAB_RECENT_POINTS = 4   # values rendered per analyte as citable evidence
+
 _retriever: Optional[HybridRetriever] = None
 _guidelines: Optional[GuidelineRetriever] = None
+_labs = None
 
 
 def get_retrievers() -> tuple[HybridRetriever, GuidelineRetriever]:
@@ -56,6 +73,15 @@ def get_retrievers() -> tuple[HybridRetriever, GuidelineRetriever]:
             top_k=GUIDELINE_TOP_K,
         )
     return _retriever, _guidelines
+
+
+def get_lab_resolver():
+    """Lazy singleton. Reads d_labitems once; no model weights involved."""
+    global _labs
+    if _labs is None:
+        from src.generation.lab_query import LabResolver
+        _labs = LabResolver()
+    return _labs
 
 
 def _dsn() -> str:
@@ -93,6 +119,7 @@ def _gate_for(state: AgentState) -> EgressGate:
     gate = EgressGate()
     gate.load_evidence(state.get("patient_evidence", []) or [])
     gate.load_evidence(state.get("guideline_evidence", []) or [])
+    gate.load_evidence(state.get("lab_evidence", []) or [])
     return gate
 
 
@@ -116,33 +143,154 @@ def _to_literature_evidence(results: list[dict]) -> list[dict]:
 # ===========================================================================
 
 def triage(state: AgentState) -> dict:
+    """Classify the query and decide how much model to spend on it.
+
+    The deterministic classifier settles the common cases with no model call at
+    all. Only an unrecognised or safety-sensitive phrasing falls through to the
+    FAST triage prompt, which is the same call this node always used to make.
+    """
     query = state["query"]
     temporal = detect_temporal_mode(query)
+    d = classify(query, temporal)
+    qtype, complexity, target = d.query_type, d.complexity, ""
 
-    qtype, target = "chart_review", ""
-    try:
-        raw = chat(
-            [{"role": "system", "content": prompts.TRIAGE_SYSTEM},
-             {"role": "user", "content": query}],
-            tier="fast", json_mode=True, max_tokens=120,
-        )
-        parsed = json.loads(raw)
-        cand = parsed.get("query_type", "")
-        if cand in {"chart_review", "guideline_check", "lab_trend", "literature", "unsupported"}:
-            qtype = cand
-        target = parsed.get("target", "")
-    except Exception as e:
-        # Heuristic fallback — never let triage take the graph down.
-        logger.warning(f"triage LLM failed ({e}); falling back to heuristics")
-        q = query.lower()
-        if any(w in q for w in ("should", "recommend", "guideline", "indicated")):
-            qtype = "guideline_check"
-        elif temporal in ("latest", "trend"):
-            qtype = "lab_trend"
+    if not d.confident:
+        try:
+            # One attempt: the deterministic decision is already a safe answer,
+            # so a backoff loop here only adds latency to a degraded request.
+            raw = chat_for("triage", [{"role": "system", "content": prompts.TRIAGE_SYSTEM},
+                                      {"role": "user", "content": query}], max_retries=0)
+            parsed = json.loads(raw)
+            cand = parsed.get("query_type", "")
+            if cand in {"chart_review", "guideline_check", "lab_trend", "literature", "unsupported"}:
+                qtype = cand
+            target = parsed.get("target", "")
+        except Exception as e:
+            # Heuristic fallback — never let triage take the graph down. The
+            # deterministic decision is already a safe default, so keep it.
+            logger.warning(f"triage LLM failed ({e}); keeping deterministic class {qtype}")
+    else:
+        bump("triage_deterministic")
 
-    logger.info(f"[triage] type={qtype} temporal={temporal} target={target!r}")
-    return {"query_type": qtype, "temporal_mode": temporal,
+    logger.info(f"[triage] type={qtype} complexity={complexity} temporal={temporal} "
+                f"rule={d.reason} llm={not d.confident} target={target!r}")
+    return {"query_type": qtype, "temporal_mode": temporal, "query_complexity": complexity,
+            "classified_by": "rules" if d.confident else "fast_model",
             "node_trail": _trail(state, "triage")}
+
+
+def lab_lookup(state: AgentState) -> dict:
+    """Answer a latest-value lab question straight from `labevents`.
+
+    This is not a shortcut around grounding: the value, its unit and its date
+    are read from the structured table the notes are generated from, rendered
+    as citable [L#] evidence, and the claim is marked verified because the
+    number in the answer IS the number in the row. It is a shortcut around
+    asking a language model to re-read a number a query can select.
+
+    A miss — no matching analyte, no rows for this patient, or a question that
+    does not resolve to exactly one analyte — returns nothing, and the router
+    sends the question down the normal retrieval path with nothing lost.
+    """
+    query, sid = state["query"], state.get("subject_id")
+    try:
+        resolver = get_lab_resolver()
+        itemids, matched = resolver.match(query)
+        series = resolver.fetch(sid, itemids) if itemids else []
+    except Exception as e:
+        logger.warning(f"[lab_lookup] structured lookup failed ({e}); falling back to retrieval")
+        return {"node_trail": _trail(state, "lab_lookup")}
+
+    series = [g for g in series if g.get("values")]
+    series = _disambiguate(series, query, resolver.labels)
+    if len(series) != 1:
+        logger.info(f"[lab_lookup] {len(series)} analyte(s) for {matched or 'no match'} — using retrieval")
+        return {"node_trail": _trail(state, "lab_lookup")}
+
+    ev, claims = [], []
+    for i, grp in enumerate(series, 1):
+        label = f"L{i}"
+        recent = grp["values"][-LAB_RECENT_POINTS:]
+        uom = _uom(grp["uom"])
+        latest = recent[-1]
+        history = "; ".join(f"{v['date']} {_num(v['valuenum'])}{uom}" for v in recent)
+        ev.append({
+            "chunk_id": -1, "source_type": "lab", "note_type": "lab",
+            "charttime": latest["charttime"], "score": 1.0, "label": label,
+            "text": (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
+                     f"{history}. Source: labevents table, subject {sid}."),
+        })
+        claims.append({
+            "claim": (f"The most recent {grp['label'].lower()} was {_num(latest['valuenum'])}{uom} "
+                      f"on {latest['date']} [{label}]."),
+            "label": label, "chunk_id": -1, "verified": True,
+            "verification_note": "deterministic: value read directly from labevents",
+        })
+
+    answer = " ".join(c["claim"] for c in claims)
+    bump("deterministic_answer")
+    bump("deterministic_verified", len(claims))
+    logger.info(f"[lab_lookup] answered deterministically from {len(series)} analyte(s), 0 LLM calls")
+    return {
+        "lab_evidence": ev, "draft_answer": answer, "final_answer": answer, "citations": claims,
+        "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
+                         "deterministic": len(claims), "llm_checked": 0},
+        "needs_human_review": False, "review_status": "auto_approved",
+        "node_trail": _trail(state, "lab_lookup"),
+    }
+
+
+def _num(v) -> str:
+    try:
+        return f"{float(v):g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _uom(unit: str) -> str:
+    """Render a unit the way the notes render it, so a value quoted from the
+    table reads identically to the same value quoted from a discharge summary
+    ("7.1%", not "7.1 %")."""
+    unit = (unit or "").strip()
+    if not unit:
+        return ""
+    return unit if unit == "%" else f" {unit}"
+
+
+def _disambiguate(series: list[dict], query: str, known_labels: list[str]) -> list[dict]:
+    """Narrow a resolver match down to the ONE analyte the question asked about.
+
+    LabResolver.match is a substring matcher built for retrieval, where pulling
+    in a neighbouring analyte only adds harmless context. As an *answer* path
+    that over-match is wrong in two different ways:
+
+      "most recent hemoglobin A1c"  -> resolves to Hemoglobin AND Hemoglobin A1c;
+                                       answering with plain hemoglobin answers a
+                                       question nobody asked.
+      same question, patient has no A1c at all
+                                    -> resolves to Hemoglobin alone, and a
+                                       confident "hemoglobin was 13.1 g/dL"
+                                       replaces the correct answer, which is that
+                                       no A1c is documented.
+
+    The second case is why a single result is not automatically safe. So: work
+    out which known analyte names the question actually contains, let the most
+    specific one win (A1c beats hemoglobin), and if this patient has no rows for
+    the analyte that was named, return nothing — retrieval and synthesis will
+    say it is not documented. Only the deterministic path is narrowed here; the
+    resolver and retrieval are untouched.
+    """
+    q = (query or "").lower()
+    named = {lab.lower() for lab in known_labels if lab and lab.lower() in q}
+    named = {l for l in named if not any(o != l and l in o for o in named)}
+    if not named:
+        # The question used a synonym ("blood sugar"), not a label. Trust the
+        # resolver only when it came back with exactly one analyte.
+        return series if len(series) == 1 else []
+    have = {g["label"].lower() for g in series}
+    if not named <= have:
+        return []                      # asked for something this patient has no rows for
+    return [g for g in series if g["label"].lower() in named]
 
 
 def patient_retrieval(state: AgentState) -> dict:
@@ -191,9 +339,8 @@ def literature_retrieval(state: AgentState) -> dict:
             sys_prompt += ("\n\nYour previous attempt was rejected for containing patient data. "
                            "Use ONLY the disease or drug name and one general qualifier.")
         try:
-            raw = chat([{"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": query}],
-                       tier="fast", json_mode=True, max_tokens=80)
+            raw = chat_for("concept", [{"role": "system", "content": sys_prompt},
+                                       {"role": "user", "content": query}], max_retries=1)
             return (json.loads(raw).get("concept_query") or "").strip()
         except Exception as e:
             logger.warning(f"concept extraction failed: {e}")
@@ -239,12 +386,18 @@ def synthesis(state: AgentState) -> dict:
                 "citations": [], "node_trail": _trail(state, "synthesis")}
 
     user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit)
+    # MAIN earns its cost on longitudinal reasoning, comparisons and anything
+    # weighing general recommendations against this patient. A single-fact
+    # lookup over a handful of chunks does not need it. Presence of guideline
+    # or literature evidence forces MAIN: rule 5 (never present a guideline as
+    # something the patient received) is the rule a small model drops first.
+    simple = (state.get("query_complexity") == "simple"
+              and state.get("classified_by") == "rules"
+              and not gl and not lit)
+    role = "synthesis_simple" if simple else "synthesis_complex"
     try:
-        answer = chat(
-            [{"role": "system", "content": prompts.SYNTHESIS_SYSTEM},
-             {"role": "user", "content": user}],
-            tier="main", max_tokens=500,
-        )
+        answer = chat_for(role, [{"role": "system", "content": prompts.SYNTHESIS_SYSTEM},
+                                 {"role": "user", "content": user}])
     except Exception as e:
         logger.error(f"synthesis failed: {e}")
         return {"draft_answer": "", "citations": [],
@@ -264,46 +417,73 @@ def synthesis(state: AgentState) -> dict:
         "verification_note": "",
     } for c in report["claims"]]
 
-    logger.info(f"[synthesis] {report['n_claims']} claims, "
+    logger.info(f"[synthesis] role={role} {report['n_claims']} claims, "
                 f"cite_rate={report['cite_rate']:.0%}, bad={report['bad_labels']}")
     return {"draft_answer": answer, "citations": cites,
-            "verification": {"citation_report": {k: v for k, v in report.items() if k != "claims"}},
+            "verification": {"citation_report": {k: v for k, v in report.items() if k != "claims"},
+                             "synthesis_role": role},
             "node_trail": _trail(state, "synthesis")}
 
 
 def verification(state: AgentState) -> dict:
+    """Deterministic checks first; one batched FAST call for what is left.
+
+    This used to be one MAIN generation per citation, run serially. The code
+    path that decides human review is unchanged — unsupported > 0 still routes
+    to a clinician — only the way a verdict is reached has changed.
+    """
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
-                                  (state.get("literature_evidence", []) or [])}
+                                  (state.get("literature_evidence", []) or []) +
+                                  (state.get("lab_evidence", []) or [])}
     cites = state.get("citations", []) or []
-    checked = unsupported = 0
-    out = []
+    out: list[dict] = [dict(c) for c in cites]
+    unsupported = 0
+    pending: list[dict] = []          # claims the deterministic pass could not settle
 
-    for c in cites:
+    # --- pass 1: no model ---------------------------------------------------
+    for i, c in enumerate(out):
         src = ev.get(c["label"])
         if not src:
-            c = {**c, "verified": False, "verification_note": "no valid citation"}
+            # Deterministically unsupported: the cited label is not in evidence.
+            out[i] = {**c, "verified": False, "verification_note": "no valid citation"}
             unsupported += 1
-            out.append(c)
             continue
-        try:
-            raw = chat(
-                [{"role": "system", "content": prompts.VERIFY_SYSTEM},
-                 {"role": "user", "content": f"CLAIM: {c['claim']}\n\nSOURCE TEXT:\n{src['text'][:3000]}"}],
-                tier="main", json_mode=True, max_tokens=150,
-            )
-            parsed = json.loads(raw)
-            verdict = parsed.get("verdict", "unsupported")
-            note = parsed.get("reason", "")
-        except Exception as e:
-            verdict, note = "unsupported", f"verify error: {e}"
+        verdict, note = verify_util.deterministic_verdict(c["claim"], src["text"], c["label"])
+        if verdict == "supported":
+            out[i] = {**c, "verified": True, "verification_note": note}
+        else:
+            pending.append({"i": i, "claim": c["claim"], "label": c["label"], "source": src["text"]})
 
-        checked += 1
-        ok = verdict == "supported"
-        if not ok:
-            unsupported += 1
-        out.append({**c, "verified": ok, "verification_note": f"{verdict}: {note}"})
+    deterministic = len(out) - len(pending) - sum(1 for c in out if c["verification_note"] == "no valid citation")
+    checked = len(pending)
 
+    # --- pass 2: one batched call for the remainder -------------------------
+    if pending:
+        for batch in (pending[k:k + verify_util.MAX_BATCH]
+                      for k in range(0, len(pending), verify_util.MAX_BATCH)):
+            idx = [it["i"] for it in batch]
+            try:
+                raw = chat_for("verify", [
+                    {"role": "system", "content": prompts.VERIFY_BATCH_SYSTEM},
+                    {"role": "user", "content": verify_util.build_batch_prompt(batch)},
+                    # room for one compact JSON verdict per claim, bounded so a
+                    # large batch cannot blow past the role's budget
+                ], max_tokens=min(480, max(120, 80 * len(batch))))
+                verdicts = verify_util.parse_batch(raw, idx)
+            except Exception as e:
+                logger.error(f"[verification] batch call failed: {e}")
+                verdicts = {}
+            for it in batch:
+                verdict, note = verdicts.get(it["i"], ("unsupported", "no verdict returned"))
+                ok = verdict == "supported"
+                if not ok:
+                    unsupported += 1
+                out[it["i"]] = {**out[it["i"]], "verified": ok,
+                                "verification_note": f"{verdict}: {note}"}
+
+    bump("deterministic_verified", deterministic)
+    bump("llm_verified", checked)
     prior = state.get("verification", {}) or {}
 
     # An empty draft is a FAILURE, not a clean bill of health. Without this, a
@@ -317,10 +497,12 @@ def verification(state: AgentState) -> dict:
         logger.error("[verification] no draft answer to verify — failing the run")
         errors.append("verification: no draft answer produced (synthesis failed)")
 
-    logger.info(f"[verification] {checked} checked, {unsupported} unsupported")
+    logger.info(f"[verification] {len(out)} claims: {deterministic} deterministic, "
+                f"{checked} via model, {unsupported} unsupported")
     return {
         "citations": out,
         "verification": {**prior, "checked": checked, "unsupported": unsupported,
+                         "deterministic": deterministic, "llm_checked": checked,
                          "synthesis_failed": synthesis_failed},
         "errors": errors,
         "needs_human_review": unsupported > 0 or synthesis_failed,
@@ -353,7 +535,8 @@ def human_review(state: AgentState) -> dict:
 
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
-                                  (state.get("literature_evidence", []) or [])}
+                                  (state.get("literature_evidence", []) or []) +
+                                  (state.get("lab_evidence", []) or [])}
 
     payload = {
         "query": state.get("query", ""),
@@ -433,7 +616,26 @@ def route_from_triage(state: AgentState) -> str:
         return "refuse"
     if qt in ("guideline_check", "literature"):
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
+    if DETERMINISTIC_LABS and wants_deterministic_lab(
+            _decision_of(state), state.get("temporal_mode") or "all", state.get("subject_id")):
+        return "lab_lookup"
     return "patient_retrieval"
+
+
+def _decision_of(state: AgentState):
+    """Rebuild the classifier Decision from what triage stored, so routing does
+    not re-run (or second-guess) the classification."""
+    from src.agents.classify import Decision
+    return Decision(query_type=state.get("query_type", "chart_review"),
+                    complexity=state.get("query_complexity", "complex"),
+                    confident=state.get("classified_by") == "rules",
+                    reason="from_state")
+
+
+def route_after_lab_lookup(state: AgentState) -> str:
+    """A structured hit is already a finished, cited, verified answer. A miss
+    falls through to the normal retrieval path with nothing lost."""
+    return "finalize" if state.get("lab_evidence") else "patient_retrieval"
 
 
 def route_after_patient(state: AgentState) -> str:
@@ -469,10 +671,13 @@ def build_graph(setup: bool = True):
     b.add_node("verification", verification)
     b.add_node("refuse", refuse)
     b.add_node("literature_retrieval", literature_retrieval)
+    b.add_node("lab_lookup", lab_lookup)
 
     b.add_edge(START, "triage")
     b.add_conditional_edges("triage", route_from_triage,
-                            ["patient_retrieval", "guideline_retrieval", "refuse"])
+                            ["patient_retrieval", "guideline_retrieval", "lab_lookup", "refuse"])
+    b.add_conditional_edges("lab_lookup", route_after_lab_lookup,
+                            ["finalize", "patient_retrieval"])
     b.add_conditional_edges("patient_retrieval", route_after_patient,
                             ["guideline_retrieval", "synthesis"])
     b.add_conditional_edges("guideline_retrieval", route_after_guidelines,

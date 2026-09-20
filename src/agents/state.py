@@ -63,11 +63,18 @@ class AgentState(TypedDict, total=False):
     # --- triage ---
     query_type: QueryType
     temporal_mode: str        # from detect_temporal_mode()
+    query_complexity: str     # "simple" | "complex" — picks the synthesis tier
+    classified_by: str        # "rules" | "fast_model" — was a model call needed
 
     # --- evidence ---
     patient_evidence: list[Evidence]
     guideline_evidence: list[Evidence]
     literature_evidence: list[Evidence]
+    # Structured values pulled straight from labevents by the deterministic
+    # lab path. Same Evidence shape, chunk_id -1 (no note chunk backs a table
+    # row), label "L#" — so citations.validate and the API treat it like any
+    # other source.
+    lab_evidence: list[Evidence]
 
     # --- generation ---
     draft_answer: str

@@ -64,7 +64,7 @@ stop_all() {
   if "$PGBIN/pg_isready" -q -h 127.0.0.1 -p 5432; then
     pg_ctlcluster 16 main stop -m fast && echo "postgres: stopped"
   else echo "postgres: not running"; fi
-  echo "venv, models and qwen3:8b remain under $RUNTIME_ROOT; code/logs/results under $PERSIST_ROOT"
+  echo "venv, retrieval weights and both LLM tiers remain under $RUNTIME_ROOT; code/logs/results under $PERSIST_ROOT"
 }
 
 status() {

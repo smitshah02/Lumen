@@ -4,10 +4,15 @@ Local LLM Client (Ollama)
 Single inference path for every LLM job in Lumen: triage, judging,
 synthesis, verification. Nothing here leaves the machine.
 
-Two model tiers, set in .env (both default to qwen3:8b):
-  LUMEN_LLM_FAST  — triage, judging
-  LUMEN_LLM_MAIN  — synthesis, verification
+Two model tiers, set in .env:
+  LUMEN_LLM_FAST  — classification fallback, concept extraction, simple synthesis,
+                    batched verification   (default qwen3:4b-instruct-2507-q4_K_M)
+  LUMEN_LLM_MAIN  — longitudinal/complex synthesis only
+                    (default qwen3:30b-a3b-instruct-2507-q4_K_M)
   LUMEN_LLM_HOST  — Ollama base URL (default http://localhost:11434)
+
+Application code picks a ROLE, not a model: chat_for("synthesis_complex", msgs).
+ROLES below is the single place the tier and token budget for each job is set.
 
     python -m src.llm.local_client --config   # configured models + reachability, no prompts
 
@@ -36,13 +41,13 @@ import requests
 import re
 
 from src.obs import tracing
-from src.obs.logging import log_event, add_timing
+from src.obs.logging import log_event, add_timing, bump
 
 logger = logging.getLogger(__name__)
 
 HOST = os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434")
-MAIN_MODEL = os.environ.get("LUMEN_LLM_MAIN", "qwen3:8b")
-FAST_MODEL = os.environ.get("LUMEN_LLM_FAST", "qwen3:8b")
+MAIN_MODEL = os.environ.get("LUMEN_LLM_MAIN", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+FAST_MODEL = os.environ.get("LUMEN_LLM_FAST", "qwen3:4b-instruct-2507-q4_K_M")
 
 # Context windows. Ollama defaults are far below what clinical work needs:
 # a judged chunk runs ~1k tokens, a synthesis prompt with 8 chunks runs ~6k+.
@@ -55,7 +60,39 @@ CTX_MAIN = 12288
 KEEP_ALIVE = os.environ.get("LUMEN_LLM_KEEPALIVE", "10m")
 _SUPPORTS_THINK_PARAM = True
 
+# ---------------------------------------------------------------------------
+# Per-role budgets — the ONLY place application code says how much a job costs.
+# Nodes call chat_for("<role>", ...); they never name a model or a tier, so the
+# main/fast split and the token budgets stay changeable from here alone.
+#   tier        which model tag runs it
+#   num_ctx     prompt window (KV-cache RAM); sized to the real prompt, not the max
+#   max_tokens  num_predict — an online answer that runs long is a latency bug
+# ---------------------------------------------------------------------------
+ROLES: dict[str, dict] = {
+    # classification fallback: only runs when the deterministic classifier is unsure
+    "triage":            {"tier": "fast", "num_ctx": 2048,  "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
+    # external-search concept extraction (literature path only)
+    "concept":           {"tier": "fast", "num_ctx": 2048,  "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
+    # short factual answers over a handful of chunks
+    "synthesis_simple":  {"tier": "fast", "num_ctx": 8192,  "max_tokens": 320, "temperature": 0.0, "json_mode": False},
+    # longitudinal synthesis, comparisons, conflicting evidence
+    "synthesis_complex": {"tier": "main", "num_ctx": 12288, "max_tokens": 500, "temperature": 0.0, "json_mode": False},
+    # batched claim verification for claims deterministic checks could not resolve
+    "verify":            {"tier": "fast", "num_ctx": 8192,  "max_tokens": 320, "temperature": 0.0, "json_mode": True},
+}
+
+
+def role_spec(role: str) -> dict:
+    """Budget for a role, with the model tag that will actually serve it."""
+    spec = dict(ROLES[role])
+    spec["model"] = MAIN_MODEL if spec["tier"] == "main" else FAST_MODEL
+    return spec
+
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _is_instruct(model: str) -> bool:
+    return "instruct" in (model or "").lower()
 
 
 def _strip_thinking(text: str) -> str:
@@ -82,8 +119,12 @@ def chat(
     timeout: float = 300.0,
     max_retries: int = 3,
     think: bool = False,
+    role: str = "adhoc",
 ) -> str:
-    """Send a message list, get a string back. Raises on final failure."""
+    """Send a message list, get a string back. Raises on final failure.
+
+    `role` is a label for observability only (which graph job this call served);
+    it never changes the request. Use chat_for() to get the role's budget too."""
     resolved_model, default_ctx = _resolve(tier, model)
 
     global _SUPPORTS_THINK_PARAM
@@ -101,12 +142,15 @@ def chat(
     }
     if json_mode:
         payload["format"] = "json"
-    if _SUPPORTS_THINK_PARAM:
+    # The *-instruct-* Qwen3 tags have no thinking mode at all; sending `think`
+    # to them costs a rejected round trip on every process. Only negotiate the
+    # parameter for tags that could actually honour it.
+    if _SUPPORTS_THINK_PARAM and not _is_instruct(resolved_model):
         payload["think"] = think
 
     last_exc = None
     t0 = time.perf_counter()
-    with tracing.generation(f"ollama:{tier}", resolved_model, prompt=messages) as gen:
+    with tracing.generation(f"ollama:{tier}:{role}", resolved_model, prompt=messages) as gen:
         for attempt in range(max_retries + 1):
             try:
                 resp = requests.post(f"{HOST}/api/chat", json=payload, timeout=timeout)
@@ -121,7 +165,10 @@ def chat(
                 text_out = _strip_thinking(body["message"]["content"])
                 ms = round((time.perf_counter() - t0) * 1000, 1)
                 add_timing("llm_ms", ms)
-                log_event(logger, "llm_call", model=resolved_model, tier=tier, duration_ms=ms,
+                # Per-tier accumulators: add_timing also maintains llm_<tier>_calls,
+                # so /ask timings report how the work split between main and fast.
+                add_timing(f"llm_{tier}_ms", ms)
+                log_event(logger, "llm_call", model=resolved_model, tier=tier, llm_role=role, duration_ms=ms,
                           prompt_tokens=body.get("prompt_eval_count"), completion_tokens=body.get("eval_count"))
                 if gen is not None:
                     gen.update(output=text_out, usage_details={
@@ -137,6 +184,39 @@ def chat(
                 logger.debug(f"local LLM call failed (attempt {attempt + 1}): {e}; retry in {delay:.1f}s")
                 time.sleep(delay)
     raise RuntimeError(f"local LLM call failed after {max_retries + 1} attempts: {last_exc}")
+
+
+def chat_for(role: str, messages: list[dict], **overrides) -> str:
+    """Run a call under a named role's budget. Overrides win, so a caller can
+    still widen num_ctx for an unusually large prompt without editing ROLES."""
+    spec = ROLES[role]
+    kw = {"tier": spec["tier"], "json_mode": spec["json_mode"], "temperature": spec["temperature"],
+          "max_tokens": spec["max_tokens"], "num_ctx": spec["num_ctx"], "role": role}
+    kw.update(overrides)
+    return chat(messages, **kw)
+
+
+def warmup(tiers: tuple[str, ...] = ("main", "fast")) -> dict:
+    """Load each tier's weights before the first real request.
+
+    A one-token generation is enough to make Ollama resident; keep_alive then
+    holds it. Failures are reported, never raised: a cold model is a latency
+    problem, not a correctness one, and readiness has its own check."""
+    out = {}
+    for tier in tiers:
+        model, _ = _resolve(tier, None)
+        t0 = time.perf_counter()
+        try:
+            requests.post(f"{HOST}/api/chat", timeout=600, json={
+                "model": model, "messages": [{"role": "user", "content": "ok"}], "stream": False,
+                "keep_alive": KEEP_ALIVE, "options": {"num_predict": 1, "temperature": 0.0},
+            }).raise_for_status()
+            out[tier] = {"model": model, "ok": True, "ms": round((time.perf_counter() - t0) * 1000, 1)}
+        except Exception as e:
+            out[tier] = {"model": model, "ok": False, "error": type(e).__name__}
+        log_event(logger, "llm_warmup", model=model, tier=tier,
+                  duration_ms=out[tier].get("ms"), error_type=out[tier].get("error"))
+    return out
 
 
 def build_call_fn(tier: str = "fast", json_mode: bool = True, **kw) -> Callable[[list], str]:
@@ -166,7 +246,15 @@ def unload(tier: str = "main", model: Optional[str] = None) -> None:
 def runtime_config() -> dict:
     """Configured host and model tags. Nothing here is secret."""
     return {"host": HOST, "main_model": MAIN_MODEL, "fast_model": FAST_MODEL,
-            "keep_alive": KEEP_ALIVE, "ctx_main": CTX_MAIN, "ctx_fast": CTX_FAST}
+            "keep_alive": KEEP_ALIVE, "ctx_main": CTX_MAIN, "ctx_fast": CTX_FAST,
+            "roles": {r: {"tier": v["tier"], "num_ctx": v["num_ctx"], "max_tokens": v["max_tokens"]}
+                      for r, v in ROLES.items()}}
+
+
+def _norm_tag(name: str) -> str:
+    """`qwen3:8b` and `qwen3:8b` are the same model; a bare name means `:latest`."""
+    n = (name or "").strip()
+    return n if ":" in n else f"{n}:latest"
 
 
 def health() -> dict:
@@ -177,8 +265,9 @@ def health() -> dict:
         r.raise_for_status()
         out["reachable"] = True
         out["models"] = [m["name"] for m in r.json().get("models", [])]
-        out["main_ok"] = any(m.split(":")[0] == MAIN_MODEL.split(":")[0] for m in out["models"])
-        out["fast_ok"] = any(m.split(":")[0] == FAST_MODEL.split(":")[0] for m in out["models"])
+        installed = {_norm_tag(m) for m in out["models"]}
+        out["main_ok"] = _norm_tag(MAIN_MODEL) in installed
+        out["fast_ok"] = _norm_tag(FAST_MODEL) in installed
     except Exception as e:
         out["error"] = str(e)
     return out

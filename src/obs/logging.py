@@ -30,6 +30,10 @@ ALLOWED_FIELDS = frozenset({
     "prompt_tokens", "completion_tokens", "query_type", "review_status", "needs_human_review",
     "n_citations", "llm_calls", "llm_ms", "retrieval_ms", "error", "error_type", "dependency",
     "database", "client", "reason", "tracing_host", "tracing_enabled", "tracing_state",
+    # latency attribution: which model role/tier served a call, and how much of
+    # the work the deterministic paths absorbed. Names and counts only.
+    "llm_role", "llm_main_calls", "llm_fast_calls", "llm_main_ms", "llm_fast_ms",
+    "query_class", "deterministic_answer", "deterministic_verified", "llm_verified",
 })
 
 _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("lumen_request_id", default=None)
@@ -60,6 +64,15 @@ def add_timing(key: str, ms: float) -> None:
     if t is not None:
         t[key] = round(t.get(key, 0.0) + ms, 1)
         t[key.replace("_ms", "_calls")] = t.get(key.replace("_ms", "_calls"), 0) + 1
+
+
+def bump(key: str, n: int = 1) -> None:
+    """Increment a plain counter on the current request (no-op outside a request).
+    For things that are *not* durations — deterministic answers, claims resolved
+    without a model call — so they ride along in the same /ask timings payload."""
+    t = _timings.get()
+    if t is not None:
+        t[key] = t.get(key, 0) + n
 
 
 def current_timings() -> dict:

@@ -11,15 +11,19 @@
 #   /root/lumen-runtime/              Pod-local (POSIX), rebuilt after Pod recreation
 #       venv/      python3 -m venv --system-site-packages (reuses the template's CUDA torch)
 #       models/    MedCPT + BGE weights (LUMEN_MODELS_DIR)
-#       ollama/    qwen3:8b (OLLAMA_MODELS)
+#       ollama/    MAIN + FAST model tags (OLLAMA_MODELS)
 #       cache/     HF_HOME
-#       logs/      live service logs;  lumen.env (0600, DB password)
+#       logs/      live service logs;  lumen.env (0600, DB password + Langfuse keys)
 #   /var/lib/postgresql/16/main       the package's default cluster (lumen_demo only)
 #
 # Idempotent: re-running skips everything already in place. After a Pod is
 # recreated, the runtime tree and database are rebuilt from synthetic sources.
 #
 #   LUMEN_DATA_PLANE=demo bash /workspace/lumen/repo/scripts/bootstrap_pod.sh
+#
+# Tracing is opt-in: export LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY (and
+# LANGFUSE_BASE_URL for a non-default region) on the bootstrap command line to
+# turn it on. See section 5.
 set -euo pipefail
 
 PERSIST_ROOT=/workspace/lumen
@@ -34,8 +38,10 @@ OLLAMA_MODELS=$RUNTIME_ROOT/ollama
 ENV_FILE=$RUNTIME_ROOT/lumen.env
 PGVER=16
 PG_CLUSTER="$PGVER main"
-MODEL=qwen3:8b
-MIN_FREE_GB=15
+# Two tiers: MAIN for complex synthesis, FAST for everything else.
+MODEL_MAIN=${LUMEN_LLM_MAIN:-qwen3:30b-a3b-instruct-2507-q4_K_M}
+MODEL_FAST=${LUMEN_LLM_FAST:-qwen3:4b-instruct-2507-q4_K_M}
+MIN_FREE_GB=45
 
 say() { echo; echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -61,11 +67,11 @@ done
 heavy_pending=0
 [ -f "$VENV_ROOT/.req_hash" ] || heavy_pending=1
 [ -f "$MODELS_ROOT/bge-reranker/model.safetensors" ] || heavy_pending=1
-[ -d "$OLLAMA_MODELS/manifests/registry.ollama.ai/library/qwen3" ] || heavy_pending=1
+OLLAMA_HOST=127.0.0.1:11434 ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$MODEL_MAIN" || heavy_pending=1
 free_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
 echo "free on /: ${free_gb}G (heavy installs pending: $heavy_pending)"
 if [ "$heavy_pending" = "1" ] && [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
-  die "only ${free_gb}G free on /; need >= ${MIN_FREE_GB}G for packages, model weights and qwen3:8b"
+  die "only ${free_gb}G free on / (Pod container disk); need >= ${MIN_FREE_GB}G for packages, retrieval weights and both LLM tiers (${MODEL_MAIN} is ~19G, ${MODEL_FAST} ~3G). Recreate the Pod with a larger container disk."
 fi
 
 # --- 2. code (allowlisted; never data) ------------------------------------------------
@@ -164,8 +170,10 @@ if [ ! -f "$ENV_FILE" ]; then
 LUMEN_DATA_PLANE=demo
 LUMEN_DEMO_DATABASE_URL=postgresql://lumen_demo:${pw}@127.0.0.1:5432/lumen_demo
 LUMEN_LLM_HOST=http://127.0.0.1:11434
-LUMEN_LLM_MAIN=${MODEL}
-LUMEN_LLM_FAST=${MODEL}
+LUMEN_LLM_MAIN=${MODEL_MAIN}
+LUMEN_LLM_FAST=${MODEL_FAST}
+LUMEN_LLM_WARMUP=1
+LUMEN_DETERMINISTIC_LABS=1
 LUMEN_MODELS_DIR=${MODELS_ROOT}
 HF_HOME=${HF_HOME}
 OLLAMA_MODELS=${OLLAMA_MODELS}
@@ -176,6 +184,66 @@ LUMEN_RUNTIME_ROOT=${RUNTIME_ROOT}
 EOF
   umask 022
 fi
+
+# The env file is written once and then kept (it holds the generated database
+# password). Model tags and the latency switches are NOT secrets and must track
+# the values above, or a Pod bootstrapped before the main/fast split would keep
+# serving the old single model with no sign of it. Rewrite just those keys.
+# Rewrite via a temp file rather than `sed -i`: the in-place flag takes a
+# mandatory backup suffix on BSD sed and none on GNU, and `cat >` into the
+# original keeps its 0600 mode and inode.
+set_env_key() {
+  local key=$1 val=$2 tmp
+  grep -qx "${key}=${val}" "$ENV_FILE" && return 0
+  tmp=$(mktemp)
+  grep -v "^${key}=" "$ENV_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
+  echo "set ${key}"
+}
+set_env_key LUMEN_LLM_MAIN "$MODEL_MAIN"
+set_env_key LUMEN_LLM_FAST "$MODEL_FAST"
+set_env_key LUMEN_LLM_WARMUP 1
+set_env_key LUMEN_DETERMINISTIC_LABS 1
+chmod 600 "$ENV_FILE"
+
+# Tracing is off unless this bootstrap is given Langfuse keys. They come from the
+# invocation environment, never from the repo or the synced code:
+#
+#   LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
+#   LANGFUSE_BASE_URL=https://us.cloud.langfuse.com \
+#     bash /workspace/lumen/repo/scripts/bootstrap_pod.sh
+#
+# Re-running with keys set rewrites them in place (0600); re-running without them
+# leaves whatever is already in $ENV_FILE alone. Remote egress is only sound here
+# because this Pod is the synthetic demo plane — src/obs/tracing.py refuses a
+# non-local endpoint on any other plane, and spans carry note text.
+if [ -n "${LANGFUSE_PUBLIC_KEY:-}" ] && [ -n "${LANGFUSE_SECRET_KEY:-}" ]; then
+  lf_url=${LANGFUSE_BASE_URL:-${LANGFUSE_HOST:-https://cloud.langfuse.com}}
+  case "$lf_url" in
+    https://*|http://127.0.0.1*|http://localhost*) ;;
+    *) die "refusing: Langfuse endpoint must be https (got $lf_url)" ;;
+  esac
+  umask 077
+  lf_tmp=$(mktemp)
+  grep -vE '^(LUMEN_TRACING|LANGFUSE_BASE_URL|LANGFUSE_HOST|LANGFUSE_PUBLIC_KEY|LANGFUSE_SECRET_KEY)=' \
+    "$ENV_FILE" > "$lf_tmp"
+  cat >> "$lf_tmp" <<EOF
+LUMEN_TRACING=1
+LANGFUSE_BASE_URL=${lf_url}
+LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+EOF
+  cat "$lf_tmp" > "$ENV_FILE"      # in place: keeps the existing 0600 file
+  rm -f "$lf_tmp"
+  umask 022
+  unset lf_tmp
+  echo "tracing: enabled -> $lf_url (keys not printed)"
+else
+  echo "tracing: $(grep -q '^LUMEN_TRACING=1' "$ENV_FILE" && echo 'enabled (keys already in '"$ENV_FILE"')' || echo 'off (no LANGFUSE_* keys given)')"
+fi
+
 set -a; . "$ENV_FILE"; set +a
 [ "$LUMEN_DATA_PLANE" = "demo" ] || die "$ENV_FILE is not the demo plane"
 
@@ -199,14 +267,16 @@ su postgres -c "psql -Atc \"SELECT 1 FROM pg_database WHERE datname = 'lumen_dem
   || su postgres -c "createdb -O lumen_demo lumen_demo"
 su postgres -c "psql -q -d lumen_demo -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;'"
 
-# --- 7. ollama + qwen3:8b (stored under OLLAMA_MODELS, Pod-local) -------------------
-say "ollama + ${MODEL}"
+# --- 7. ollama + both model tiers (stored under OLLAMA_MODELS, Pod-local) ----------
+say "ollama + ${MODEL_MAIN} (main) + ${MODEL_FAST} (fast)"
 bash "$REPO_ROOT/scripts/start_cloud_demo.sh" ollama
-if OLLAMA_HOST=127.0.0.1:11434 ollama list | awk 'NR>1 {print $1}' | grep -qx "$MODEL"; then
-  echo "$MODEL: present"
-else
-  OLLAMA_HOST=127.0.0.1:11434 ollama pull "$MODEL"
-fi
+for tag in "$MODEL_MAIN" "$MODEL_FAST"; do
+  if OLLAMA_HOST=127.0.0.1:11434 ollama list | awk 'NR>1 {print $1}' | grep -qx "$tag"; then
+    echo "$tag: present"
+  else
+    OLLAMA_HOST=127.0.0.1:11434 ollama pull "$tag"
+  fi
+done
 
 # --- 8. retrieval model weights (pinned revisions, Pod-local) ----------------------
 say "MedCPT + BGE weights -> $MODELS_ROOT"

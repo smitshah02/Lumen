@@ -106,6 +106,12 @@ class LabResolver:
                 self._items.append((int(itemid), (label or "").lower(), (fluid or "").lower()))
         logger.info("LabResolver loaded %d lab definitions", len(self._items))
 
+    @property
+    def labels(self) -> list[str]:
+        """Every analyte name in d_labitems. Read-only; used by callers that must
+        tell 'this patient has no A1c' apart from 'the question did not ask'."""
+        return sorted({lab for (_, lab, _) in self._items if lab})
+
     def _keyword_to_itemids(self, keyword: str) -> list[int]:
         kw = keyword.lower()
         blood = [i for (i, lab, fl) in self._items if kw in lab and fl == "blood"]

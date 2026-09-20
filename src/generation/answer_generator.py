@@ -3,7 +3,7 @@ Lumen Answer Generation  (grounded RAG, local Ollama)
 =====================================================
 Turns a question into a grounded answer over the clinical notes: retrieve with
 the hybrid retriever, assemble the top chunks into a cited context block, and
-have a LOCAL Ollama model (LUMEN_LLM_MAIN, default qwen3:8b) write an answer that is allowed
+have a LOCAL Ollama model (LUMEN_LLM_MAIN) write an answer that is allowed
 to use ONLY that context. No clinical text leaves the machine — same DUA-safe
 setup as the judge.
 
