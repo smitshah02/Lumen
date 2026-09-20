@@ -70,3 +70,10 @@ LUMEN_STATUS.md
 
 backups/
 *.dump
+
+# Final answer-level evaluation runs. Artifacts are immutable run directories
+# kept outside version control, like the cloud results in ~/Lumen_cloud_results.
+# evidence_cache.jsonl inside a run holds the exact evidence text the judge
+# graded against and is the only file there carrying note text.
+results/final_eval/
+.cache/final_eval_judge.json
