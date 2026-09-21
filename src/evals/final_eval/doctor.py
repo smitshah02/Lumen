@@ -101,20 +101,24 @@ def _c(name, ok, detail="", value=None, required=True, warn_only=False) -> Check
 # Repository and interpreter
 # ---------------------------------------------------------------------------
 def check_repository() -> list:
-    sha = man._git("rev-parse", "HEAD")
-    branch = man._git("rev-parse", "--abbrev-ref", "HEAD")
-    dirty = sorted(set(man.porcelain_paths(man._git("status", "--porcelain"))))
+    """Provenance as manifest.py records it: git when there is a checkout,
+    otherwise the .deployment_source.json written by scripts/sync_to_pod.sh."""
+    prov = man._provenance()
+    sha, branch = prov.get("git_sha"), prov.get("branch")
+    source, dirty = prov.get("provenance_source"), prov.get("dirty_worktree")
+    dirty_files = prov.get("dirty_files") or []
     return [
         _c("git_sha", bool(sha),
-           sha or "not a git checkout — provenance cannot be recorded", sha),
+           f"{sha} (provenance_source={source})" if sha else
+           "no git checkout and no .deployment_source.json from sync_to_pod.sh — "
+           "provenance cannot be recorded", sha),
         Check("git_branch", PASS, f"on {branch or 'unknown'}", branch, required=False),
-        # A dirty tree is not fatal (it is recorded in the manifest either way),
-        # but a benchmark run from uncommitted code cannot be reproduced from a
-        # SHA, so it is surfaced loudly.
-        _c("clean_worktree", not dirty,
-           "clean" if not dirty else f"{len(dirty)} modified file(s): {', '.join(dirty[:5])}"
-                                     + (" …" if len(dirty) > 5 else ""),
-           dirty, required=False, warn_only=True),
+        _c("clean_worktree", dirty is False,
+           "clean" if dirty is False else
+           (f"{len(dirty_files)} modified file(s): {', '.join(dirty_files[:5])}"
+            + (" …" if len(dirty_files) > 5 else "") if dirty_files
+            else f"dirty_worktree={dirty}"),
+           dirty_files, required=False, warn_only=True),
     ]
 
 

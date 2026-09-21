@@ -14,8 +14,9 @@ DEST=/workspace/lumen/repo
 SSH=(ssh -p "$PORT" -o StrictHostKeyChecking=accept-new)
 [ -n "$KEY" ] && SSH+=(-i "$KEY")
 
-FILES=(requirements.txt src
+FILES=(requirements.txt requirements-dev.txt src tests
        scripts/bootstrap_pod.sh scripts/start_cloud_demo.sh scripts/cloud_eval.py
+       scripts/final_eval.py
        scripts/load_synthetic_demo.py scripts/fetch_models.py scripts/demo_smoke_test.py)
 
 # Source provenance from the LOCAL repo (.git is never synced). Written to a temp
