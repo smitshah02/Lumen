@@ -7,7 +7,7 @@
 #
 #   docker compose -f docker-compose.demo.yml build api
 
-FROM python:3.14-slim
+FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -26,6 +26,7 @@ RUN useradd --create-home --uid 10001 lumen \
     && chown lumen:lumen /models
 
 COPY --chown=lumen:lumen src/ src/
+COPY --chown=lumen:lumen configs/models.json configs/models.json
 COPY --chown=lumen:lumen scripts/load_synthetic_demo.py scripts/fetch_models.py scripts/demo_smoke_test.py scripts/
 
 USER lumen

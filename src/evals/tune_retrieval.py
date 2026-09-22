@@ -16,8 +16,10 @@ Phase 2 `score` pools every variant's top-`pool_depth` with the canonical five
 configs' top-10 for the same query, judges the union once with the local
 Ollama judge, and writes aggregate-only JSON (query ids, no text).
 
-    python -m src.evals.tune_retrieval split    --out results/interview_tuning/split_manifest.json
-    python -m src.evals.tune_retrieval retrieve --split results/interview_tuning/split_manifest.json \
+    python -m src.evals.tune_retrieval split \
+        --out artifacts/benchmarks/retrieval-v1/interview_tuning/split_manifest.json
+    python -m src.evals.tune_retrieval retrieve \
+        --split artifacts/benchmarks/retrieval-v1/interview_tuning/split_manifest.json \
         --set dev --out <scratch>/tune_dev.json
     python -m src.evals.tune_retrieval score    --in <scratch>/tune_dev.json \
         --canonical <scratch>/pooled.json --out <scratch>/tune_dev_scores.json

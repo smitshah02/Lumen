@@ -10,14 +10,14 @@
 #   docker compose -f docker-compose.demo.yml down    # keeps volumes
 #
 # LUMEN_DEMO_LLM_HOST overrides where the API sends LLM calls (default: the
-# ollama service). On a laptop without enough Docker memory for qwen3:8b, point
+# ollama service). On a laptop without enough Docker memory for both tiers, point
 # it at the host: LUMEN_DEMO_LLM_HOST=http://host.docker.internal:11434
 
 name: lumen-demo
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     environment:
       POSTGRES_USER: lumen_demo
       # Local synthetic-demo default only; set LUMEN_DEMO_PG_PASSWORD anywhere else.
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.31.1@sha256:f1a705f2bd113fb8d15f85f7c217f0dc5f6bebda6b0cc42b82c3ad165ffcb9dc
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
@@ -52,8 +52,8 @@ services:
       LUMEN_DATA_PLANE: demo          # fixed: this stack never serves the research plane
       LUMEN_DEMO_DATABASE_URL: postgresql://lumen_demo:${LUMEN_DEMO_PG_PASSWORD:-lumen-demo-local-only}@db:5432/lumen_demo
       LUMEN_LLM_HOST: ${LUMEN_DEMO_LLM_HOST:-http://ollama:11434}
-      LUMEN_LLM_MAIN: ${LUMEN_LLM_MAIN:-qwen3:30b-a3b-instruct-2507-q4_K_M}
-      LUMEN_LLM_FAST: ${LUMEN_LLM_FAST:-qwen3:4b-instruct-2507-q4_K_M}
+      LUMEN_LLM_MAIN: ${LUMEN_LLM_MAIN:?Set from configs/models.json or .env.example}
+      LUMEN_LLM_FAST: ${LUMEN_LLM_FAST:?Set from configs/models.json or .env.example}
       LUMEN_MODELS_DIR: /models
       LUMEN_TRACING: "0"
     volumes:
@@ -68,7 +68,7 @@ services:
       ollama:
         condition: service_healthy
     healthcheck:
-      # Healthy == /ready: database + indexed corpus + LLM host + qwen3:8b present.
+      # Healthy == /ready: schema, corpus/index provenance and both LLM tags present.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=8)"]
       interval: 30s
       timeout: 10s

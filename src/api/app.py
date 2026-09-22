@@ -10,12 +10,13 @@ hybrid retrieval -> local qwen synthesis -> verification -> human review), and
 
 Data planes: src.storage picks the database from LUMEN_DATA_PLANE (demo ->
 lumen_demo, research -> lumen). The research plane holds real MIMIC-derived
-text, so — like src.mcp_server.planes — it only answers loopback clients.
+text, so it only answers loopback clients.
 """
 
 from __future__ import annotations
 
 import os
+import json
 import re
 import time
 import uuid
@@ -32,9 +33,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
+from src.config import MODELS_CONFIG, MODELS_DIR, PGVECTOR_VERSION, VALID_PLANES
+from src.retrieval.index_provenance import configuration_hash as index_configuration_hash
+from src.storage.schema import SCHEMA_VERSION
 from src.llm import local_client
 from src.obs import tracing
-from src.mcp_server.planes import VALID_PLANES
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
                              current_timings, Timer)
 from src.api.schemas import (AskRequest, AskResponse, RetrieveRequest, RetrieveResponse, RetrievedChunk,
@@ -185,9 +188,102 @@ async def _on_generation(request: Request, exc: GenerationFailed):
 def _check_database() -> dict:
     with storage.engine.connect() as c:
         db = c.execute(text("SELECT current_database()")).scalar()
-        indexed = c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks)")).scalar()
+        extension = c.execute(text(
+            "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+        )).scalar()
+        required_tables = ("note_chunks", "clinical_notes", "d_labitems", "lumen_schema_version",
+                           "ingestion_log", "ingestion_runs", "note_index_runs", "note_index_state")
+        present = {
+            table for table in required_tables
+            if c.execute(text("SELECT to_regclass(:name)"), {"name": table}).scalar()
+        }
+        missing_tables = sorted(set(required_tables) - present)
+        schema_version = None
+        indexes = set()
+        chunks = None
+        eligible_notes = None
+        indexed_notes = None
+        ingestion_status = None
+        if not missing_tables:
+            schema_version = c.execute(text(
+                "SELECT COALESCE(MAX(version), 0) FROM lumen_schema_version"
+            )).scalar()
+            indexes = set(c.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+            )).scalars())
+            chunks = c.execute(text("SELECT COUNT(*) FROM note_chunks")).scalar()
+            eligible_notes = c.execute(text("""
+                SELECT COUNT(*) FROM clinical_notes
+                WHERE COALESCE(text_deid, text_original) IS NOT NULL
+                  AND COALESCE(text_deid, text_original) != ''
+            """)).scalar()
+            indexed_notes = c.execute(text("""
+                SELECT COUNT(*) FROM note_index_state nis
+                WHERE nis.status='completed' AND nis.config_hash=:config_hash
+                  AND nis.chunk_count=(
+                      SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id=nis.note_id
+                  )
+            """), {"config_hash": index_configuration_hash()}).scalar()
+            if DATA_PLANE == "research":
+                ingestion_status = c.execute(text("""
+                    SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
+                """)).scalar()
+                if ingestion_status is None:
+                    legacy_completed = c.execute(text("""
+                        SELECT COUNT(*) FROM (
+                            SELECT DISTINCT ON (table_name) table_name, status
+                            FROM ingestion_log
+                            WHERE table_name IN ('patients', 'admissions', 'clinical_notes')
+                            ORDER BY table_name, id DESC
+                        ) latest WHERE status='completed'
+                    """)).scalar()
+                    if legacy_completed == 3:
+                        ingestion_status = "legacy_completed"
     plane_ok = db == EXPECTED_DB and not (DATA_PLANE == "demo" and db == storage.RESEARCH_DB_NAME)
-    return {"database": "ok" if plane_ok else "wrong_database", "corpus": "ok" if indexed else "empty"}
+    required_indexes = {"idx_chunks_fts", "idx_chunks_embedding", "idx_chunks_subject"}
+    schema_ok = (not missing_tables and schema_version == SCHEMA_VERSION
+                 and required_indexes.issubset(indexes))
+    return {
+        "database": "ok" if plane_ok else "wrong_database",
+        "schema": "ok" if schema_ok else "missing_or_outdated",
+        "extension": "ok" if extension == PGVECTOR_VERSION else "missing_or_wrong_version",
+        "corpus": "ok" if chunks else "empty" if chunks == 0 else "unknown",
+        "ingestion": ("ok" if DATA_PLANE == "demo" else
+                      "ok" if ingestion_status in ("completed", "legacy_completed") else
+                      ingestion_status or "untracked"),
+        "index": ("ok" if eligible_notes and indexed_notes == eligible_notes else
+                  "incomplete_or_stale" if eligible_notes is not None else "unknown"),
+        "schema_version": schema_version,
+        "pgvector_version": extension,
+        "missing_tables": missing_tables,
+        "missing_indexes": sorted(required_indexes - indexes),
+        "indexed_notes": indexed_notes,
+        "eligible_notes": eligible_notes,
+    }
+
+
+def _check_retrieval_models() -> dict:
+    """Cheap readiness check: pinned metadata and sizes, but no multi-GB hashing."""
+    problems = []
+    for name, spec in MODELS_CONFIG["hugging_face"].items():
+        if spec["profile"] != "runtime":
+            continue
+        target = MODELS_DIR / name
+        try:
+            manifest = json.loads((target / ".lumen-model.json").read_text(encoding="utf-8"))
+            if any(manifest.get(key) != expected for key, expected in
+                   (("name", name), ("repo", spec["repo"]), ("revision", spec["revision"]))):
+                problems.append(f"{name}:provenance")
+                continue
+            files = manifest.get("files") or {}
+            for required in ("config.json", "model.safetensors"):
+                path = target / required
+                if required not in files or not path.is_file() or path.stat().st_size != files[required].get("size"):
+                    problems.append(f"{name}:{required}")
+        except (OSError, ValueError, TypeError):
+            problems.append(f"{name}:manifest")
+    return {"retrieval_models": "ok" if not problems else "missing_or_unverified",
+            "model_problems": problems}
 
 
 def _check_ollama() -> dict:
@@ -254,14 +350,27 @@ async def health():
 
 @app.get("/ready")
 async def ready(request: Request):
-    db, llm = await asyncio.gather(_probe(_check_database, "database"), _probe(_check_ollama, "ollama"))
-    deps = {"database": db.get("database"), "corpus": db.get("corpus", "unknown"),
+    db, llm, retrieval = await asyncio.gather(
+        _probe(_check_database, "database"), _probe(_check_ollama, "ollama"),
+        _probe(_check_retrieval_models, "retrieval_models"),
+    )
+    deps = {"database": db.get("database"), "schema": db.get("schema", "unknown"),
+            "extension": db.get("extension", "unknown"), "corpus": db.get("corpus", "unknown"),
+            "ingestion": db.get("ingestion", "unknown"), "index": db.get("index", "unknown"),
+            "retrieval_models": retrieval.get("retrieval_models", "unknown"),
             "ollama": llm.get("ollama"), "model": llm.get("model", "unknown")}
     ok = all(v == "ok" for v in deps.values())
     request.state.outcome = "ready" if ok else "not_ready"
     body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "database": EXPECTED_DB,
             "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL,
                        "roles": local_client.runtime_config()["roles"]}, "dependencies": deps,
+            "database_details": {"schema_version": db.get("schema_version"),
+                                 "pgvector_version": db.get("pgvector_version"),
+                                 "missing_tables": db.get("missing_tables", []),
+                                 "missing_indexes": db.get("missing_indexes", []),
+                                 "indexed_notes": db.get("indexed_notes"),
+                                 "eligible_notes": db.get("eligible_notes")},
+            "retrieval_model_problems": retrieval.get("model_problems", []),
             # informational only: an unreachable observability backend never makes the API unready
             "tracing": tracing.status(),
             "request_id": request.state.request_id}

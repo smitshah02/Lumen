@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import platform
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,7 +41,7 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 ENVIRONMENT_CHECKS = frozenset({
     "database_connectivity", "demo_data_plane_rows", "llm_host_reachable",
     "runtime_model_main", "runtime_model_fast", "judge_model_installed",
-    "embedding_models", "reranker_model", "gpu",
+    "embedding_models", "reranker_model", "gpu", "python_version",
 })
 # `judge_independence` is deliberately NOT in that set. Judging the system with
 # itself is a design error, not a property of the machine, so it blocks in
@@ -127,11 +128,11 @@ def check_python() -> list:
     matches = (v.major, v.minor) == TARGET_PYTHON
     return [
         Check("python_version",
-              PASS if matches else WARN,
+              PASS if matches else FAIL,
               f"{platform.python_version()}"
               + ("" if matches else f" — the cloud target is "
                                     f"{TARGET_PYTHON[0]}.{TARGET_PYTHON[1]}"),
-              platform.python_version(), required=False),
+              platform.python_version(), required=True),
     ]
 
 
@@ -312,29 +313,42 @@ def check_retrieval_assets() -> list:
     """Embedding and reranker availability, as the application resolves them."""
     out = []
     try:
-        from src.retrieval import hybrid_retriever_v2 as H
-        p = Path(H.DEFAULT_RERANKER_MODEL)
-        out.append(_c("reranker_model", p.exists(),
-                      f"{p.name} {'present' if p.exists() else 'MISSING'} at {p.parent}",
-                      str(p)))
+        from src import config
+
+        def asset_ready(name: str) -> tuple[bool, str]:
+            spec = config.MODELS_CONFIG["hugging_face"][name]
+            target = config.MODELS_DIR / name
+            manifest = json.loads((target / ".lumen-model.json").read_text())
+            identity_ok = all(manifest.get(key) == value for key, value in (
+                ("name", name), ("profile", spec["profile"]),
+                ("repo", spec["repo"]), ("revision", spec["revision"]),
+            ))
+            files = manifest.get("files") or {}
+            required_ok = all(
+                filename in files and (target / filename).is_file()
+                and (target / filename).stat().st_size == files[filename].get("size")
+                for filename in ("config.json", "model.safetensors")
+            )
+            return identity_ok and required_ok, str(target)
+
+        ready, path = asset_ready("bge-reranker")
+        out.append(_c("reranker_model", ready,
+                      f"bge-reranker {'verified' if ready else 'MISSING OR UNVERIFIED'} at {path}",
+                      path))
     except Exception as e:
         out.append(_c("reranker_model", False,
-                      f"retriever configuration unreadable: {type(e).__name__}", None))
+                      f"reranker provenance unreadable: {type(e).__name__}", None))
     try:
-        sys.path.insert(0, str(man.ROOT / "scripts"))
-        import fetch_models
-        # Same resolution the application uses, without importing torch.
-        model_dir = fetch_models._models_dir()
-        wanted = [k for k in ("medcpt-query", "medcpt-article") if k in fetch_models.MODELS]
-        present = [k for k in wanted if (model_dir / k).exists()]
-        out.append(_c("embedding_models", bool(wanted) and len(present) == len(wanted),
-                      (f"{len(present)}/{len(wanted)} present under {model_dir}"
-                       + (f": {', '.join(present)}" if present else "")) if wanted
-                      else "no embedding models configured",
-                      {"dir": str(model_dir), "present": present, "wanted": wanted}))
+        wanted = ("medcpt-query", "medcpt-article")
+        verified = [name for name in wanted if asset_ready(name)[0]]
+        out.append(_c("embedding_models", len(verified) == len(wanted),
+                      f"{len(verified)}/{len(wanted)} provenance manifests verified under "
+                      f"{config.MODELS_DIR}" + (f": {', '.join(verified)}" if verified else ""),
+                      {"dir": str(config.MODELS_DIR), "verified": verified,
+                       "wanted": list(wanted)}))
     except Exception as e:
         out.append(_c("embedding_models", False,
-                      f"model registry unreadable: {type(e).__name__}", None))
+                      f"embedding provenance unreadable: {type(e).__name__}", None))
     try:
         import torch
         cuda = bool(torch.cuda.is_available())

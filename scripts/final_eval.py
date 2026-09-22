@@ -39,6 +39,7 @@ from src.evals.final_eval import EVALUATOR_VERSION, cases as case_mod      # noq
 from src.evals.final_eval import manifest as man                            # noqa: E402
 from src.evals.final_eval import aggregate as agg                           # noqa: E402
 from src.evals.final_eval import failures as fail_mod                       # noqa: E402
+from src.evals.final_eval import providers                                  # noqa: E402
 
 log = logging.getLogger("final_eval")
 
@@ -49,13 +50,24 @@ def say(*a, **k):
 
 def _require_demo_plane() -> None:
     """The evaluation runs against the synthetic demo plane only. Same refusal
-    scripts/cloud_eval.py makes, for the same reason."""
+    scripts/performance_eval.py makes, for the same reason."""
     if os.environ.get("LUMEN_DATA_PLANE") != "demo":
         raise SystemExit("refusing: LUMEN_DATA_PLANE must be demo")
 
 
+def _provider(args):
+    return providers.get_provider(getattr(args, "case_provider", "demo"))
+
+
 def _selected(args) -> list:
-    return case_mod.select(case_mod.load_cases(), ids=args.ids, subset=args.subset)
+    provider = _provider(args)
+    return case_mod.select(provider.load_cases(), ids=args.ids, subset=args.subset)
+
+
+def _provider_for_run(run: man.RunDir):
+    manifest = run.read_json("manifest")
+    name = (manifest.get("eval_set") or {}).get("provider", "demo")
+    return providers.get_provider(name)
 
 
 def _judge_backend(args, required: bool):
@@ -94,6 +106,7 @@ def cmd_run(args) -> int:
     from src.evals.final_eval import collect as collect_mod
     from src.evals.final_eval import deterministic as det_mod
 
+    provider = _provider(args)
     selected = _selected(args)
     backend = None if args.skip_judge else _judge_backend(args, required=True)
     run_id = args.run_id or man.new_run_id()
@@ -104,7 +117,8 @@ def cmd_run(args) -> int:
         judge_config=(_judge_config(backend) if backend else
                       {"model": None, "skipped": True,
                        "reason": "--skip-judge: no independent judge ran"}),
-        collection_backend="graph:run_once", notes=args.notes)
+        collection_backend="graph:run_once", notes=args.notes,
+        eval_set=provider.fingerprint())
     try:
         m = run.open_for_write(m, resume=args.resume)
     except man.RunDirError as e:
@@ -161,7 +175,7 @@ def cmd_deterministic(args) -> int:
     # with no model call, so it is safe to regenerate on a sealed run.
     from src.evals.final_eval import deterministic as det_mod
     run = man.RunDir(args.run_id, args.results_root)
-    index = {c.query_id: c for c in case_mod.load_cases()}
+    index = {c.query_id: c for c in _provider_for_run(run).load_cases()}
     say(det_mod.run(run, index, progress=say))
     return 0
 
@@ -172,7 +186,7 @@ def cmd_judge(args) -> int:
     if run.is_complete() and not args.allow_complete:
         raise SystemExit(f"refusing: run {args.run_id} is complete and immutable")
     backend = _judge_backend(args, required=True)
-    index = {c.query_id: c for c in case_mod.load_cases()}
+    index = {c.query_id: c for c in _provider_for_run(run).load_cases()}
     say(judge_mod.run(run, index, backend, resume=args.resume, progress=say))
     return 0
 
@@ -324,8 +338,9 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_cases(args) -> int:
-    cs = case_mod.load_cases()
-    fp = case_mod.dataset_fingerprint()
+    provider = _provider(args)
+    cs = provider.load_cases()
+    fp = provider.fingerprint()
     say(f"{fp['n_cases']} cases  sha256={fp['sha256'][:16]}  "
         f"version={fp['dataset_version']}  manifest_match={fp['manifest_sha256_matches']}")
     for c in case_mod.select(cs, ids=args.ids, subset=args.subset):
@@ -351,6 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
 
     def _cases_args(p):
+        p.add_argument("--case-provider", default="demo", choices=providers.provider_names(),
+                       help="case source (only the frozen synthetic demo provider is registered)")
         p.add_argument("--subset", default="all", choices=["all", "legacy15", "smoke"],
                        help="all = the full 40-case set; legacy15 = demo_q01-demo_q15; "
                             "smoke = the 3-case triple")

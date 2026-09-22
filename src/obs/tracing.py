@@ -27,12 +27,13 @@ import logging
 from contextlib import contextmanager, ExitStack
 from urllib.parse import urlparse
 
+from src.config import get_data_plane
 from src.obs.logging import log_event
 
 logger = logging.getLogger(__name__)
 
 ENABLED = os.environ.get("LUMEN_TRACING", "0") == "1"
-PLANE = os.environ.get("LUMEN_DATA_PLANE", "research").strip().lower()
+PLANE = get_data_plane()
 PROVIDER = "langfuse"
 _SDK_DEFAULT_URL = "https://cloud.langfuse.com"
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")

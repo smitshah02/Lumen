@@ -32,6 +32,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
 
 from src.storage import engine
+from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import classify, wants_deterministic_lab
@@ -724,14 +725,30 @@ def route_after_guidelines(state: AgentState) -> str:
         return "literature_retrieval"
     return "synthesis"
 
-def build_graph(setup: bool = True):
+def build_graph(setup: bool = False, validate_checkpoints: bool = True):
+    """Compile the canonical graph without implicit schema mutation.
+
+    Checkpoint tables are created by ``python -m src.storage.checkpoints``.
+    ``setup=True`` and LUMEN_CHECKPOINT_AUTO_SETUP=1 remain explicit defensive
+    fallbacks for controlled recovery, not the normal request path.
+    """
+    auto_setup = os.environ.get("LUMEN_CHECKPOINT_AUTO_SETUP", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if validate_checkpoints and not (setup or auto_setup):
+        status = checkpoint_schema_status()
+        if not status["ready"]:
+            raise RuntimeError(
+                "LangGraph checkpoint schema is missing "
+                f"{status['missing']}; run `python -m src.storage.checkpoints`"
+            )
     pool = ConnectionPool(
         conninfo=_dsn(), max_size=5,
         kwargs={"autocommit": True, "row_factory": dict_row},
     )
     checkpointer = PostgresSaver(pool)
     _pools.append(pool)
-    if setup:
+    if setup or auto_setup:
         checkpointer.setup()
 
     b = StateGraph(AgentState)

@@ -25,7 +25,7 @@ LangGraph thread from the request id, and the Postgres checkpointer persists
 threads — a fixed id would RESUME a previous run's thread, accumulating
 node_trail and errors through their operator.add reducers and feeding the next
 invoke to a graph paused at human_review. This is the same trap
-scripts/cloud_eval.py documents at its RUN_ID definition.
+scripts/performance_eval.py documents at its RUN_ID definition.
 
 Failure policy
 --------------
@@ -53,15 +53,15 @@ TERMINAL_STATUSES = ("completed", "human_review_required", "refused", "failed")
 
 
 def _escalation_reason_fn():
-    """Reuse scripts/cloud_eval.py's labelling so this run's escalation reasons
+    """Reuse scripts/performance_eval.py's labelling so this run's escalation reasons
     are directly comparable with the preserved cloud artifacts. If it cannot be
     imported the reason is recorded as 'unavailable' rather than invented."""
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
-        from cloud_eval import _escalation_reason
+        from performance_eval import _escalation_reason
         return _escalation_reason
     except Exception as e:
-        logger.warning("cloud_eval._escalation_reason unavailable (%s)", type(e).__name__)
+        logger.warning("performance_eval._escalation_reason unavailable (%s)", type(e).__name__)
         return lambda st, trace: "unavailable"
 
 

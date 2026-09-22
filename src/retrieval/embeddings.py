@@ -25,21 +25,18 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import logging
 import time
-from pathlib import Path
 from typing import Optional
 
 import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModel
 
+from src.config import MODELS_DIR
+
 logger = logging.getLogger(__name__)
 
-# Local model weights. LUMEN_MODELS_DIR overrides (containers, other clones);
-# the fallback is the original ~/Lumen/models layout.
-MODELS_DIR = Path(os.environ.get("LUMEN_MODELS_DIR") or Path.home() / "Lumen" / "models")
 DEFAULT_QUERY_MODEL = str(MODELS_DIR / "medcpt-query")
 DEFAULT_ARTICLE_MODEL = str(MODELS_DIR / "medcpt-article")
 

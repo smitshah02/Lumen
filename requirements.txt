@@ -1,9 +1,9 @@
 # Lumen — Python dependencies
 #
-# Python 3.14 (dev env: 3.14.5). Versions below are pinned to the working
-# environment this project's published results were produced on.
+# Canonical runtime: CPython 3.12. Versions below are pinned direct
+# dependencies from the validated environment; see docs/runtime-compatibility.md.
 #
-#   python3.14 -m venv .venv
+#   python3.12 -m venv .venv
 #   source .venv/bin/activate
 #   pip install -r requirements.txt
 #
@@ -11,7 +11,8 @@
 #   - Postgres 16 + pgvector  -> docker-compose.yml
 #   - Ollama + two model tiers -> `ollama serve && ollama pull <tag>`      (runtime; LUMEN_LLM_MAIN/FAST)
 #   - qwen2.5:14b             -> retrieval-eval judge only (src/evals/ollama_backend.py)
-#   - Model weights in models/ -> MedCPT query/article/cross-encoder, BGE reranker
+#   - Model weights in models/ -> runtime MedCPT query/article + BGE; the
+#     MedCPT cross-encoder is a legacy-eval-only profile
 
 # --- Database -------------------------------------------------------------
 SQLAlchemy==2.0.49
@@ -21,6 +22,7 @@ psycopg2-binary==2.9.12
 # torch: MPS on Apple Silicon, CPU fallback elsewhere.
 torch==2.11.0
 transformers==5.8.0
+huggingface-hub==1.14.0
 numpy==2.4.4
 
 # --- De-identification (Presidio + spaCy) ---------------------------------
@@ -53,21 +55,16 @@ mcp==2.1.1
 # --- HTTP API (src/api/) -----------------------------------------------------
 fastapi==0.136.1
 uvicorn==0.46.0
+pydantic==2.13.4
+typing-extensions==4.15.0
 
 # --- Ingestion / utilities -------------------------------------------------
 pandas==3.0.2
 tqdm==4.67.3
 python-dotenv==1.2.2
 
-# --- Optional: reranker training-data tooling ------------------------------
-# Only src/reranker/audit_training_quality.py needs this. It points the OpenAI
-# client at Groq's OpenAI-compatible endpoint and requires GROQ_API_KEY.
-# It sends *training-data* text off-machine — do not run it on MIMIC note text
-# you are holding under the PhysioNet DUA.
-# openai==2.36.0
-
 # --- Optional: tracing (src/obs/tracing.py) --------------------------------
 # Only needed when LUMEN_TRACING=1. Traces carry note text in span inputs, so
-# LANGFUSE_HOST must stay on a self-hosted instance — src/obs/tracing.py
-# refuses to send anywhere but localhost.
+# research tracing must stay local; demo tracing may use remote HTTPS.
+# src/obs/tracing.py enforces the selected plane's policy.
 langfuse==4.15.1

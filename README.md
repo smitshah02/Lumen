@@ -1,188 +1,114 @@
 # Lumen
 
-A clinical retrieval-augmented generation system over MIMIC-IV. Lumen answers
-patient-scoped clinical questions from de-identified discharge summaries and
-radiology reports, and grounds every claim in a citation back to the source note.
+Lumen is a local clinical retrieval-augmented generation system for
+patient-scoped questions over de-identified MIMIC-IV notes. Its authoritative
+runtime is:
 
-The design constraint that shapes everything here: **no clinical text leaves the
-machine.** Retrieval, reranking, answer generation, and the evaluation judge all
-run locally against a local Postgres instance and a local Ollama model — which is
-what keeps the project inside the PhysioNet DUA. No hosted API touches clinical
-text at any point in the pipeline.
-
----
-
-## Why this exists
-
-Most RAG demos retrieve from clean, well-formed documents. Clinical notes are
-neither. They are semi-structured, heavily abbreviated, inconsistently
-sectioned, and full of de-identification placeholders. A patient's answer is
-often spread across several notes written weeks apart.
-
-Lumen is an attempt to build retrieval that survives that, and to measure it
-honestly rather than with a metric that flatters itself.
-
----
-
-## Architecture
-
-```
-MIMIC-IV (csv.gz)
-      │
-      ▼
-  ingest  ──────────────►  Postgres + pgvector
-      │                     patients, admissions, diagnoses, labevents,
-      │                     notes, chunks, guideline_chunks
-      ▼
-  de-identification        Presidio + spaCy en_core_web_lg
-      │                    custom clinical recognizers (MRN, ages >89, …)
-      ▼
-  section-aware chunking   splits on clinical headers first, then
-      │                    overlapping sentence windows @ 512 tokens
-      ▼
-  MedCPT dual-encoder      article encoder → chunks
-                           query encoder → queries          768-dim
+```text
+FastAPI → LangGraph → HybridRetriever → role-based local Ollama
+        → citation normalization and verification → review/refusal → API response
 ```
 
-Retrieval is an eight-stage pipeline ([hybrid_retriever_v2.py](src/retrieval/hybrid_retriever_v2.py)):
+The repository supports two isolated data planes:
 
-1. **Query expansion** — clinical synonyms and abbreviations, to bridge the gap between how a person asks ("swollen legs") and how a clinician writes ("peripheral edema")
-2. **BM25** over each chunk's own Postgres `tsvector`, OR + AND combination
-3. **Vector search** via pgvector cosine over MedCPT embeddings
-4. **Reciprocal Rank Fusion**, with a bonus for chunks found by *both* arms
-5. **Note-level dedup** — stops three chunks from one note from monopolizing the results
-6. **Temporal filter / boost** — anchored per patient, see below
-7. **Context window expansion** — pulls adjacent chunks so the reranker sees a clinical picture, not a fragment
-8. **BGE cross-encoder rerank** over the assembled context → final top-K, falling back to RRF order when the reranker's top score is below 0.35
+- `demo` contains only generated synthetic patients and is the only plane
+  permitted on RunPod or other remote demo infrastructure.
+- `research` contains real MIMIC-derived data and is intended for controlled
+  local or institutional execution. The API is loopback-only and remote model
+  endpoints are rejected by default.
 
-A minimum-token quality filter runs inside stages 2 and 3, dropping the one-line
-radiology indications that otherwise pollute the top-K.
+Lumen is a research system, not a clinical decision-support product.
 
-**Temporal correctness is the part worth looking at.** MIMIC-IV shifts each
-patient's dates into 2100–2200 with a *per-patient* offset, so absolute dates are
-meaningless across patients but intervals within one patient are real. Recency is
-therefore anchored to each subject's own latest record, never a global clock, and
-applied as an additive half-life decay so a min-maxed score of 0 can still be
-boosted. [temporal_fix.py](src/retrieval/temporal_fix.py) is a standalone
-regression test that pins this against the pre-fix behaviour — no DB or models
-needed to run it.
+## Quick start: synthetic demo
 
-Generation ([answer_generator.py](src/generation/answer_generator.py)) is grounded-only:
-the system prompt forbids outside knowledge about the patient, requires a `[S#]`
-citation on every claim, and returns a fixed refusal sentence when the context
-doesn't contain the answer. `subject_id` / `hadm_id` pass straight through to
-retrieval, so one patient's question can never surface another patient's notes.
+Prerequisites are CPython 3.12, Docker Compose, sufficient disk/RAM for the
+configured local models, and the values from `.env.example`.
 
----
+```bash
+cp .env.example .env
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+./scripts/lumen demo setup
+curl http://127.0.0.1:8000/ready
+./scripts/lumen demo test
+```
 
-## Results
+`demo setup` is explicit because it downloads model weights, initializes the
+synthetic database, and builds the retrieval index. Routine startup does not
+ingest or reindex:
 
-28 golden queries across six categories (medications, labs, diagnosis, imaging,
-sections, plain-language), graded by a local Ollama judge (`qwen2.5:14b`) at
-relevance threshold 2 on a 0–3 scale, `top_k=5`. Full per-query output in
-[results.json](results.json).
+```bash
+./scripts/lumen demo start
+./scripts/lumen demo stop
+```
 
-| Configuration | P@5 | Recall@5 | MRR | nDCG@5 |
-|---|---|---|---|---|
-| BM25 only | 0.725 | 0.241 | 0.771 | 0.555 |
-| Vector only (MedCPT) | 0.534 | 0.131 | 0.571 | 0.334 |
-| Hybrid RRF | 0.750 | 0.248 | 0.795 | 0.510 |
-| **Hybrid + BGE reranker** | **0.843** | **0.276** | **0.884** | **0.687** |
-| Hybrid + MedCPT cross-encoder | 0.807 | 0.268 | 0.839 | 0.568 |
+## Research plane
 
-Two things worth reading carefully:
+Research setup is deliberately separate. Choose an existing or newly created
+external Postgres volume, configure local model endpoints and MIMIC paths, then
+run each state-changing step explicitly:
 
-**Recall looks low because the denominator is honest.** Relevance is pooled
-TREC-style — the union of every configuration's results for a query is judged
-once, producing a shared relevant set that often runs to 17–20 chunks. Recall@5
-is then capped at roughly 5/18 by construction. The number is comparable *across
-rows*, which is what it is for; it is not a claim that the system finds a
-quarter of the relevant material.
+```bash
+./scripts/lumen research doctor
+./scripts/lumen research db
+./scripts/lumen research schema
+./scripts/lumen research ingest --confirm-research-ingest
+./scripts/lumen research index
+./scripts/lumen research start
+```
 
-**These numbers replaced a much prettier set.** The original judge scored a chunk
-by keyword presence — the same signal BM25 retrieves on. It was circular, and it
-saturated: every configuration landed between 0.93 and 1.00 recall, which told me
-nothing except that the metric was broken. Swapping in an
-[LLM judge](src/evals/llm_judge.py) that reads the chunk and grades whether it
-actually answers the question cut the scores roughly in half and made the
-configurations separable. The lower table is the useful one.
+Never put MIMIC data, derived patient text, credentials, model weights, or
+evaluation evidence containing note text in Git. See the
+[research runbook](docs/runbooks/research.md) before using this plane.
 
-The judge is deterministic (temperature 0), disk-cached by
-`(prompt_version, model, query, chunk)` so a pair is graded once ever, and
-degrades to score 0 with a visible error flag rather than silently crediting a
-chunk it failed to parse.
+## Evaluation
 
----
+The evaluation surfaces have distinct jobs:
 
-## Layout
+- `demo_smoke_test.py`: live safety and retrieval preflight.
+- `src/evals/`: reproducible retrieval, temporal, and egress evaluation.
+- `scripts/final_eval.py`: canonical answer-level evaluation with immutable
+  run artifacts and an independent local judge.
+- `scripts/performance_eval.py`: deployment, latency, GPU, call-budget, and
+  tracing evidence.
 
-| Path | What's in it |
+Common commands:
+
+```bash
+./scripts/lumen demo eval --subset smoke --skip-judge
+./scripts/lumen demo performance
+./scripts/lumen research test
+./scripts/lumen research eval --out /path/to/pooled.json
+```
+
+Published retrieval evidence and the configuration it supports are preserved
+under [`artifacts/benchmarks/retrieval-v1/`](artifacts/benchmarks/retrieval-v1/).
+The 28-query pooled benchmark reports P@5 `0.843`, recall@5 `0.276`, MRR
+`0.884`, and nDCG@5 `0.687` for Hybrid RRF + BGE reranking. Recall uses the
+union of judged pools as its denominator, so it is intended for comparison
+across configurations rather than as corpus-wide recall.
+
+## Repository map
+
+| Path | Purpose |
 |---|---|
-| [src/storage/](src/storage/) | Postgres schema, MIMIC ingestion, FTS migration, lab dictionary loader |
-| [src/retrieval/](src/retrieval/) | Chunker, MedCPT embeddings, hybrid retriever, note/guideline indexers, temporal logic + its regression test |
-| [src/deid/](src/deid/) | Presidio de-identification pipeline and MIMIC adapter |
-| [src/generation/](src/generation/) | Grounded answer generation, lab querying, batch harness |
-| [src/evals/](src/evals/) | Golden dataset, LLM judge, pooled scoring, retrieval + temporal evaluation |
-| [src/reranker/](src/reranker/) | Cross-encoder training-data pipeline and quality audit ([details](src/reranker/README_reranker_csv_pipeline.md)) |
+| [`src/api/`](src/api/) | Thin FastAPI boundary and readiness checks |
+| [`src/agents/`](src/agents/) | Canonical LangGraph routing, synthesis, verification, and review |
+| [`src/retrieval/`](src/retrieval/) | MedCPT/BM25 hybrid retrieval, BGE reranking, and indexing |
+| [`src/storage/`](src/storage/) | Versioned schema, ingestion, and checkpoint setup |
+| [`src/generation/lab_query.py`](src/generation/lab_query.py) | Shared deterministic structured-lab service |
+| [`src/evals/`](src/evals/) | Retrieval, safety, temporal, and final-evaluation engines |
+| [`src/mcp_server/`](src/mcp_server/) | Optional MCP adapter over shared services |
+| [`scripts/lumen`](scripts/lumen) | Thin supported lifecycle facade |
+| [`archive/`](archive/) | Retired implementations retained only for provenance |
 
----
+Further reading:
 
-## Running it
-
-Requires Python 3.11+ (developed on 3.14), Docker, and roughly 16 GB RAM — the
-reranker and a 14B Ollama model share it. Apple Silicon MPS is used automatically
-when available.
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt      # includes the spaCy en_core_web_lg model
-docker compose up -d                 # Postgres 16 + pgvector on :5434
-```
-
-Model weights are not vendored. Download to `models/`:
-
-- [`ncbi/MedCPT-Query-Encoder`](https://huggingface.co/ncbi/MedCPT-Query-Encoder) → `models/medcpt-query`
-- [`ncbi/MedCPT-Article-Encoder`](https://huggingface.co/ncbi/MedCPT-Article-Encoder) → `models/medcpt-article`
-- [`ncbi/MedCPT-Cross-Encoder`](https://huggingface.co/ncbi/MedCPT-Cross-Encoder) → `models/medcpt-cross-encoder`
-- [`BAAI/bge-reranker-v2-m3`](https://huggingface.co/BAAI/bge-reranker-v2-m3) → `models/bge-reranker`
-
-Model paths currently resolve to `~/Lumen/models`, so clone to your home directory
-or edit the path constants.
-
-`docker compose` provisions the database with the credentials already in
-`src/storage/__init__.py`; override them with `DATABASE_URL` in `.env` if you
-change the compose file. Then:
-
-```bash
-python -m src.storage.schema          # create extensions, tables, HNSW + GIN indexes
-python -m src.storage.ingest          # load MIMIC-IV
-python -m src.retrieval.index_notes   # chunk + embed notes
-python -m src.evals.retrieve_pool --out pooled.json     # retrieve across all 5 configs
-python -m src.evals.judge_and_score --in pooled.json    # judge once, score all configs
-```
-
-Ask a question:
-
-```bash
-ollama serve && ollama pull qwen2.5:14b
-python -m src.generation.answer_generator \
-    "abnormal potassium labs" --subject <subject_id> --top-k 6
-```
-
----
-
-## Data
-
-**No patient data is in this repository, and none should be added to it.**
-
-MIMIC-IV is credentialed-access under a PhysioNet data use agreement. Obtaining
-it requires CITI training and a signed DUA at
-[physionet.org/content/mimiciv](https://physionet.org/content/mimiciv/). The
-`.gitignore` here excludes the dataset, model weights, all derived exports
-(patient summaries, disease flows, reranker training pairs), and any evaluation
-artifact that embeds note text — `results.json` is committed precisely because
-it contains metrics only.
-
-If you fork this and wire in your own data, re-check that exclusion list before
-your first commit. Note excerpts turn up in eval output in places that are easy
-to miss.
+- [Architecture](docs/architecture.md)
+- [Demo runbook](docs/runbooks/demo.md)
+- [Research runbook](docs/runbooks/research.md)
+- [Configuration reference](docs/configuration.md)
+- [Operations](docs/operations.md)
+- [Runtime compatibility](docs/runtime-compatibility.md)
+- [Database lifecycle](docs/database-lifecycle.md)
+- [Infrastructure pins](docs/infrastructure-pins.md)

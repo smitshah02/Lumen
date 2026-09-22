@@ -3,7 +3,7 @@ Agent Prompts
 =============
 Versioned so changes are traceable in traces and evals.
 
-Design note: qwen3:8b follows explicit decision procedures far better
+Design note: local instruction-tuned models follow explicit decision procedures far better
 than it follows examples — this is what recovered the judge on Day 1
 (PROMPT_VERSION v2 in llm_judge.py). Every prompt here is written as a
 numbered procedure for that reason.

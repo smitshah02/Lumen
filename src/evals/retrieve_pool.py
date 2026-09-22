@@ -8,7 +8,6 @@ This split is what makes a 14B judge viable on a 16 GB machine: the retrieval
 models and the judge never sit in memory at the same time.
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
 
     python -m src.evals.retrieve_pool --out pooled.json --pool-k 10

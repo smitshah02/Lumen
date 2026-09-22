@@ -36,17 +36,18 @@ from src.mcp_server import planes                              # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-mcp = MCPServer("lumen", version="0.4.0")
+mcp = MCPServer("lumen", version="0.5.0")
 
 _retriever = None
 _guidelines = None
+_lab_resolver = None
 
 import threading
 _load_lock = threading.Lock()
 
 
 def _load():
-    """Lazy — the demo plane never needs the models.
+    """Lazy model loading for either isolated data plane.
     v2 runs sync handlers on worker threads, so this must be guarded:
     two concurrent first-calls would otherwise load MedCPT + BGE twice."""
     global _retriever, _guidelines
@@ -62,18 +63,14 @@ def _load():
     return _retriever, _guidelines
 
 
-# MIMIC-IV labevents itemids. There is no d_labitems table in this schema,
-# so names are mapped here. VERIFY against your own data before trusting.
-LAB_ITEMIDS = {
-    "potassium": 50971, "sodium": 50983, "chloride": 50902, "bicarbonate": 50882,
-    "creatinine": 50912, "bun": 51006, "urea nitrogen": 51006, "glucose": 50931,
-    "calcium": 50893, "magnesium": 50960, "phosphate": 50970,
-    "hemoglobin": 51222, "hematocrit": 51221, "wbc": 51301,
-    "white blood cells": 51301, "platelet": 51265, "platelets": 51265,
-    "alt": 50861, "ast": 50878, "alkaline phosphatase": 50863,
-    "bilirubin": 50885, "albumin": 50862, "lactate": 50813,
-    "inr": 51237, "pt": 51274, "ptt": 51275,
-}
+def _load_lab_resolver():
+    """Reuse the deterministic lab service used by the LangGraph path."""
+    global _lab_resolver
+    with _load_lock:
+        if _lab_resolver is None:
+            from src.generation.lab_query import LabResolver
+            _lab_resolver = LabResolver()
+    return _lab_resolver
 
 
 # ===========================================================================
@@ -93,12 +90,6 @@ def search_patient_notes(query: str, subject_id: Optional[int] = None,
         top_k: number of passages (1-10)
     """
     top_k = max(1, min(top_k, 10))
-
-    if planes.is_demo():
-        rows = [n for n in planes.DEMO_NOTES
-                if subject_id is None or n["subject_id"] == subject_id][:top_k]
-        return {"notice": planes.banner(), "count": len(rows),
-                "results": [{**r, "score": 1.0} for r in rows]}
 
     retriever, _ = _load()
     results = retriever.search(query=query, subject_id=subject_id,
@@ -157,46 +148,30 @@ def get_lab_trend(subject_id: int, lab_name: str, limit: int = 20) -> dict:
         limit: maximum values to return (1-100)
     """
     limit = max(1, min(limit, 100))
-    key = lab_name.strip().lower()
-
-    if planes.is_demo():
-        rows = planes.DEMO_LABS.get((subject_id, key), [])
-        return {"notice": planes.banner(), "lab": lab_name, "count": len(rows),
-                "values": [{"charttime": t, "value": v, "unit": u, "flag": f}
-                           for t, v, u, f in rows[:limit]]}
-
-    itemid = LAB_ITEMIDS.get(key)
-    if itemid is None:
+    resolver = _load_lab_resolver()
+    itemids, matched = resolver.match(lab_name.strip())
+    if not itemids:
         return {"error": f"unknown lab {lab_name!r}",
-                "known_labs": sorted(LAB_ITEMIDS.keys())}
+                "known_labs": resolver.labels}
 
-    with engine.connect() as c:
-        rows = c.execute(text("""
-            SELECT charttime, valuenum, value, valueuom, flag,
-                   ref_range_lower, ref_range_upper
-            FROM labevents
-            WHERE subject_id = :sid AND itemid = :iid AND valuenum IS NOT NULL
-            ORDER BY charttime
-            LIMIT :lim
-        """), {"sid": subject_id, "iid": itemid, "lim": limit}).fetchall()
-
-    if not rows:
-        with engine.connect() as c:
-            avail = c.execute(text("""
-                SELECT itemid, count(*) ct FROM labevents WHERE subject_id = :sid
-                GROUP BY itemid ORDER BY ct DESC LIMIT 10
-            """), {"sid": subject_id}).fetchall()
-        return {"notice": planes.banner(), "lab": lab_name, "count": 0, "values": [],
-                "hint": f"no {lab_name} (itemid {itemid}) for subject {subject_id}",
-                "available_itemids": [{"itemid": r[0], "n": r[1]} for r in avail]}
+    series = resolver.fetch(subject_id, itemids, per_lab_cap=limit)
+    values = [
+        {
+            "label": group["label"],
+            "charttime": value["charttime"],
+            "value": value["valuenum"],
+            "unit": value["uom"],
+            "abnormal": value["abnormal"],
+        }
+        for group in series
+        for value in group["values"]
+    ]
+    values.sort(key=lambda value: value["charttime"])
+    values = values[:limit]
 
     return {
-        "notice": planes.banner(), "lab": lab_name, "itemid": itemid, "count": len(rows),
-        "values": [{
-            "charttime": str(r[0]) if r[0] else None,
-            "value": r[1], "raw": r[2], "unit": r[3], "flag": r[4],
-            "ref_low": r[5], "ref_high": r[6],
-        } for r in rows],
+        "notice": planes.banner(), "lab": lab_name, "matched": matched,
+        "itemids": itemids, "count": len(values), "values": values,
     }
 
 
@@ -210,10 +185,6 @@ def get_patient_timeline(subject_id: int, limit: int = 40) -> dict:
         limit: maximum events (1-200)
     """
     limit = max(1, min(limit, 200))
-
-    if planes.is_demo():
-        ev = planes.DEMO_TIMELINE.get(subject_id, [])[:limit]
-        return {"notice": planes.banner(), "count": len(ev), "events": ev}
 
     with engine.connect() as c:
         rows = c.execute(text("""

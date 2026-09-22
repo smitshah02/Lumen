@@ -14,6 +14,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker, Session
 
+from src.config import DATA_PLANE
+
 logger = logging.getLogger(__name__)
 
 # Load from .env or environment
@@ -26,7 +28,6 @@ DATABASE_URL = os.environ.get(
 # database on the same server, so nothing that runs with LUMEN_DATA_PLANE=demo
 # can read or write the research (MIMIC) database. LUMEN_DEMO_DATABASE_URL
 # overrides; otherwise DATABASE_URL with the database name swapped.
-DATA_PLANE = os.environ.get("LUMEN_DATA_PLANE", "research").strip().lower()
 RESEARCH_DB_NAME = make_url(DATABASE_URL).database
 DEMO_DB_NAME = os.environ.get("LUMEN_DEMO_DB_NAME", "lumen_demo")
 if DATA_PLANE == "demo":

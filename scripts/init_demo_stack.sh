@@ -10,8 +10,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 COMPOSE=(docker compose -f docker-compose.demo.yml)
-MODEL_MAIN="${LUMEN_LLM_MAIN:-qwen3:30b-a3b-instruct-2507-q4_K_M}"
-MODEL_FAST="${LUMEN_LLM_FAST:-qwen3:4b-instruct-2507-q4_K_M}"
+MODEL_MAIN="${LUMEN_LLM_MAIN:-$(python3 -c 'from src.config import MAIN_MODEL_DEFAULT; print(MAIN_MODEL_DEFAULT)')}"
+MODEL_FAST="${LUMEN_LLM_FAST:-$(python3 -c 'from src.config import FAST_MODEL_DEFAULT; print(FAST_MODEL_DEFAULT)')}"
+export LUMEN_LLM_MAIN="$MODEL_MAIN" LUMEN_LLM_FAST="$MODEL_FAST"
 
 if [ "${LUMEN_DATA_PLANE:-demo}" != "demo" ]; then
   echo "refusing: LUMEN_DATA_PLANE=${LUMEN_DATA_PLANE}; the demo stack only runs the demo plane" >&2
@@ -20,6 +21,9 @@ fi
 
 echo "==> db + ollama"
 "${COMPOSE[@]}" up -d --wait db ollama
+
+echo "==> current api image"
+"${COMPOSE[@]}" build api
 
 echo "==> confirm the api container resolves to the demo database"
 "${COMPOSE[@]}" run --rm --no-deps api python -c "
@@ -42,6 +46,9 @@ done
 
 echo "==> synthetic records"
 "${COMPOSE[@]}" run --rm --no-deps api python scripts/load_synthetic_demo.py
+
+echo "==> LangGraph checkpoint schema"
+"${COMPOSE[@]}" run --rm --no-deps api python -m src.storage.checkpoints
 
 echo "==> note chunks + MedCPT embeddings"
 "${COMPOSE[@]}" run --rm --no-deps api python -m src.retrieval.index_notes

@@ -7,7 +7,6 @@ d_labitems dictionary (itemid -> label/fluid/category, ~1,600 rows) that the
 structured-labs path needs. Idempotent — safe to re-run.
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
     python -m src.storage.load_d_labitems
     python -m src.storage.load_d_labitems --csv data/mimiciv/hosp/d_labitems.csv.gz
@@ -22,19 +21,9 @@ import pandas as pd
 import sqlalchemy as sa
 
 from src.storage import engine
+from src.storage.schema import D_LABITEMS_SQL
 
 logger = logging.getLogger(__name__)
-
-DDL = """
-CREATE TABLE IF NOT EXISTS d_labitems (
-    itemid   INTEGER PRIMARY KEY,
-    label    TEXT,
-    fluid    TEXT,
-    category TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_dlabitems_label ON d_labitems (lower(label));
-"""
-
 
 def find_csv() -> str:
     hits = glob.glob("data/**/d_labitems*", recursive=True)
@@ -60,7 +49,7 @@ def load(csv_path: str | None = None):
     records = df[["itemid", "label", "fluid", "category"]].to_dict("records")
 
     with engine.begin() as conn:
-        for stmt in DDL.strip().split(";"):
+        for stmt in D_LABITEMS_SQL.strip().split(";"):
             if stmt.strip():
                 conn.execute(sa.text(stmt))
         conn.execute(sa.text("TRUNCATE d_labitems"))

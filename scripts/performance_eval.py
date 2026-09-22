@@ -1,15 +1,15 @@
 """
-Cloud deployment evidence for the SYNTHETIC demo (runs ON the Pod)
-==================================================================
+Operational performance evidence for the SYNTHETIC demo
+========================================================
 Writes aggregate-only JSON — no note text, no answers, no secrets:
 
-    results/cloud_run/deployment_manifest.json   environment, versions, corpus counts
-    results/cloud_run/smoke_test.json            health/ready/retrieve/ask/human-review + GPU checks
-    results/cloud_run/performance.json           1 warm-up (excluded) + golden-QA /ask timings
-    results/cloud_run/tracing_smoke.json         optional: one /ask + tracing status (mode `tracing`)
+    results/performance/deployment_manifest.json environment, versions, corpus counts
+    results/performance/smoke_test.json          health/ready/retrieve/ask/human-review + GPU checks
+    results/performance/performance.json         1 warm-up (excluded) + golden-QA /ask timings
+    results/performance/tracing_smoke.json       optional: one /ask + tracing status (mode `tracing`)
 
     cd /workspace/lumen/repo && set -a && . /root/lumen-runtime/lumen.env && set +a
-    /root/lumen-runtime/venv/bin/python scripts/cloud_eval.py all --out /workspace/lumen/results/cloud_run
+    /root/lumen-runtime/venv/bin/python scripts/performance_eval.py all --out /workspace/lumen/results/performance
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ import json
 import time
 import uuid
 import argparse
-import time
 import hashlib
 import platform
 import statistics
@@ -81,7 +80,7 @@ def _tokens(text: str) -> set:
 
 # One id per process run. /ask derives the LangGraph thread from the request id
 # (thread_id = f"api-{rid}"), and the checkpointer persists that thread. Fixed
-# ids like "cloud-perf-demo_q01" therefore RESUMED the previous benchmark's
+# fixed request ids therefore RESUMED the previous benchmark's
 # thread: node_trail carries an operator.add reducer, so the trail accumulated
 # across runs, `errors` accumulated with it, and a run left paused at
 # human_review would have taken the next invoke as a resume value instead of a
@@ -290,7 +289,7 @@ def smoke(out: Path) -> None:
     hits = [x["rank"] for x in rr.get("results", []) if "creatinine 1.4 mg/dl" in " ".join(x["text"].lower().split())]
     res["retrieve"] = {"http": r.status_code, "first_rank_with_1.4_mg_dL": hits[0] if hits else None,
                        "latency_ms": rr.get("latency_ms"), "result": "PASS" if r.status_code == 200 and hits else "FAIL"}
-    code, a, _ = _ask(CREAT, _run_rid("cloud-smoke-creat"))
+    code, a, _ = _ask(CREAT, _run_rid("performance-smoke-creat"))
     labels = {s["label"] for s in a.get("sources", [])}
     cites_ok = any(c["label"] in labels and c["verified"] for c in a.get("citations", [])) and \
         all(c["label"] in labels for c in a.get("citations", []) if c["label"])
@@ -304,7 +303,7 @@ def smoke(out: Path) -> None:
     finally:
         close_pools()
     # Informational only: whether a live LLM answer gets flagged is stochastic.
-    code, b, _ = _ask(BREATH, _run_rid("cloud-smoke-review"))
+    code, b, _ = _ask(BREATH, _run_rid("performance-smoke-review"))
     res["human_review_live_observation"] = {
         "http": code, "status": b.get("status"), "flagged_claims": b.get("flagged_claims"),
         "observed_human_review": b.get("status") == "human_review_required",
@@ -393,10 +392,10 @@ def _select(ids: list[str] | None) -> list[dict]:
 def perf(out: Path, ids: list[str] | None = None) -> None:
     selected = _select(ids)
     code, _, warm_ms = _ask({"subject_id": selected[0]["subject_id"], "query": selected[0]["query"]},
-                            _run_rid("cloud-perf-warmup"))
+                            _run_rid("performance-warmup"))
     rows = []
     for g in selected:
-        code, a, client_ms = _ask({"subject_id": g["subject_id"], "query": g["query"]}, _run_rid(f"cloud-perf-{g['id']}"))
+        code, a, client_ms = _ask({"subject_id": g["subject_id"], "query": g["query"]}, _run_rid(f"performance-{g['id']}"))
         t = a.get("timings") or {}
         rows.append({"query_id": g["id"], "http": code, "status": a.get("status"),
                      "total_ms": t.get("total_ms"), "client_ms": client_ms, "retrieval_ms": t.get("retrieval_ms"),
@@ -445,7 +444,7 @@ def perf(out: Path, ids: list[str] | None = None) -> None:
 def tracing_smoke(out: Path) -> None:
     """One synthetic /ask with tracing status. PASS/FAIL reflects the application only;
     an unreachable or unverifiable observability backend is reported, never fatal."""
-    rid = _run_rid("cloud-trace")
+    rid = _run_rid("performance-trace")
     code, a, client_ms = _ask(CREAT, rid)
     app_ok = code == 200 and a.get("status") in ("completed", "human_review_required")
     view = _tracing_view()                     # after the /ask, so the API has tried to connect
@@ -637,7 +636,7 @@ def main() -> int:
         return 2
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=["manifest", "smoke", "perf", "all", "tracing", "audit"])
-    ap.add_argument("--out", default=str(LUMEN_ROOT / "results" / "cloud_run"))
+    ap.add_argument("--out", default=str(LUMEN_ROOT / "results" / "performance"))
     ap.add_argument("--ids", nargs="+", default=None,
                     help="query ids to run, in order. perf: default is the full golden set. "
                          "audit: default is the legacy demo_q01-demo_q15 subset.")

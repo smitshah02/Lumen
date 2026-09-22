@@ -262,7 +262,7 @@ def _manifest_drift(original: dict, current: dict) -> dict:
 # ---------------------------------------------------------------------------
 def _provenance() -> dict:
     """Git state. On a Pod with no .git, falls back to the .deployment_source.json
-    written by scripts/sync_to_pod.sh — the same file scripts/cloud_eval.py reads."""
+    written by scripts/sync_to_pod.sh — the same file scripts/performance_eval.py reads."""
     sha = _git("rev-parse", "HEAD")
     if sha:
         dirty_files = sorted(set(porcelain_paths(_git("status", "--porcelain"))))
@@ -271,8 +271,8 @@ def _provenance() -> dict:
                 "provenance_source": "git"}
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
-        import cloud_eval  # noqa
-        p = cloud_eval.read_provenance(ROOT / ".deployment_source.json")
+        import performance_eval  # noqa
+        p = performance_eval.read_provenance(ROOT / ".deployment_source.json")
         return {**p, "dirty_files": []}
     except Exception:
         return {"git_sha": None, "branch": None, "dirty_worktree": "unknown",
@@ -416,7 +416,8 @@ def _data_plane() -> dict:
 
 def build_manifest(*, run_id: str, case_ids: list[str], subset: str,
                    judge_config: dict, collection_backend: str,
-                   api_base_url: str | None = None, notes: str = "") -> dict:
+                   api_base_url: str | None = None, notes: str = "",
+                   eval_set: dict | None = None) -> dict:
     """The immutable record of what produced a run. Built fresh from the live
     environment; nothing here is defaulted from a literal that could go stale."""
     prov = _provenance()
@@ -429,7 +430,7 @@ def build_manifest(*, run_id: str, case_ids: list[str], subset: str,
         "notes": notes,
         **prov,
         **_data_plane(),
-        "eval_set": {**case_mod.dataset_fingerprint(), "subset": subset,
+        "eval_set": {**(eval_set or case_mod.dataset_fingerprint()), "subset": subset,
                      "n_evaluated": len(case_ids), "evaluated_ids": case_ids},
         "demo_corpus": case_mod.demo_data_fingerprint(),
         "retrieval": _retrieval(),

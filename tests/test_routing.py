@@ -954,29 +954,29 @@ def test_supported_cited_answer_auto_approves(graph_mod, spy):
 # Evaluation tooling: clean state per run, and --ids
 # ===========================================================================
 @pytest.fixture
-def cloud_eval_mod():
+def performance_eval_mod():
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-    import cloud_eval
-    return cloud_eval
+    import performance_eval
+    return performance_eval
 
 
-def test_evaluation_request_ids_are_unique_per_run(cloud_eval_mod):
+def test_evaluation_request_ids_are_unique_per_run(performance_eval_mod):
     """/ask derives the graph thread from the request id, so a fixed id resumed
     the previous benchmark's checkpoint and node_trail accumulated."""
-    a = cloud_eval_mod._run_rid("cloud-perf-demo_q01")
-    b = cloud_eval_mod._run_rid("cloud-perf-demo_q01")
+    a = performance_eval_mod._run_rid("performance-demo_q01")
+    b = performance_eval_mod._run_rid("performance-demo_q01")
     assert a == b                                  # stable within one run
-    assert a.endswith(cloud_eval_mod.RUN_ID)
-    assert a != f"cloud-perf-demo_q01-{'0' * 8}"   # and scoped to this run
+    assert a.endswith(performance_eval_mod.RUN_ID)
+    assert a != f"performance-demo_q01-{'0' * 8}"   # and scoped to this run
 
 
-def test_repeated_evaluation_runs_do_not_share_graph_threads(cloud_eval_mod, monkeypatch):
+def test_repeated_evaluation_runs_do_not_share_graph_threads(performance_eval_mod, monkeypatch):
     seen = set()
     for run in ("run1aaaa", "run2bbbb"):
-        monkeypatch.setattr(cloud_eval_mod, "RUN_ID", run)
-        seen.add(cloud_eval_mod._run_rid("cloud-perf-demo_q01"))
+        monkeypatch.setattr(performance_eval_mod, "RUN_ID", run)
+        seen.add(performance_eval_mod._run_rid("performance-demo_q01"))
     assert len(seen) == 2
 
 
@@ -1003,22 +1003,22 @@ def test_second_execution_carries_only_its_own_trail(graph_mod):
     assert clean["node_trail"] == ["triage", "finalize"]                          # the fix
 
 
-def test_perf_select_defaults_to_the_full_golden_set(cloud_eval_mod):
-    assert len(cloud_eval_mod._select(None)) == len(cloud_eval_mod.GOLDEN)
+def test_perf_select_defaults_to_the_full_golden_set(performance_eval_mod):
+    assert len(performance_eval_mod._select(None)) == len(performance_eval_mod.GOLDEN)
 
 
-def test_perf_select_runs_exactly_the_requested_ids_in_order(cloud_eval_mod):
+def test_perf_select_runs_exactly_the_requested_ids_in_order(performance_eval_mod):
     ids = ["demo_q03", "demo_q01", "demo_q02"]
-    assert [g["id"] for g in cloud_eval_mod._select(ids)] == ids
+    assert [g["id"] for g in performance_eval_mod._select(ids)] == ids
 
 
-def test_perf_select_runs_only_the_legacy_subset(cloud_eval_mod):
-    got = cloud_eval_mod._select(cloud_eval_mod.LEGACY_IDS)
+def test_perf_select_runs_only_the_legacy_subset(performance_eval_mod):
+    got = performance_eval_mod._select(performance_eval_mod.LEGACY_IDS)
     assert len(got) == 15
-    assert [g["id"] for g in got] == cloud_eval_mod.LEGACY_IDS
+    assert [g["id"] for g in got] == performance_eval_mod.LEGACY_IDS
 
 
-def test_perf_select_rejects_an_unknown_id(cloud_eval_mod):
+def test_perf_select_rejects_an_unknown_id(performance_eval_mod):
     with pytest.raises(SystemExit) as e:
-        cloud_eval_mod._select(["demo_q01", "demo_q99"])
+        performance_eval_mod._select(["demo_q01", "demo_q99"])
     assert "demo_q99" in str(e.value)

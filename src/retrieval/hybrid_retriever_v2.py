@@ -73,10 +73,12 @@ import os as _os
 HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000")), 1000))
 
 # Fusion defaults, selected on a dev split of the golden set and confirmed once
-# on a held-out split (results/interview_tuning/). At k=60 a 1.0/1.2 BM25/vector
+# on a held-out split (artifacts/benchmarks/retrieval-v1/interview_tuning/). At
+# k=60 a 1.0/1.2 BM25/vector
 # ratio ranked the top ~12 vector hits above BM25's best, so "hybrid" returned
 # the weaker vector list; expansion hurt diagnosis/labs/medications queries.
-# To reproduce the pre-tuning baseline (results/interview_baseline/) set
+# To reproduce the pre-tuning baseline (artifacts/benchmarks/retrieval-v1/
+# interview_baseline/) set
 # LUMEN_RRF_BM25_WEIGHT=1.0 LUMEN_RRF_VECTOR_WEIGHT=1.2 LUMEN_QUERY_EXPANSION=1.
 RRF_BM25_WEIGHT = float(_os.environ.get("LUMEN_RRF_BM25_WEIGHT", "1.5"))
 RRF_VECTOR_WEIGHT = float(_os.environ.get("LUMEN_RRF_VECTOR_WEIGHT", "0.75"))

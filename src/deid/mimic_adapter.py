@@ -145,9 +145,9 @@ class MIMICNoteLoader:
 # Quick CLI check
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import os
+    from src.config import MIMIC_NOTE_DIR
 
-    data_dir = os.environ.get("MIMIC_IV_NOTE_DIR", "data/mimic-iv-note")
+    data_dir = str(MIMIC_NOTE_DIR)
     loader = MIMICNoteLoader(data_dir)
 
     print("MIMIC-IV-Note data status:")

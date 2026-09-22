@@ -60,16 +60,22 @@ def test_retrieve_validation_error(payload):
 
 # --- /ready ------------------------------------------------------------------------------
 def _ok_db():
-    return {"database": "ok", "corpus": "ok"}
+    return {"database": "ok", "schema": "ok", "extension": "ok", "corpus": "ok",
+            "ingestion": "ok", "index": "ok"}
 
 
 def _ok_llm():
     return {"ollama": "ok", "model": "ok"}
 
 
+def _ok_retrieval_models():
+    return {"retrieval_models": "ok", "model_problems": []}
+
+
 def test_ready_ok(monkeypatch):
     monkeypatch.setattr(api, "_check_database", _ok_db)
     monkeypatch.setattr(api, "_check_ollama", _ok_llm)
+    monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
     r = client.get("/ready")
     assert r.status_code == 200 and r.json()["status"] == "ready"
     assert r.json()["data_plane"] == "demo" and r.json()["database"] == "lumen_demo"
@@ -80,6 +86,7 @@ def test_ready_database_failure_is_503_and_leaks_nothing(monkeypatch):
         raise OperationalError("SELECT 1", {}, Exception("password=hunter2 host=db.internal"))
     monkeypatch.setattr(api, "_check_database", boom)
     monkeypatch.setattr(api, "_check_ollama", _ok_llm)
+    monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
     r = client.get("/ready")
     assert r.status_code == 503 and r.json()["dependencies"]["database"] == "unavailable"
     assert "hunter2" not in r.text and "db.internal" not in r.text
@@ -89,6 +96,7 @@ def test_ready_ollama_and_timeout_failures(monkeypatch):
     monkeypatch.setattr(api, "READY_TIMEOUT_S", 0.05)
     monkeypatch.setattr(api, "_check_database", lambda: time.sleep(0.5) or _ok_db())
     monkeypatch.setattr(api, "_check_ollama", lambda: {"ollama": "unavailable", "model": "unknown"})
+    monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
     deps = client.get("/ready").json()["dependencies"]
     assert deps["database"] == "timeout" and deps["ollama"] == "unavailable"
 

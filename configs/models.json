@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ollama": {
+    "runtime_main": "qwen3:30b-a3b-instruct-2507-q4_K_M",
+    "runtime_fast": "qwen3:4b-instruct-2507-q4_K_M",
+    "independent_judge": "qwen2.5:14b"
+  },
+  "hugging_face": {
+    "medcpt-query": {
+      "profile": "runtime",
+      "repo": "ncbi/MedCPT-Query-Encoder",
+      "revision": "d83a36cc6b8e3a5c5e9d9d6ba156808c1643dcbc"
+    },
+    "medcpt-article": {
+      "profile": "runtime",
+      "repo": "ncbi/MedCPT-Article-Encoder",
+      "revision": "d05a736da4bb84ee4057b7f7999485be6ed85465"
+    },
+    "bge-reranker": {
+      "profile": "runtime",
+      "repo": "BAAI/bge-reranker-v2-m3",
+      "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+    },
+    "medcpt-cross-encoder": {
+      "profile": "legacy-eval",
+      "repo": "ncbi/MedCPT-Cross-Encoder",
+      "revision": "71caf65d4927987813984f54c284405a13fcca49"
+    }
+  }
+}

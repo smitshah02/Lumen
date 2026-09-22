@@ -10,7 +10,7 @@ Source of truth
   cases          src/demo_data/golden_qa.json          (40 cases)
   integrity      src/demo_data/manifest.json           (sha256 per file)
   legacy subset  demo_q01..demo_q15                    (mirrors
-                 scripts/cloud_eval.py LEGACY_IDS, which is the ORIGINAL
+                 scripts/performance_eval.py LEGACY_IDS, which is the ORIGINAL
                  15-question demo set from before the corpus grew to 40 — it
                  is a historical subset, not a designed calibration sample)
 
@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_PATH = ROOT / "src" / "demo_data" / "golden_qa.json"
 DEMO_MANIFEST_PATH = ROOT / "src" / "demo_data" / "manifest.json"
 
-# The original 15-question demo set. Mirrors scripts/cloud_eval.py:LEGACY_IDS
+# The original 15-question demo set. Mirrors scripts/performance_eval.py:LEGACY_IDS
 # so the legacy comparison and the calibration subset address the same cases.
 LEGACY_IDS = tuple(f"demo_q{i:02d}" for i in range(1, 16))
 
@@ -159,7 +159,7 @@ def select(cases: list[EvalCase], ids=None, subset: str | None = None) -> list[E
 
     An unknown id is a hard failure: silently running a different subset than
     the one requested makes every number in the report unattributable. This
-    mirrors scripts/cloud_eval.py:_select deliberately.
+    mirrors scripts/performance_eval.py:_select deliberately.
     """
     by_id = {c.query_id: c for c in cases}
     if ids:

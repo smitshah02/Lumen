@@ -7,7 +7,7 @@
 #   /workspace/lumen/                 persistent, ordinary files only
 #       repo/      source (pushed by scripts/sync_to_pod.sh)
 #       logs/      bootstrap log + snapshots of service logs
-#       results/   cloud_run/ evaluation artifacts
+#       results/   performance/final-evaluation artifacts
 #   /root/lumen-runtime/              Pod-local (POSIX), rebuilt after Pod recreation
 #       venv/      python3 -m venv --system-site-packages (reuses the template's CUDA torch)
 #       models/    MedCPT + BGE weights (LUMEN_MODELS_DIR)
@@ -38,9 +38,8 @@ OLLAMA_MODELS=$RUNTIME_ROOT/ollama
 ENV_FILE=$RUNTIME_ROOT/lumen.env
 PGVER=16
 PG_CLUSTER="$PGVER main"
-# Two tiers: MAIN for complex synthesis, FAST for everything else.
-MODEL_MAIN=${LUMEN_LLM_MAIN:-qwen3:30b-a3b-instruct-2507-q4_K_M}
-MODEL_FAST=${LUMEN_LLM_FAST:-qwen3:4b-instruct-2507-q4_K_M}
+PGVECTOR_VERSION=0.8.6
+OLLAMA_PIN=0.31.1
 MIN_FREE_GB=45
 
 say() { echo; echo "==> $*"; }
@@ -60,19 +59,9 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader ||
 mkdir -p "$LOG_ROOT" "$RESULTS_ROOT"                       # persistent volume: no chmod/chown here
 mkdir -p "$MODELS_ROOT" "$OLLAMA_MODELS" "$RUNTIME_ROOT/cache" "$HF_HOME" "$RUNTIME_ROOT/logs"
 # Leftovers of the earlier layout that put runtime state on the Global Volume.
-for stale in uv venv models ollama postgres cache lumen.env api.pid; do
+for stale in uv venv models ollama postgres cache lumen.env api.pid ollama.pid; do
   if [ -e "$PERSIST_ROOT/$stale" ]; then rm -rf "${PERSIST_ROOT:?}/$stale"; echo "removed stale $PERSIST_ROOT/$stale"; fi
 done
-
-heavy_pending=0
-[ -f "$VENV_ROOT/.req_hash" ] || heavy_pending=1
-[ -f "$MODELS_ROOT/bge-reranker/model.safetensors" ] || heavy_pending=1
-OLLAMA_HOST=127.0.0.1:11434 ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$MODEL_MAIN" || heavy_pending=1
-free_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
-echo "free on /: ${free_gb}G (heavy installs pending: $heavy_pending)"
-if [ "$heavy_pending" = "1" ] && [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
-  die "only ${free_gb}G free on / (Pod container disk); need >= ${MIN_FREE_GB}G for packages, retrieval weights and both LLM tiers (${MODEL_MAIN} is ~19G, ${MODEL_FAST} ~3G). Recreate the Pod with a larger container disk."
-fi
 
 # --- 2. code (allowlisted; never data) ------------------------------------------------
 say "code"
@@ -99,6 +88,21 @@ for p in /workspace/pgdata /workspace/Lumen /root/Lumen; do
 done
 cat "$REPO_ROOT/REVISION" 2>/dev/null || true
 
+# Two tiers: MAIN for complex synthesis, FAST for everything else. The checked-in
+# model registry is the only fallback source; environment values still override.
+MODEL_MAIN=${LUMEN_LLM_MAIN:-$(python3 -c "import json; print(json.load(open('$REPO_ROOT/configs/models.json'))['ollama']['runtime_main'])")}
+MODEL_FAST=${LUMEN_LLM_FAST:-$(python3 -c "import json; print(json.load(open('$REPO_ROOT/configs/models.json'))['ollama']['runtime_fast'])")}
+
+heavy_pending=0
+[ -f "$VENV_ROOT/.req_hash" ] || heavy_pending=1
+[ -f "$MODELS_ROOT/bge-reranker/model.safetensors" ] || heavy_pending=1
+OLLAMA_HOST=127.0.0.1:11434 ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$MODEL_MAIN" || heavy_pending=1
+free_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+echo "free on /: ${free_gb}G (heavy installs pending: $heavy_pending)"
+if [ "$heavy_pending" = "1" ] && [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
+  die "only ${free_gb}G free on / (Pod container disk); need >= ${MIN_FREE_GB}G for packages, retrieval weights and both LLM tiers (${MODEL_MAIN} is ~19G, ${MODEL_FAST} ~3G). Recreate the Pod with a larger container disk."
+fi
+
 # --- 3. system packages (Pod-local) ---------------------------------------------------
 say "system packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -116,23 +120,29 @@ if [ ! -x "/usr/lib/postgresql/$PGVER/bin/postgres" ]; then
 fi
 
 say "pgvector"
-if [ ! -f "/usr/lib/postgresql/$PGVER/lib/vector.so" ]; then
+installed_pgvector=$(sed -n "s/^default_version = '\([^']*\)'/\1/p" \
+  "/usr/share/postgresql/$PGVER/extension/vector.control" 2>/dev/null || true)
+if [ "$installed_pgvector" != "$PGVECTOR_VERSION" ]; then
   rm -rf /tmp/pgvector
-  git clone -q --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector
+  git clone -q --branch "v$PGVECTOR_VERSION" https://github.com/pgvector/pgvector.git /tmp/pgvector
   make -C /tmp/pgvector -s && make -C /tmp/pgvector -s install
 fi
 
 say "ollama binary"
 # No systemd in the container: the installer's "systemd is not running" warning is
 # expected; start_cloud_demo.sh runs `ollama serve` itself.
-command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
+installed_ollama=$(ollama --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+if [ "$installed_ollama" != "$OLLAMA_PIN" ]; then
+  curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="$OLLAMA_PIN" sh
+fi
+ollama --version | grep -q "$OLLAMA_PIN" || die "Ollama $OLLAMA_PIN was not installed"
 
 # --- 4. python: the template's CUDA torch + a venv on the Pod-local disk -------------
 say "python"
 command -v python3 >/dev/null || die "python3 not found (use the RunPod PyTorch template)"
 python3 --version
-python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" \
-  || die "Python >= 3.11 required by requirements.txt (numpy/pandas pins); choose a newer PyTorch template"
+python3 -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)" \
+  || die "CPython 3.12 is the canonical runtime; choose a Python 3.12 PyTorch template"
 python3 -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO CUDA')"
 python3 -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)" \
   || die "the template's PyTorch cannot see the GPU"
@@ -302,7 +312,9 @@ PY
 )
 echo "$state"
 if [ "$state" != "complete" ]; then
-  (cd "$REPO_ROOT" && "$PY" scripts/load_synthetic_demo.py && "$PY" -m src.retrieval.index_notes)
+  (cd "$REPO_ROOT" && "$PY" scripts/load_synthetic_demo.py \
+    && "$PY" -m src.storage.checkpoints \
+    && "$PY" -m src.retrieval.index_notes)
 fi
 
 # --- 10. API + health checks ----------------------------------------------------------

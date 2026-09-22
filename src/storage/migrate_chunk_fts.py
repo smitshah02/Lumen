@@ -19,7 +19,6 @@ The column is GENERATED ALWAYS ... STORED, so:
 No re-embedding required. Safe to re-run (idempotent). Run once.
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
     python -m src.storage.migrate_chunk_fts
     python -m src.storage.migrate_chunk_fts --verify-only
@@ -27,29 +26,14 @@ Usage:
 
 from __future__ import annotations
 
-import time
 import logging
 import argparse
 
 from sqlalchemy import text as sa_text
 from src.storage import engine, check_connection
+from src.storage.schema import upgrade_schema
 
 logger = logging.getLogger(__name__)
-
-# to_tsvector('english', ...) — the TWO-arg form with a constant config is
-# IMMUTABLE, which is required for a GENERATED column. The one-arg form is only
-# STABLE and would be rejected, so the explicit 'english' is load-bearing.
-ADD_COLUMN_SQL = """
-ALTER TABLE note_chunks
-    ADD COLUMN IF NOT EXISTS text_search tsvector
-    GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED
-"""
-
-CREATE_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_chunks_fts
-    ON note_chunks USING GIN(text_search)
-"""
-
 
 def column_exists() -> bool:
     sql = """
@@ -102,26 +86,8 @@ def run_migration():
     print("=" * 70)
     print()
 
-    if column_exists():
-        print("note_chunks.text_search already exists — ensuring index, then verifying.")
-    else:
-        print("Adding generated tsvector column to note_chunks...")
-        print("  (backfills existing rows; may take a moment on a large table)")
-
-    # ADD COLUMN GENERATED is transactional in Postgres; commit per statement
-    # for clear, isolated error reporting.
-    t0 = time.time()
-    with engine.connect() as conn:
-        conn.execute(sa_text(ADD_COLUMN_SQL))
-        conn.commit()
-    print(f"  Column ready in {time.time() - t0:.1f}s")
-
-    t0 = time.time()
-    print("Creating GIN index on note_chunks.text_search...")
-    with engine.connect() as conn:
-        conn.execute(sa_text(CREATE_INDEX_SQL))
-        conn.commit()
-    print(f"  Index ready in {time.time() - t0:.1f}s")
+    print("Applying the central versioned schema upgrade...")
+    print(f"  Schema version: {upgrade_schema(check=False)}")
     print()
 
     print("Verifying:")

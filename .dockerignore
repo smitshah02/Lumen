@@ -5,6 +5,8 @@
 *
 
 !requirements.txt
+!configs/
+!configs/models.json
 !src/
 !scripts/load_synthetic_demo.py
 !scripts/fetch_models.py

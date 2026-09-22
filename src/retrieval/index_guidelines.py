@@ -11,7 +11,6 @@ Handles:
   - AHA/ACC Chronic Coronary Disease 2023
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
     python -m src.retrieval.index_guidelines
 
@@ -36,11 +35,12 @@ from pypdf import PdfReader
 from sqlalchemy import text as sa_text
 
 from src.storage import engine
+from src.config import GUIDELINES_DIR
 from src.retrieval.embeddings import MedCPTEmbedder
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GUIDELINE_DIR = Path.home() / "Lumen" / "data" / "guidelines"
+DEFAULT_GUIDELINE_DIR = GUIDELINES_DIR
 
 
 # ===========================================================================

@@ -6,9 +6,9 @@ synthesis, verification. Nothing here leaves the machine.
 
 Two model tiers, set in .env:
   LUMEN_LLM_FAST  — classification fallback, concept extraction, simple synthesis,
-                    batched verification   (default qwen3:4b-instruct-2507-q4_K_M)
+                    batched verification   (default in configs/models.json)
   LUMEN_LLM_MAIN  — longitudinal/complex synthesis only
-                    (default qwen3:30b-a3b-instruct-2507-q4_K_M)
+                    (default in configs/models.json)
   LUMEN_LLM_HOST  — Ollama base URL (default http://localhost:11434)
 
 Application code picks a ROLE, not a model: chat_for("synthesis_complex", msgs).
@@ -40,14 +40,16 @@ from typing import Callable, Optional
 import requests
 import re
 
+from src.config import (FAST_MODEL_DEFAULT, LLM_HOST_DEFAULT,
+                        MAIN_MODEL_DEFAULT, validate_model_endpoint)
 from src.obs import tracing
 from src.obs.logging import log_event, add_timing, bump
 
 logger = logging.getLogger(__name__)
 
-HOST = os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434")
-MAIN_MODEL = os.environ.get("LUMEN_LLM_MAIN", "qwen3:30b-a3b-instruct-2507-q4_K_M")
-FAST_MODEL = os.environ.get("LUMEN_LLM_FAST", "qwen3:4b-instruct-2507-q4_K_M")
+HOST = validate_model_endpoint(os.environ.get("LUMEN_LLM_HOST", LLM_HOST_DEFAULT))
+MAIN_MODEL = os.environ.get("LUMEN_LLM_MAIN", MAIN_MODEL_DEFAULT)
+FAST_MODEL = os.environ.get("LUMEN_LLM_FAST", FAST_MODEL_DEFAULT)
 
 # Context windows. Ollama defaults are far below what clinical work needs:
 # a judged chunk runs ~1k tokens, a synthesis prompt with 8 chunks runs ~6k+.

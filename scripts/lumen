@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Thin Lumen lifecycle facade. It delegates; no application logic lives here.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+PY=${LUMEN_PYTHON:-.venv/bin/python}
+[ -x "$PY" ] || PY=${PYTHON:-python3}
+
+usage() {
+  cat <<'EOF'
+usage: scripts/lumen <demo|research> <command> [args]
+
+demo commands:
+  setup       initialize the synthetic Docker stack (explicit downloads/writes)
+  start       start existing demo services; never ingests
+  stop        stop demo services; preserve volumes
+  doctor      read-only readiness report
+  test        safety and retrieval smoke tests against the live demo
+  eval        run canonical final evaluation (extra args passed through)
+  performance collect deployment, smoke, latency, and GPU evidence
+  tracing     run one synthetic tracing smoke request
+
+research commands:
+  doctor      read-only readiness report
+  db          start the explicitly selected external Postgres volume
+  schema      apply additive schema upgrades
+  ingest      ingest MIMIC only with --confirm-research-ingest
+  index       index notes (extra args passed through)
+  start       start the local API; never ingests
+  test        run offline regression tests
+  eval        run retrieval pooling (extra args passed through)
+EOF
+}
+
+[ "$#" -ge 2 ] || { usage; exit 2; }
+plane=$1 command=$2
+shift 2
+
+if [ "$plane" = "demo" ]; then
+  export LUMEN_LLM_MAIN="${LUMEN_LLM_MAIN:-$($PY -c 'from src.config import MAIN_MODEL_DEFAULT; print(MAIN_MODEL_DEFAULT)')}"
+  export LUMEN_LLM_FAST="${LUMEN_LLM_FAST:-$($PY -c 'from src.config import FAST_MODEL_DEFAULT; print(FAST_MODEL_DEFAULT)')}"
+fi
+
+case "$plane:$command" in
+  demo:setup)  LUMEN_DATA_PLANE=demo scripts/init_demo_stack.sh "$@" ;;
+  demo:start)  LUMEN_DATA_PLANE=demo docker compose -f docker-compose.demo.yml up -d "$@" ;;
+  demo:stop)   docker compose -f docker-compose.demo.yml down "$@" ;;
+  demo:doctor) LUMEN_DATA_PLANE=demo "$PY" scripts/project_doctor.py "$@" ;;
+  demo:test)
+    docker compose -f docker-compose.demo.yml exec -T api python scripts/demo_smoke_test.py safety "$@"
+    docker compose -f docker-compose.demo.yml exec -T api python scripts/demo_smoke_test.py retrieval "$@"
+    ;;
+  demo:eval)   LUMEN_DATA_PLANE=demo "$PY" scripts/final_eval.py run "$@" ;;
+  demo:performance) LUMEN_DATA_PLANE=demo "$PY" scripts/performance_eval.py all "$@" ;;
+  demo:tracing)     LUMEN_DATA_PLANE=demo "$PY" scripts/performance_eval.py tracing "$@" ;;
+
+  research:doctor) LUMEN_DATA_PLANE=research "$PY" scripts/project_doctor.py "$@" ;;
+  research:db)     LUMEN_DATA_PLANE=research docker compose up -d --wait db "$@" ;;
+  research:schema)
+    LUMEN_DATA_PLANE=research "$PY" -m src.storage.schema --upgrade "$@"
+    LUMEN_DATA_PLANE=research "$PY" -m src.storage.checkpoints
+    ;;
+  research:ingest)
+    [ "${1:-}" = "--confirm-research-ingest" ] || {
+      echo "refusing: research ingestion requires --confirm-research-ingest" >&2
+      exit 2
+    }
+    shift
+    LUMEN_DATA_PLANE=research "$PY" -m src.storage.ingest "$@"
+    ;;
+  research:index) LUMEN_DATA_PLANE=research "$PY" -m src.retrieval.index_notes "$@" ;;
+  research:start)
+    exec env LUMEN_DATA_PLANE=research "$PY" -m uvicorn src.api.app:app \
+      --host 127.0.0.1 --port "${LUMEN_API_PORT:-8000}" --workers 1 "$@"
+    ;;
+  research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;
+  research:eval) LUMEN_DATA_PLANE=research "$PY" -m src.evals.retrieve_pool "$@" ;;
+  *) usage; exit 2 ;;
+esac

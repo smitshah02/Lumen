@@ -10,7 +10,6 @@ Handles:
 Uses 5,000-patient subset by default for fast iteration.
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
     python -m src.storage.ingest
 
@@ -25,6 +24,7 @@ import csv
 import gzip
 import json
 import time
+import uuid
 import logging
 import argparse
 from pathlib import Path
@@ -33,16 +33,13 @@ from typing import Optional
 
 from src.storage import engine, execute_sql
 from src.storage.schema import create_schema
+from src.config import DATA_DIR, MIMIC_IV_DIR, MIMIC_NOTE_DIR
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration — matches your directory structure
 # ---------------------------------------------------------------------------
-DATA_DIR = Path.home() / "Lumen" / "data"
-MIMIC_IV_DIR = DATA_DIR / "mimiciv"
-MIMIC_NOTE_DIR = DATA_DIR / "mimic-iv-note"
-
 HOSP_DIR = MIMIC_IV_DIR / "hosp"
 ICU_DIR = MIMIC_IV_DIR / "icu"
 NOTE_DIR = MIMIC_NOTE_DIR / "note"
@@ -101,6 +98,23 @@ def _log_ingestion(table: str, source: str, rows: int, status: str, error: str =
         )
     except Exception:
         pass  # Don't fail the pipeline over logging
+
+
+def _start_ingestion_run(run_id: str, configuration: dict) -> None:
+    execute_sql(
+        """INSERT INTO ingestion_runs (run_id, status, configuration)
+           VALUES (:run_id, 'running', CAST(:configuration AS jsonb))""",
+        {"run_id": run_id, "configuration": json.dumps(configuration, sort_keys=True)},
+    )
+
+
+def _finish_ingestion_run(run_id: str, status: str, error_type: str | None = None) -> None:
+    execute_sql(
+        """UPDATE ingestion_runs
+           SET status = :status, completed_at = NOW(), error_message = :error
+           WHERE run_id = :run_id""",
+        {"run_id": run_id, "status": status, "error": error_type},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +713,7 @@ def load_clinical_notes(subject_ids: set[int], run_deid: bool = True):
 # Main ingestion orchestrator
 # ---------------------------------------------------------------------------
 
-def run_ingestion(
+def _run_ingestion_steps(
     patient_limit: int = 5000,
     skip_labs: bool = False,
     skip_notes: bool = False,
@@ -727,11 +741,10 @@ def run_ingestion(
             f"Expected: data/mimic-iv-note/note/"
         )
 
-    # Step 1: Create schema
-    print("Step 1: Creating database schema...")
-    create_schema()
+    # Step 1: Schema was created by the run-state wrapper before it recorded
+    # this run. Rechecking is intentionally not interleaved with data writes.
+    print("Step 1: Database schema ready.")
     print()
-
     # Step 2: Select cohort by scanning raw CSVs
     print(
         f"Step 2: Selecting cohort "
@@ -801,6 +814,39 @@ def run_ingestion(
         status = "✅" if count > 0 else "⬜"
         print(f"  {status} {table:<20} {count:>10,} rows")
     print()
+
+
+def run_ingestion(
+    patient_limit: int = 5000,
+    skip_labs: bool = False,
+    skip_notes: bool = False,
+    skip_deid: bool = False,
+    min_admissions: int = 3,
+    min_age: int = 18,
+    filter_notes: bool = True,
+    filter_dx: bool = True,
+):
+    """Run ingestion with an explicit durable running/completed/failed record."""
+    configuration = {
+        "patient_limit": patient_limit,
+        "skip_labs": skip_labs,
+        "skip_notes": skip_notes,
+        "skip_deid": skip_deid,
+        "min_admissions": min_admissions,
+        "min_age": min_age,
+        "filter_notes": filter_notes,
+        "filter_dx": filter_dx,
+    }
+    create_schema()
+    run_id = str(uuid.uuid4())
+    _start_ingestion_run(run_id, configuration)
+    try:
+        result = _run_ingestion_steps(**configuration)
+    except BaseException as exc:
+        _finish_ingestion_run(run_id, "failed", type(exc).__name__)
+        raise
+    _finish_ingestion_run(run_id, "completed")
+    return result
 
 
 if __name__ == "__main__":

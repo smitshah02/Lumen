@@ -1,0 +1,32 @@
+name: Offline regression checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      LUMEN_DATA_PLANE: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dependency-free repository checks
+        run: python scripts/offline_checks.py
+      - name: Generated demo corpus integrity
+        run: |
+          python -m src.demo_data.generate --check
+          python -m src.demo_data.generate --validate
+      - name: Shell syntax
+        run: |
+          for file in scripts/*.sh scripts/lumen; do
+            bash -n "$file"
+          done

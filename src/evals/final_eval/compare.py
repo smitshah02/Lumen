@@ -7,7 +7,7 @@ comparable, and REFUSES the rest by name.
 The asymmetry that makes this necessary
 ---------------------------------------
 There is no previous answer-level benchmark. The preserved cloud artifacts
-(scripts/cloud_eval.py -> performance.json) measure latency, call budget,
+(scripts/performance_eval.py -> performance.json) measure latency, call budget,
 escalation behaviour and HTTP success. They contain no fact matching, no
 citation validity, no temporal scoring and no judge dimension — those metrics
 did not exist when they were produced.

@@ -3,17 +3,17 @@
 #   docker compose up -d
 #   python -m src.storage.schema     # creates extensions, tables, HNSW + GIN indexes
 #
-# Host port is 5434, matching DATABASE_URL in .env and the fallback in
-# src/storage/__init__.py:21. Change both together if you move it.
+# Host port is 5434. Copy .env.example to .env, keep DATABASE_URL and
+# LUMEN_PG_PASSWORD aligned, and explicitly select the persistent volume.
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     container_name: lumen-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: lumen
+      POSTGRES_PASSWORD: ${LUMEN_PG_PASSWORD:?Set LUMEN_PG_PASSWORD to match DATABASE_URL}
       POSTGRES_DB: lumen
       # Deterministic FTS behaviour — BM25 ranks on to_tsvector('english', ...)
       # in a GENERATED column, so the server's collation must not drift.
@@ -47,9 +47,8 @@ services:
 
 volumes:
   # External on purpose: `docker compose down -v` can never delete it.
-  # Default = the existing local volume (created before this file). On a new
-  # machine:  docker volume create lumen_pgdata
-  #            LUMEN_PG_VOLUME=lumen_pgdata docker compose up -d
+  # No opaque default: select an existing volume deliberately, or create the
+  # documented clean-install volume first. See docs/database-lifecycle.md.
   lumen_pgdata:
     external: true
-    name: ${LUMEN_PG_VOLUME:-a97106af77bd529ca2bae536543c28826d5830ac45406d2f2e84a8fbefb62e9c}
+    name: ${LUMEN_PG_VOLUME:?Set LUMEN_PG_VOLUME to an existing external volume}

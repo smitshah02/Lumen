@@ -18,6 +18,8 @@ RUN_LOGS=$RUNTIME_ROOT/logs
 ENV_FILE=$RUNTIME_ROOT/lumen.env
 PGBIN=/usr/lib/postgresql/16/bin
 API=http://127.0.0.1:8000
+API_PID=$RUNTIME_ROOT/api.pid
+OLLAMA_PID=$RUNTIME_ROOT/ollama.pid
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 [ -f "$ENV_FILE" ] || die "no $ENV_FILE — run scripts/bootstrap_pod.sh first"
@@ -30,6 +32,37 @@ BIND=${LUMEN_API_BIND:-127.0.0.1}
   || die "refusing to bind the unauthenticated API to $BIND (set LUMEN_API_ALLOW_NONLOCAL=1 to override)"
 mkdir -p "$RUN_LOGS"
 
+pid_matches() {
+  local file=$1 expected=$2 pid command
+  [ -f "$file" ] || return 1
+  read -r pid < "$file" || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  command=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+  [[ "$command" == *"$expected"* ]]
+}
+
+stop_managed() {
+  local name=$1 file=$2 expected=$3 pid
+  if ! pid_matches "$file" "$expected"; then
+    echo "$name: no owned process (stale/missing pid file)"
+    rm -f "$file"
+    return 0
+  fi
+  read -r pid < "$file"
+  kill -TERM "$pid"
+  for _ in $(seq 1 40); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$name: pid $pid did not stop after TERM" >&2
+    return 1
+  fi
+  rm -f "$file"
+  echo "$name: stopped pid $pid"
+}
+
 start_postgres() {
   if "$PGBIN/pg_isready" -q -h 127.0.0.1 -p 5432; then echo "postgres: running"; return; fi
   pg_ctlcluster 16 main start
@@ -39,14 +72,19 @@ start_postgres() {
 start_ollama() {
   if curl -sf -m 2 http://127.0.0.1:11434/api/version >/dev/null; then echo "ollama: running"; return; fi
   OLLAMA_MODELS=$OLLAMA_MODELS OLLAMA_HOST=127.0.0.1:11434 nohup ollama serve >> "$RUN_LOGS/ollama.log" 2>&1 &
+  printf '%s\n' "$!" > "$OLLAMA_PID"
   for _ in $(seq 1 30); do curl -sf -m 2 http://127.0.0.1:11434/api/version >/dev/null && { echo "ollama: started"; return; }; sleep 1; done
   die "ollama did not start (see $RUN_LOGS/ollama.log)"
 }
 
 start_api() {
   if ! curl -sf -m 2 "$API/health" >/dev/null; then
-    (cd "$REPO_ROOT" && nohup "$VENV_ROOT/bin/uvicorn" src.api.app:app --host "$BIND" --port 8000 --workers 1 \
-        >> "$RUN_LOGS/api.log" 2>&1 & echo $! > "$RUNTIME_ROOT/api.pid")
+    (
+      cd "$REPO_ROOT"
+      nohup "$VENV_ROOT/bin/uvicorn" src.api.app:app --host "$BIND" --port 8000 --workers 1 \
+        >> "$RUN_LOGS/api.log" 2>&1 &
+      printf '%s\n' "$!" > "$API_PID"
+    )
     for _ in $(seq 1 60); do curl -sf -m 2 "$API/health" >/dev/null && break; sleep 1; done
   fi
   echo "health: $(curl -s -m 5 -w ' HTTP %{http_code}' "$API/health")"
@@ -59,8 +97,8 @@ start_api() {
 }
 
 stop_all() {
-  pkill -f "uvicorn src.api.app:app" && echo "api: stopped" || echo "api: not running"
-  pkill -f "ollama serve" && echo "ollama: stopped" || echo "ollama: not running"
+  stop_managed api "$API_PID" "uvicorn src.api.app:app"
+  stop_managed ollama "$OLLAMA_PID" "ollama serve"
   if "$PGBIN/pg_isready" -q -h 127.0.0.1 -p 5432; then
     pg_ctlcluster 16 main stop -m fast && echo "postgres: stopped"
   else echo "postgres: not running"; fi
@@ -68,6 +106,8 @@ stop_all() {
 }
 
 status() {
+  pid_matches "$API_PID" "uvicorn src.api.app:app" && echo "api pid: $(cat "$API_PID") (owned)" || echo "api pid: not owned/running"
+  pid_matches "$OLLAMA_PID" "ollama serve" && echo "ollama pid: $(cat "$OLLAMA_PID") (owned)" || echo "ollama pid: not owned/running"
   "$PGBIN/pg_isready" -h 127.0.0.1 -p 5432 || true
   curl -s -m 2 http://127.0.0.1:11434/api/version && echo || echo "ollama: down"
   OLLAMA_HOST=127.0.0.1:11434 ollama ps 2>/dev/null || true

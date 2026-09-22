@@ -24,11 +24,14 @@ import time
 import random
 import logging
 
+from src.config import (JUDGE_MODEL_DEFAULT, LLM_HOST_DEFAULT,
+                        validate_model_endpoint)
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = os.environ.get("LUMEN_JUDGE_MODEL", "qwen2.5:14b")
+DEFAULT_JUDGE_MODEL = os.environ.get("LUMEN_JUDGE_MODEL", JUDGE_MODEL_DEFAULT)
 DEFAULT_JUDGE_HOST = os.environ.get("LUMEN_JUDGE_HOST",
-                                    os.environ.get("LUMEN_LLM_HOST", "http://localhost:11434"))
+                                    os.environ.get("LUMEN_LLM_HOST", LLM_HOST_DEFAULT))
 # aj2's verdict carries one object per required criterion before the six
 # dimensions, so both budgets are larger than aj1 needed. A verdict truncated
 # mid-JSON parses as a failure and costs the case a judgement, which is a worse
@@ -83,7 +86,8 @@ class OllamaJudgeBackend:
                  num_ctx: int = JUDGE_NUM_CTX, max_tokens: int = JUDGE_MAX_TOKENS,
                  retries: int = 3, timeout: int = 300, runtime: dict | None = None):
         assert_independent(model, runtime)
-        self.model, self.host = model, host.rstrip("/")
+        self.model = model
+        self.host = validate_model_endpoint(host)
         self.num_ctx, self.max_tokens = num_ctx, max_tokens
         self.retries, self.timeout = retries, timeout
 

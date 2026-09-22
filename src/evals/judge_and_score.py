@@ -10,7 +10,6 @@ pure-Python judge + metrics — so while it runs, Qwen is the only large thing i
 memory. Run it as a separate process, AFTER retrieve_pool.py has exited.
 
 Usage:
-    cd ~/Lumen
     source .venv/bin/activate
     ollama serve            # (in another terminal, if not already running)
 

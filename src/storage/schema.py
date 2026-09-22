@@ -8,19 +8,81 @@ Creates all tables for:
   - Guideline chunks with embeddings
 
 Usage:
-    cd ~/Lumen
-    source .venv/bin/activate
-    python -m src.storage.schema
+    python -m src.storage.schema            # create/upgrade a clean database
+    python -m src.storage.schema --upgrade  # upgrade an existing database
+    python -m src.storage.schema --version  # report the recorded version
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
-from src.storage import execute_sql, check_connection
+
+from sqlalchemy import text as sa_text
+
+from src.storage import engine, execute_sql, check_connection
+from src.config import PGVECTOR_VERSION
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_SQL = """
+SCHEMA_VERSION = 4
+
+D_LABITEMS_SQL = """
+CREATE TABLE IF NOT EXISTS d_labitems (
+    itemid   INTEGER PRIMARY KEY,
+    label    TEXT,
+    fluid    TEXT,
+    category TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dlabitems_label ON d_labitems (lower(label));
+"""
+
+SCHEMA_VERSION_SQL = """
+CREATE TABLE IF NOT EXISTS lumen_schema_version (
+    singleton       SMALLINT PRIMARY KEY DEFAULT 1 CHECK (singleton = 1),
+    version         INTEGER NOT NULL CHECK (version >= 0),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+RELIABILITY_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_note_position_unique
+    ON note_chunks(note_id, chunk_index);
+
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+    run_id          VARCHAR(36) PRIMARY KEY,
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    configuration   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    error_message   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS note_index_runs (
+    run_id          VARCHAR(36) PRIMARY KEY,
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    configuration   JSONB NOT NULL,
+    config_hash     VARCHAR(64) NOT NULL,
+    notes_expected  INTEGER NOT NULL DEFAULT 0,
+    notes_completed INTEGER NOT NULL DEFAULT 0,
+    chunks_created  INTEGER NOT NULL DEFAULT 0,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    error_message   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_note_index_runs_status ON note_index_runs(status, completed_at);
+
+CREATE TABLE IF NOT EXISTS note_index_state (
+    note_id         INTEGER PRIMARY KEY REFERENCES clinical_notes(note_id) ON DELETE CASCADE,
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    config_hash     VARCHAR(64) NOT NULL,
+    chunk_count     INTEGER NOT NULL DEFAULT 0,
+    completed_at    TIMESTAMPTZ,
+    error_message   TEXT
+);
+"""
+
+SCHEMA_SQL = f"""
 -- ============================================================
 -- Enable extensions
 -- ============================================================
@@ -93,6 +155,8 @@ CREATE INDEX IF NOT EXISTS idx_lab_subject ON labevents(subject_id);
 CREATE INDEX IF NOT EXISTS idx_lab_hadm ON labevents(hadm_id);
 CREATE INDEX IF NOT EXISTS idx_lab_itemid ON labevents(itemid);
 CREATE INDEX IF NOT EXISTS idx_lab_charttime ON labevents(charttime);
+
+{D_LABITEMS_SQL}
 
 CREATE TABLE IF NOT EXISTS prescriptions (
     subject_id      INTEGER NOT NULL,
@@ -210,11 +274,74 @@ CREATE TABLE IF NOT EXISTS ingestion_log (
     status          VARCHAR(20) DEFAULT 'running',  -- running, completed, failed
     error_message   TEXT
 );
+
+{RELIABILITY_SQL}
+
+{SCHEMA_VERSION_SQL}
 """
 
 
+# Existing unversioned databases safely start at 0: every statement is
+# additive and idempotent. Fresh databases contain the same objects through
+# SCHEMA_SQL, then record the version via this exact path.
+MIGRATIONS: dict[int, tuple[str, ...]] = {
+    1: (
+        """ALTER TABLE note_chunks
+               ADD COLUMN IF NOT EXISTS text_search tsvector
+               GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED""",
+        "CREATE INDEX IF NOT EXISTS idx_chunks_fts ON note_chunks USING GIN(text_search)",
+    ),
+    2: tuple(s.strip() for s in D_LABITEMS_SQL.split(";") if s.strip()),
+    3: (f"ALTER EXTENSION vector UPDATE TO '{PGVECTOR_VERSION}'",),
+    4: tuple(s.strip() for s in RELIABILITY_SQL.split(";") if s.strip()),
+}
+
+
+def pending_migrations(current: int, target: int = SCHEMA_VERSION) -> list[int]:
+    """Return an ordered, validated migration plan without touching a DB."""
+    if current < 0 or target > SCHEMA_VERSION or current > target:
+        raise ValueError(f"invalid schema version range {current}->{target}")
+    missing = [version for version in range(current + 1, target + 1)]
+    unknown = [version for version in missing if version not in MIGRATIONS]
+    if unknown:
+        raise RuntimeError(f"missing schema migrations: {unknown}")
+    return missing
+
+
+def get_schema_version() -> int:
+    """Recorded schema version, or 0 for a pre-versioning database."""
+    with engine.connect() as conn:
+        exists = conn.execute(sa_text("SELECT to_regclass('lumen_schema_version')")).scalar()
+        if not exists:
+            return 0
+        return int(conn.execute(sa_text(
+            "SELECT COALESCE(MAX(version), 0) FROM lumen_schema_version"
+        )).scalar() or 0)
+
+
+def upgrade_schema(target: int = SCHEMA_VERSION, *, check: bool = True) -> int:
+    """Apply additive migrations transactionally, returning the new version."""
+    if check and not check_connection():
+        raise ConnectionError("Cannot connect to database. Is Docker running?")
+    with engine.begin() as conn:
+        conn.execute(sa_text(SCHEMA_VERSION_SQL))
+    current = get_schema_version()
+    for version in pending_migrations(current, target):
+        with engine.begin() as conn:
+            for statement in MIGRATIONS[version]:
+                conn.execute(sa_text(statement))
+            conn.execute(sa_text("""
+                INSERT INTO lumen_schema_version (singleton, version, updated_at)
+                VALUES (1, :version, NOW())
+                ON CONFLICT (singleton) DO UPDATE
+                SET version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
+            """), {"version": version})
+        logger.info("Applied schema migration %s", version)
+    return get_schema_version()
+
+
 def create_schema():
-    """Create all database tables."""
+    """Create all database tables and record the current schema version."""
     if not check_connection():
         raise ConnectionError("Cannot connect to database. Is Docker running?")
 
@@ -232,19 +359,25 @@ def create_schema():
             logger.error(f"Error in statement {i + 1}: {e}")
             raise
 
-    logger.info("Schema created successfully — all tables ready.")
+    version = upgrade_schema(check=False)
+    logger.info("Schema created successfully — all tables ready at version %s.", version)
 
 
 def drop_all_tables():
     """Drop all project tables (for fresh start). Use with caution."""
     tables = [
         "ingestion_log",
+        "note_index_state",
+        "note_index_runs",
+        "ingestion_runs",
+        "lumen_schema_version",
         "guideline_chunks",
         "note_chunks",
         "clinical_notes",
         "procedures_icd",
         "prescriptions",
         "labevents",
+        "d_labitems",
         "diagnoses_icd",
         "admissions",
         "patients",
@@ -283,7 +416,16 @@ if __name__ == "__main__":
         format="%(asctime)s | %(levelname)s | %(message)s",
         datefmt="%H:%M:%S",
     )
-    create_schema()
-    print("\nTable row counts:")
-    for table, count in get_table_counts().items():
-        print(f"  {table:<20} {count}")
+    parser = argparse.ArgumentParser(description="Create or upgrade the Lumen database schema")
+    parser.add_argument("--upgrade", action="store_true", help="Apply pending migrations only")
+    parser.add_argument("--version", action="store_true", help="Print the recorded schema version")
+    args = parser.parse_args()
+    if args.version:
+        print(get_schema_version())
+    elif args.upgrade:
+        print(f"Schema version: {upgrade_schema()}")
+    else:
+        create_schema()
+        print("\nTable row counts:")
+        for table, count in get_table_counts().items():
+            print(f"  {table:<20} {count}")

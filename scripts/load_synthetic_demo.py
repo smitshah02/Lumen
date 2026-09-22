@@ -59,8 +59,7 @@ def main() -> int:
 
     from sqlalchemy import create_engine, text
     from src import storage
-    from src.storage.schema import create_schema
-    from src.storage.load_d_labitems import DDL as D_LABITEMS_DDL
+    from src.storage.schema import D_LABITEMS_SQL, create_schema
 
     url = storage.engine.url
     db = url.database
@@ -80,7 +79,7 @@ def main() -> int:
     # 2. normal Lumen schema (extensions, tables, HNSW + GIN indexes)
     create_schema()
     with storage.engine.begin() as c:
-        for stmt in filter(None, (s.strip() for s in D_LABITEMS_DDL.split(";"))):
+        for stmt in filter(None, (s.strip() for s in D_LABITEMS_SQL.split(";"))):
             c.execute(text(stmt))
 
     lo, hi = SYN_SUBJECTS

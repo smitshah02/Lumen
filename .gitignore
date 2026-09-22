@@ -24,6 +24,8 @@ src/reranker/reranker_training_data/
 # just because it was not listed here by name.
 *.xlsx
 *.csv
+# Historical non-patient research dictionaries deliberately preserved in Git.
+!archive/**/*.csv
 disease_flow/
 pooled*.json
 # tune_retrieval.py phase-1 output carries chunk_text (raw note text)
@@ -45,8 +47,13 @@ mimic_profile_report.json
 .overlap_cache/
 .deepeval/
 
-# Personal / reference material (not code)
-docs/
+# Personal / reference material (not code). Keep maintained Markdown runbooks;
+# PDFs, Word documents and spreadsheets under docs remain ignored.
+docs/*
+!docs/*.md
+!docs/runbooks/
+docs/runbooks/*
+!docs/runbooks/*.md
 Lumen.pdf
 Smit_Shah_Resume.docx
 Each phase outputs.pages
