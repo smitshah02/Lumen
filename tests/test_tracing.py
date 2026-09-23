@@ -83,6 +83,12 @@ def test_demo_plane_remote_https_allowed_and_status_has_no_secrets(configure):
     assert SECRET not in json.dumps(st) and "pk-lf-test" not in json.dumps(st)
 
 
+def test_synthea_plane_remote_https_allowed(configure):
+    configure(plane="synthea", url="https://cloud.langfuse.com")
+    assert tracing.client() is not None
+    assert tracing.status()["policy"] == "remote endpoint (synthea plane)"
+
+
 def test_demo_plane_refuses_plain_http_remote(configure):
     configure(plane="demo", url="http://traces.example.com")
     assert tracing.client() is None and tracing.status()["state"] == "refused"
