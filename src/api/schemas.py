@@ -37,6 +37,9 @@ class RetrievedChunk(BaseModel):
     rank: int
     chunk_id: int
     note_id: int
+    subject_id: int
+    hadm_id: Optional[int]
+    chunk_index: int
     note_type: Optional[str]
     charttime: Optional[str]
     score: float
@@ -65,6 +68,10 @@ class Source(BaseModel):
     label: str
     chunk_id: int
     source_type: str
+    note_id: Optional[int] = None
+    subject_id: Optional[int] = None
+    hadm_id: Optional[int] = None
+    chunk_index: Optional[int] = None
     note_type: Optional[str]
     charttime: Optional[str]
 

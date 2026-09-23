@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "project": "synthetichealth/synthea",
+    "version": "v4.0.0",
+    "release_url": "https://github.com/synthetichealth/synthea/releases/tag/v4.0.0",
+    "artifact": "synthea-with-dependencies.jar",
+    "artifact_url": "https://github.com/synthetichealth/synthea/releases/download/v4.0.0/synthea-with-dependencies.jar",
+    "artifact_sha256": "ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361e6ecc1"
+  },
+  "java": {
+    "minimum_major": 17,
+    "portable": {
+      "darwin-arm64": {
+        "vendor": "Eclipse Temurin",
+        "version": "17.0.20.1+1",
+        "archive_url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.20.1_1.tar.gz",
+        "archive_sha256": "196d13ba5f10414bef7f6a05a9b3f00edacb18ebacef2b99485db9e2ee18f0e8",
+        "java_relative_path": "jdk-17.0.20.1+1/Contents/Home/bin/java"
+      }
+    }
+  },
+  "exporter": {
+    "csv": true,
+    "csv_append_mode": false,
+    "csv_folder_per_run": false,
+    "years_of_history": 0,
+    "fhir": false,
+    "fhir_transaction_bundle": false,
+    "fhir_stu3": false,
+    "fhir_dstu2": false,
+    "hospital_fhir": false,
+    "practitioner_fhir": false,
+    "ccda": false,
+    "json": false,
+    "text": false,
+    "clinical_note": false,
+    "metadata": false,
+    "custom_exporters": false
+  },
+  "profiles": {
+    "dev": {
+      "enabled": true,
+      "population": 25,
+      "population_seed": 26092201,
+      "clinician_seed": 26092202,
+      "reference_date": "20250101",
+      "end_date": "20250101",
+      "state": "Massachusetts",
+      "city": null,
+      "thread_pool_size": 1,
+      "overflow_population": false
+    },
+    "eval": {
+      "enabled": true,
+      "population": 1000,
+      "population_seed": 26092301,
+      "clinician_seed": 26092302,
+      "reference_date": "20250101",
+      "end_date": "20250101",
+      "state": "Massachusetts",
+      "city": null,
+      "thread_pool_size": 1,
+      "overflow_population": false
+    }
+  }
+}

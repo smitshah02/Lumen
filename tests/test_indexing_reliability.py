@@ -1,9 +1,12 @@
 """Ingestion/index run-state and provenance tests require no database/models."""
 
+import re
+
 import pytest
 
 from src.retrieval import index_notes
 from src.retrieval import index_provenance as provenance
+from src.retrieval.chunker import ClinicalNoteChunker
 from src.storage import ingest
 
 
@@ -14,6 +17,28 @@ def test_index_provenance_is_stable_and_tracks_output_configuration():
     assert provenance.configuration_hash() == provenance.configuration_hash(config)
     changed = {**config, "chunker": {**config["chunker"], "max_tokens": 385}}
     assert provenance.configuration_hash(changed) != provenance.configuration_hash(config)
+
+
+def test_canonical_chunker_completely_handles_106467_character_note():
+    facts = "\n".join(
+        f"- Date=2025-01-01 | Code=SENTINEL{i:04d} | Description=Source fact {i}"
+        for i in range(700)
+    )
+    prefix = f"Encounter Summary\n\nEncounter:\nType: ambulatory\n\nObservations:\n{facts}\n"
+    padding = ("deterministic-padding " * 10_000)[:106_467 - len(prefix)]
+    text = prefix + padding
+    assert len(text) == 106_467
+
+    chunker = ClinicalNoteChunker(**provenance.CHUNKER_CONFIG)
+    first = chunker.chunk_text(text, note_type="encounter_summary")
+    second = chunker.chunk_text(text, note_type="encounter_summary")
+    assert first == second
+    assert [chunk.chunk_index for chunk in first] == list(range(len(first)))
+    assert max(chunk.token_count for chunk in first) <= provenance.CHUNKER_CONFIG["max_tokens"]
+    output = " ".join(chunk.text for chunk in first)
+    assert set(re.findall(r"SENTINEL\d{4}", text)) <= set(
+        re.findall(r"SENTINEL\d{4}", output)
+    )
 
 
 def test_index_run_records_completion(monkeypatch):

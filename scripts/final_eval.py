@@ -48,15 +48,21 @@ def say(*a, **k):
     print(*a, **k, flush=True)
 
 
-def _require_demo_plane() -> None:
-    """The evaluation runs against the synthetic demo plane only. Same refusal
-    scripts/performance_eval.py makes, for the same reason."""
-    if os.environ.get("LUMEN_DATA_PLANE") != "demo":
-        raise SystemExit("refusing: LUMEN_DATA_PLANE must be demo")
+def _require_provider_plane(provider) -> None:
+    """Fail closed when gold and patient corpus belong to different planes."""
+    actual = os.environ.get("LUMEN_DATA_PLANE")
+    if actual != provider.data_plane:
+        raise SystemExit(
+            f"refusing: provider {provider.name!r} requires "
+            f"LUMEN_DATA_PLANE={provider.data_plane}, got {actual!r}"
+        )
 
 
 def _provider(args):
-    return providers.get_provider(getattr(args, "case_provider", "demo"))
+    return providers.get_provider(
+        getattr(args, "case_provider", "demo"),
+        getattr(args, "synthea_profile", None),
+    )
 
 
 def _selected(args) -> list:
@@ -67,7 +73,8 @@ def _selected(args) -> list:
 def _provider_for_run(run: man.RunDir):
     manifest = run.read_json("manifest")
     name = (manifest.get("eval_set") or {}).get("provider", "demo")
-    return providers.get_provider(name)
+    profile = (manifest.get("eval_set") or {}).get("provider_profile")
+    return providers.get_provider(name, profile)
 
 
 def _judge_backend(args, required: bool):
@@ -102,7 +109,7 @@ def _judge_config(backend) -> dict:
 
 # ---------------------------------------------------------------------------
 def cmd_run(args) -> int:
-    _require_demo_plane()
+    _require_provider_plane(_provider(args))
     from src.evals.final_eval import collect as collect_mod
     from src.evals.final_eval import deterministic as det_mod
 
@@ -156,7 +163,7 @@ def cmd_run(args) -> int:
 
 
 def cmd_collect(args) -> int:
-    _require_demo_plane()
+    _require_provider_plane(_provider(args))
     from src.evals.final_eval import collect as collect_mod
     run = man.RunDir(args.run_id, args.results_root)
     if not run.file("manifest").exists():
@@ -327,7 +334,9 @@ def cmd_api_crosscheck(args) -> int:
 def cmd_doctor(args) -> int:
     """RunPod preflight. Diagnostic only — changes nothing, starts nothing."""
     from src.evals.final_eval import doctor as doc
-    rep = doc.run_checks(profile=args.profile, judge_model=args.judge_model,
+    provider = _provider(args)
+    rep = doc.run_checks(profile=args.profile, case_provider=provider,
+                         judge_model=args.judge_model,
                          judge_host=args.judge_host, results_root=args.results_root,
                          run_id=args.run_id)
     if args.json:
@@ -335,6 +344,26 @@ def cmd_doctor(args) -> int:
     else:
         say(doc.render(rep))
     return rep.exit_code
+
+
+def cmd_validate_provider(args) -> int:
+    """Deterministic gold/provenance validation; no graph, model, or database."""
+    provider = _provider(args)
+    cases = provider.load_cases()
+    fp = provider.fingerprint()
+    say(json.dumps({
+        "valid": True,
+        "provider": provider.name,
+        "profile": provider.profile,
+        "data_plane": provider.data_plane,
+        "expected_database": provider.expected_database,
+        "case_count": len(cases),
+        "unique_patients": len({case.subject_id for case in cases}),
+        "category_counts": fp.get("category_counts"),
+        "golden_set_fingerprint": fp.get("golden_set_fingerprint"),
+        "source_dataset_fingerprint": fp.get("source_dataset_fingerprint"),
+    }, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_cases(args) -> int:
@@ -365,9 +394,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"default: {man.DEFAULT_RESULTS_ROOT}")
     sub = ap.add_subparsers(dest="command", required=True)
 
+    def _provider_args(p):
+        p.add_argument("--case-provider", default="demo", choices=providers.provider_names())
+        p.add_argument("--synthea-profile", choices=["dev", "eval"], default="dev",
+                       help="required corpus/gold profile when --case-provider=synthea")
+
     def _cases_args(p):
-        p.add_argument("--case-provider", default="demo", choices=providers.provider_names(),
-                       help="case source (only the frozen synthetic demo provider is registered)")
+        _provider_args(p)
         p.add_argument("--subset", default="all", choices=["all", "legacy15", "smoke"],
                        help="all = the full 40-case set; legacy15 = demo_q01-demo_q15; "
                             "smoke = the 3-case triple")
@@ -449,6 +482,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("doctor", help="preflight: verify every prerequisite before spending "
                                       "GPU time. Diagnostic only; runs no case")
+    _provider_args(p)
     _judge_args(p)
     p.add_argument("--profile", default="final", choices=["final", "local"],
                    help="final = every prerequisite is required (default); local = demote "
@@ -461,6 +495,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("cases", help="print the evaluation set and its fingerprint")
     _cases_args(p)
     p.set_defaults(func=cmd_cases)
+
+    p = sub.add_parser("validate-provider", help="validate frozen case/provenance artifacts only; "
+                                                   "no database or model calls")
+    _provider_args(p)
+    p.set_defaults(func=cmd_validate_provider)
     return ap
 
 

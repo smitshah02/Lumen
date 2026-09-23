@@ -232,10 +232,10 @@ def check_temporal(case, row: dict) -> dict:
     answer = row.get("answer") or ""
     results = [match_fact(f, answer, case.expected_facts) for f in structured]
 
-    if case.temporal == "latest":
+    if case.temporal in ("latest", "earliest"):
         ok = all(r["outcome"] == FACT_MATCH for r in results)
-        return {"applicable": True, "mode": "latest", "pass": ok,
-                "detail": ("latest gold value asserted" if ok else
+        return {"applicable": True, "mode": case.temporal, "pass": ok,
+                "detail": (f"{case.temporal} gold value asserted" if ok else
                            "; ".join(f"{r['fact']}: {r['outcome']}" for r in results))}
 
     # trend

@@ -7,7 +7,7 @@ import json
 
 from src.config import MODELS_CONFIG
 
-CHUNKER_VERSION = "clinical-note-chunker-v1"
+CHUNKER_VERSION = "clinical-note-chunker-v2"
 CHUNKER_CONFIG = {"max_tokens": 384, "overlap_tokens": 64, "min_chunk_tokens": 50}
 VECTOR_DIMENSION = 768
 

@@ -101,6 +101,10 @@ def _to_evidence(results, prefix: str, source_type: str) -> list[dict]:
     for i, r in enumerate(results, 1):
         out.append({
             "chunk_id": r.chunk_id,
+            "note_id": r.note_id,
+            "subject_id": r.subject_id,
+            "hadm_id": r.hadm_id,
+            "chunk_index": r.chunk_index,
             "source_type": source_type,
             "text": (r.context_text or r.chunk_text),
             "charttime": r.charttime,

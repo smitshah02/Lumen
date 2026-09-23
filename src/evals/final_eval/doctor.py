@@ -40,6 +40,7 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 # Demoted to advisory under --profile local.
 ENVIRONMENT_CHECKS = frozenset({
     "database_connectivity", "demo_data_plane_rows", "llm_host_reachable",
+    "database_matches_provider", "synthea_data_plane_rows",
     "runtime_model_main", "runtime_model_fast", "judge_model_installed",
     "embedding_models", "reranker_model", "gpu", "python_version",
 })
@@ -149,7 +150,27 @@ def check_versions(judge_prompt_version: str) -> list:
 # ---------------------------------------------------------------------------
 # The evaluation set
 # ---------------------------------------------------------------------------
-def check_dataset() -> list:
+def check_dataset(case_provider=None) -> list:
+    from src.evals.final_eval import providers
+    provider = case_provider or providers.get_provider("demo")
+    if provider.name == "synthea":
+        try:
+            fp = provider.fingerprint()
+            cases = provider.load_cases()
+            expected_range = (25, 30) if provider.profile == "dev" else (80, 120)
+            return [
+                _c("eval_set_present", True, fp["path"], fp["path"]),
+                _c("eval_set_sha256", bool(fp["sha256"]), fp["sha256"][:16], fp["sha256"]),
+                _c("synthea_manifest_hash_matches", fp["manifest_sha256_matches"] is True,
+                   f"profile={provider.profile} fingerprint={fp['golden_set_fingerprint'][:16]}",
+                   fp["manifest_sha256_matches"]),
+                _c("eval_set_case_count", expected_range[0] <= len(cases) <= expected_range[1],
+                   f"{len(cases)} cases (expected {expected_range[0]}..{expected_range[1]})", len(cases)),
+                _c("eval_set_parses", True,
+                   f"{len(cases)} cases, {len({c.subject_id for c in cases})} unique patients", None),
+            ]
+        except Exception as e:
+            return [_c("eval_set_present", False, f"{type(e).__name__}: {e}", None)]
     out = []
     path = case_mod.GOLDEN_PATH
     if not path.exists():
@@ -188,21 +209,45 @@ def check_dataset() -> list:
 # ---------------------------------------------------------------------------
 # Data plane
 # ---------------------------------------------------------------------------
-def check_data_plane(probe=None) -> list:
-    """The evaluation runs against the synthetic demo plane only."""
+def check_data_plane(probe=None, case_provider=None) -> list:
+    from src.evals.final_eval import providers
+    provider = case_provider or providers.get_provider("demo")
     plane = os.environ.get("LUMEN_DATA_PLANE")
-    out = [_c("data_plane_is_demo", plane == "demo",
-              f"LUMEN_DATA_PLANE={plane!r}" +
-              ("" if plane == "demo" else " — the final evaluation refuses any other plane"),
+    check_name = "data_plane_is_demo" if provider.name == "demo" else "data_plane_matches_provider"
+    out = [_c(check_name, plane == provider.data_plane,
+              f"LUMEN_DATA_PLANE={plane!r}; provider requires {provider.data_plane!r}",
               plane)]
     info = (probe or _probe_database)()
     out.append(_c("database_connectivity", bool(info.get("connected")),
                   info.get("detail") or "", info.get("database")))
+    out.append(_c("database_matches_provider",
+                  info.get("database") == provider.expected_database,
+                  f"database={info.get('database')!r}; expected {provider.expected_database!r}",
+                  info.get("database")))
     rows = info.get("counts") or {}
-    out.append(_c("demo_data_plane_rows", bool(rows.get("note_chunks")),
+    row_check = "demo_data_plane_rows" if provider.name == "demo" else "synthea_data_plane_rows"
+    out.append(_c(row_check, bool(rows.get("note_chunks")),
                   f"note_chunks={rows.get('note_chunks')} labevents={rows.get('labevents')}"
                   if rows else (info.get("counts_error") or "no row counts available"),
                   rows))
+    if provider.name == "synthea":
+        try:
+            fp = provider.fingerprint()
+        except Exception as e:
+            fp = {"profile": provider.profile, "fingerprint_error": type(e).__name__}
+        corpus = info.get("corpus_identity") or {}
+        expected = {
+            "profile": provider.profile,
+            "source_manifest_sha256": fp.get("source_manifest_sha256"),
+            "mapping_manifest_sha256": fp.get("mapping_manifest_sha256"),
+            "note_corpus_sha256": fp.get("note_corpus_sha256"),
+            "index_configuration_hash": fp.get("index_configuration_hash"),
+        }
+        mismatches = {k: {"expected": v, "actual": corpus.get(k)}
+                      for k, v in expected.items() if not v or corpus.get(k) != v}
+        out.append(_c("synthea_gold_matches_corpus", not mismatches,
+                      "gold/profile fingerprints match loaded corpus and index" if not mismatches
+                      else f"mismatch: {mismatches}", corpus))
     return out
 
 
@@ -221,10 +266,28 @@ def _probe_database() -> dict:
                         sa_text(f"SELECT count(*) FROM {table}")).scalar()
                 except Exception as e:
                     counts[table] = f"unavailable ({type(e).__name__})"
+            corpus_identity = {}
+            if storage.DATA_PLANE == "synthea":
+                cfg = c.execute(sa_text("""
+                    SELECT configuration FROM ingestion_runs
+                    WHERE status='completed' AND configuration->>'operation'='clinical_notes'
+                    ORDER BY completed_at DESC LIMIT 1
+                """)).scalar() or {}
+                index_hash = c.execute(sa_text("""
+                    SELECT config_hash FROM note_index_runs
+                    WHERE status='completed' ORDER BY completed_at DESC LIMIT 1
+                """)).scalar()
+                corpus_identity = {
+                    "profile": cfg.get("profile"),
+                    "source_manifest_sha256": cfg.get("source_manifest_sha256"),
+                    "mapping_manifest_sha256": cfg.get("mapping_manifest_sha256"),
+                    "note_corpus_sha256": cfg.get("corpus_sha256"),
+                    "index_configuration_hash": index_hash,
+                }
         return {"connected": True, "database": storage.engine.url.database,
                 "detail": f"connected to {storage.engine.url.database} "
                           f"(plane {storage.DATA_PLANE})",
-                "counts": counts}
+                "counts": counts, "corpus_identity": corpus_identity}
     except Exception as e:
         return {"connected": False, "detail": f"{type(e).__name__}: {str(e)[:160]}",
                 "database": None, "counts": {}}
@@ -395,7 +458,7 @@ def check_output(results_root=None, run_id: str | None = None) -> list:
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
-def run_checks(*, profile: str = "final", judge_model: str | None = None,
+def run_checks(*, profile: str = "final", case_provider=None, judge_model: str | None = None,
                judge_host: str | None = None, results_root=None,
                run_id: str | None = None, db_probe=None, ollama_probe=None) -> Report:
     from src.evals.final_eval.judge import JUDGE_PROMPT_VERSION
@@ -403,8 +466,8 @@ def run_checks(*, profile: str = "final", judge_model: str | None = None,
     rep.add(*check_repository())
     rep.add(*check_python())
     rep.add(*check_versions(JUDGE_PROMPT_VERSION))
-    rep.add(*check_dataset())
-    rep.add(*check_data_plane(probe=db_probe))
+    rep.add(*check_dataset(case_provider))
+    rep.add(*check_data_plane(probe=db_probe, case_provider=case_provider))
     rep.add(*check_models(judge_model, judge_host, probe=ollama_probe))
     rep.add(*check_retrieval_assets())
     rep.add(*check_output(results_root, run_id))

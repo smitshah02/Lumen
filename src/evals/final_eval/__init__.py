@@ -7,8 +7,9 @@ the graph, retriever, API and prompts are read, executed and recorded, never
 modified.
 """
 
-# 1.1.0 — aj2 independent judge (per-criterion assessment + consistency
+# 1.2.0 — profile-bound deterministic Synthea gold/provider integration plus
+# the aj2 independent judge (per-criterion assessment + consistency
 # validation + one repair attempt), calibration, preflight doctor, read-only
 # comparison and the API contract cross-check. The measured system is
 # unchanged; this version identifies the EVALUATOR that produced a run.
-EVALUATOR_VERSION = "final_eval/1.1.0"
+EVALUATOR_VERSION = "final_eval/1.2.0"

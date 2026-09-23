@@ -11,8 +11,11 @@ import pytest
 
 from src.retrieval.hybrid_retriever_v2 import (
     RetrievalResult,
+    _rerank_document,
     apply_temporal_filter,
     detect_temporal_mode,
+    strip_temporal_intent,
+    temporal_candidate_limit,
 )
 
 
@@ -69,6 +72,16 @@ def test_trend_mode_is_chronological_and_places_undated_records_last():
     assert [r.chunk_id for r in apply_temporal_filter(records, mode="trend")] == [32, 31, 33, 34]
 
 
+def test_earliest_mode_is_chronological_and_places_undated_records_last():
+    records = [
+        _result(31, 100, "2150-09-15", 0.7),
+        _result(32, 100, "2150-03-15", 0.7),
+        _result(33, 100, "2150-12-20", 0.7),
+        _result(34, 100, None, 0.7),
+    ]
+    assert [r.chunk_id for r in apply_temporal_filter(records, mode="earliest")] == [32, 31, 33, 34]
+
+
 def test_recent_mode_keeps_undated_records():
     records = [
         _result(31, 100, "2150-09-15", 0.7),
@@ -84,6 +97,8 @@ def test_recent_mode_keeps_undated_records():
     ("query", "expected"),
     [
         ("most recent HbA1c", "latest"),
+        ("earliest HbA1c value", "earliest"),
+        ("first recorded creatinine", "earliest"),
         ("current medications", "latest"),
         ("trend in HbA1c over the last 12 months", "trend"),
         ("creatinine progression", "trend"),
@@ -95,3 +110,35 @@ def test_recent_mode_keeps_undated_records():
 )
 def test_temporal_intent_detection(query, expected):
     assert detect_temporal_mode(query) == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("latest Pain severity value", "Pain severity value"),
+        ("earliest HbA1c value", "HbA1c value"),
+        ("first recorded creatinine", "creatinine"),
+        ("creatinine trend over time", "creatinine"),
+        ("abnormal potassium lab results", "abnormal potassium lab results"),
+    ],
+)
+def test_temporal_intent_is_removed_from_retrieval_text(query, expected):
+    assert strip_temporal_intent(query) == expected
+
+
+def test_reranker_places_focal_chunk_before_supporting_context():
+    result = _result(1, 100, "2150-12-01", 0.5)
+    result.chunk_text = "deep focal fact"
+    result.context_text = "large preceding neighbour\ndeep focal fact\nfollowing neighbour"
+
+    document = _rerank_document(result)
+
+    assert document.startswith("deep focal fact\n\nSupporting context:")
+    assert document.count("deep focal fact") == 1
+
+
+def test_temporal_candidate_pool_widens_only_for_patient_scoped_queries():
+    assert temporal_candidate_limit(60, "latest", 80000017) == 1000
+    assert temporal_candidate_limit(60, "trend", 80000017) == 1000
+    assert temporal_candidate_limit(60, "all", 80000017) == 60
+    assert temporal_candidate_limit(60, "latest", None) == 60

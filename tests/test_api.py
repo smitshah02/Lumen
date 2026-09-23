@@ -81,6 +81,22 @@ def test_ready_ok(monkeypatch):
     assert r.json()["data_plane"] == "demo" and r.json()["database"] == "lumen_demo"
 
 
+def test_ready_accepts_synthea_plane_and_reports_isolated_database(monkeypatch):
+    monkeypatch.setattr(api, "DATA_PLANE", "synthea")
+    monkeypatch.setattr(api, "EXPECTED_DB", "lumen_synthea")
+    monkeypatch.setattr(api, "_check_database", _ok_db)
+    monkeypatch.setattr(api, "_check_ollama", _ok_llm)
+    monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
+
+    r = client.get("/ready")
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "ready"
+    assert r.json()["data_plane"] == "synthea"
+    assert r.json()["database"] == "lumen_synthea"
+    assert api._PLANE_DATABASES["synthea"] != api.storage.RESEARCH_DB_NAME
+
+
 def test_ready_database_failure_is_503_and_leaks_nothing(monkeypatch):
     def boom():
         raise OperationalError("SELECT 1", {}, Exception("password=hunter2 host=db.internal"))
@@ -106,7 +122,8 @@ STATE = {"query_type": "lab_trend", "temporal_mode": "latest", "review_status": 
          "draft_answer": "Creatinine 1.4 mg/dL [S1].", "final_answer": "Creatinine 1.4 mg/dL [S1].",
          "citations": [{"claim": "Creatinine 1.4 mg/dL [S1].", "label": "S1", "chunk_id": 7, "verified": True,
                         "verification_note": "supported"}],
-         "patient_evidence": [{"label": "S1", "chunk_id": 7, "source_type": "note", "note_type": "discharge",
+         "patient_evidence": [{"label": "S1", "chunk_id": 7, "source_type": "note", "note_id": 92000003,
+                               "subject_id": 90000001, "hadm_id": 91000001, "chunk_index": 2, "note_type": "discharge",
                                "charttime": "2024-03-18 10:40:00", "text": "SYNTHETIC", "score": 0.9}],
          "node_trail": ["triage", "patient_retrieval", "synthesis", "verification", "finalize"], "errors": []}
 
@@ -117,6 +134,8 @@ def test_ask_completed(monkeypatch):
     body = client.post("/ask", json={"subject_id": 90000001, "query": "most recent creatinine?"}).json()
     assert body["status"] == "completed" and not body["needs_human_review"] and not body["answer_is_draft"]
     assert body["citations"][0]["label"] == "S1" and body["sources"][0]["chunk_id"] == 7
+    assert body["sources"][0]["note_id"] == 92000003 and body["sources"][0]["hadm_id"] == 91000001
+    assert body["sources"][0]["subject_id"] == 90000001 and body["sources"][0]["chunk_index"] == 2
     assert "text" not in body["sources"][0] and body["thread_id"] == f"api-{body['request_id']}"
 
 
@@ -169,14 +188,46 @@ def test_internal_error_is_generic(monkeypatch):
 # --- /retrieve mapping (retriever mocked) ----------------------------------------------------
 def test_retrieve_maps_results(monkeypatch):
     _no_subject_check(monkeypatch)
-    res = [SimpleNamespace(chunk_id=11, note_id=92000003, note_type="discharge", charttime="2024-03-18 10:40:00",
+    res = [SimpleNamespace(chunk_id=11, note_id=92000003, subject_id=90000001, hadm_id=91000001,
+                           chunk_index=2, note_type="discharge", charttime="2024-03-18 10:40:00",
                            final_score=0.91234, sources=["bm25", "vector", "both"], chunk_text="SYNTHETIC chunk")]
     monkeypatch.setattr(api, "_run_retrieve", lambda q, s, tf, k: ("latest", res))
     body = client.post("/retrieve", json={"subject_id": 90000001, "query": "most recent creatinine"}).json()
-    assert body["results"][0] == {"rank": 1, "chunk_id": 11, "note_id": 92000003, "note_type": "discharge",
+    assert body["results"][0] == {"rank": 1, "chunk_id": 11, "note_id": 92000003,
+                                  "subject_id": 90000001, "hadm_id": 91000001, "chunk_index": 2,
+                                  "note_type": "discharge",
                                   "charttime": "2024-03-18 10:40:00", "score": 0.9123, "sources": ["bm25", "vector"],
                                   "text": "SYNTHETIC chunk"}
     assert body["temporal_mode"] == "latest" and body["data_plane"] == "demo"
+
+
+def test_synthea_retrieve_preserves_patient_scope_and_encounter_summary(monkeypatch):
+    _no_subject_check(monkeypatch)
+    seen = {}
+
+    def retrieve(query, subject_id, temporal_filter, top_k):
+        seen.update(subject_id=subject_id, temporal_filter=temporal_filter, top_k=top_k)
+        return "all", [SimpleNamespace(
+            chunk_id=101, note_id=850003022, subject_id=80000018,
+            hadm_id=800003022, chunk_index=76, note_type="encounter_summary",
+            charttime="2020-01-01 00:00:00", final_score=0.9,
+            sources=["bm25"], chunk_text="synthetic patient evidence",
+        )]
+
+    monkeypatch.setattr(api, "DATA_PLANE", "synthea")
+    monkeypatch.setattr(api, "_run_retrieve", retrieve)
+    body = client.post("/retrieve", json={
+        "subject_id": 80000018, "query": "SARS-CoV-2 RNA panel", "top_k": 5,
+    }).json()
+
+    assert seen == {"subject_id": 80000018, "temporal_filter": "auto", "top_k": 5}
+    assert body["data_plane"] == "synthea"
+    assert body["subject_id"] == 80000018
+    assert body["results"][0]["note_id"] == 850003022
+    assert body["results"][0]["subject_id"] == 80000018
+    assert body["results"][0]["hadm_id"] == 800003022
+    assert body["results"][0]["chunk_index"] == 76
+    assert body["results"][0]["note_type"] == "encounter_summary"
 
 
 # --- data plane --------------------------------------------------------------------------------

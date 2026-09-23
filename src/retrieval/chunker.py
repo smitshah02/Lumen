@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import math
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -206,6 +207,33 @@ class ClinicalNoteChunker:
 
         return chunks
 
+    @staticmethod
+    def _max_words_for_tokens(token_limit: int) -> int:
+        """Largest word count accepted by the canonical 1.3x estimator."""
+        return max(1, math.ceil((token_limit + 1) / 1.3) - 1)
+
+    def _split_oversized_chunk(
+        self, section_name: str, chunk_text: str
+    ) -> list[str]:
+        """Enforce the configured ceiling after merging and context prefixing."""
+        prefix_words = 0 if section_name in ("FULL_NOTE", "PREAMBLE") else 1
+        content_words = max(
+            1, self._max_words_for_tokens(self.max_tokens) - prefix_words
+        )
+        overlap_words = min(
+            self._max_words_for_tokens(self.overlap_tokens), content_words - 1
+        )
+        words = chunk_text.split()
+        pieces = []
+        start = 0
+        while start < len(words):
+            end = min(start + content_words, len(words))
+            pieces.append(" ".join(words[start:end]))
+            if end == len(words):
+                break
+            start = end - overlap_words
+        return pieces
+
     def chunk_text(
         self, text: str, note_type: str = "discharge"
     ) -> list[Chunk]:
@@ -262,21 +290,25 @@ class ClinicalNoteChunker:
 
         # Step 4: Build Chunk objects with section context prefix
         chunks = []
-        for i, (section_name, chunk_text) in enumerate(merged):
+        for section_name, chunk_text in merged:
             # Prefix chunk with section name for context
-            if section_name and section_name not in ("FULL_NOTE", "PREAMBLE"):
-                contextualized = f"[{section_name}] {chunk_text}"
-            else:
-                contextualized = chunk_text
-
-            chunks.append(
-                Chunk(
-                    text=contextualized,
-                    chunk_index=i,
-                    token_count=self._estimate_tokens(contextualized),
-                    section=section_name,
-                )
+            has_prefix = section_name and section_name not in ("FULL_NOTE", "PREAMBLE")
+            contextualized = f"[{section_name}] {chunk_text}" if has_prefix else chunk_text
+            pieces = (
+                self._split_oversized_chunk(section_name, chunk_text)
+                if self._estimate_tokens(contextualized) > self.max_tokens
+                else [chunk_text]
             )
+            for piece in pieces:
+                contextualized = f"[{section_name}] {piece}" if has_prefix else piece
+                chunks.append(
+                    Chunk(
+                        text=contextualized,
+                        chunk_index=len(chunks),
+                        token_count=self._estimate_tokens(contextualized),
+                        section=section_name,
+                    )
+                )
 
         return chunks
 

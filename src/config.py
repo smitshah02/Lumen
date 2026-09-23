@@ -18,7 +18,7 @@ class ConfigurationError(RuntimeError):
     """A configured value would make the selected runtime unsafe or invalid."""
 
 
-VALID_PLANES = frozenset({"demo", "research"})
+VALID_PLANES = frozenset({"demo", "synthea", "research"})
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("LUMEN_DATA_DIR", REPO_ROOT / "data")).expanduser()
@@ -29,6 +29,9 @@ MIMIC_NOTE_DIR = Path(
 MODELS_DIR = Path(os.environ.get("LUMEN_MODELS_DIR", REPO_ROOT / "models")).expanduser()
 GUIDELINES_DIR = Path(
     os.environ.get("LUMEN_GUIDELINES_DIR", DATA_DIR / "guidelines")
+).expanduser()
+SYNTHEA_DIR = Path(
+    os.environ.get("LUMEN_SYNTHEA_DIR", DATA_DIR / "synthea")
 ).expanduser()
 
 MODELS_CONFIG_PATH = REPO_ROOT / "configs" / "models.json"

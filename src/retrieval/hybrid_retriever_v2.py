@@ -83,6 +83,11 @@ HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000"))
 RRF_BM25_WEIGHT = float(_os.environ.get("LUMEN_RRF_BM25_WEIGHT", "1.5"))
 RRF_VECTOR_WEIGHT = float(_os.environ.get("LUMEN_RRF_VECTOR_WEIGHT", "0.75"))
 QUERY_EXPANSION = _os.environ.get("LUMEN_QUERY_EXPANSION", "0").strip().lower() in ("1", "true", "yes")
+# Explicit temporal questions need a wider patient-local pool: a frequently
+# measured observation can have hundreds of equally relevant chunks, and the
+# newest/oldest one may not be present in the normal top 60. This is applied
+# only to patient-scoped temporal retrieval, never corpus-wide retrieval.
+TEMPORAL_SCOPED_TOP_N = 1000
 
 
 # ===========================================================================
@@ -613,6 +618,8 @@ def _parse_charttime(value) -> Optional[datetime]:
 _TEMPORAL_PATTERNS = [
     ("latest", [r"\bmost recent\b", r"\blatest\b", r"\bnewest\b", r"\bcurrent(?:ly)?\b",
                 r"\blast (?:recorded|known|measured|documented|value)\b", r"\bas of (?:now|today)\b"]),
+    ("earliest", [r"\bearliest\b", r"\boldest\b", r"\bfirst (?:recorded|known|measured|documented|value)\b",
+                  r"\binitial (?:recorded|known|measured|documented|value)\b"]),
     ("trend",  [r"\btrend(?:ing|ed)?\b", r"\bover time\b", r"\bprogression\b", r"\bserial\b",
                 r"\bevolution\b", r"\bchang(?:e|ed|ing) over\b",
                 r"\bover the (?:past|last) \w+ (?:days|weeks|months|years)\b"]),
@@ -623,10 +630,47 @@ _TEMPORAL_PATTERNS = [
 
 def detect_temporal_mode(query: str) -> str:
     q = query.lower()
-    for mode, patterns in _TEMPORAL_PATTERNS:   # latest > trend > recent
+    for mode, patterns in _TEMPORAL_PATTERNS:   # latest > earliest > trend > recent
         if any(re.search(p, q) for p in patterns):
             return mode
     return "all"
+
+
+def strip_temporal_intent(query: str, mode: Optional[str] = None) -> str:
+    """Remove temporal control words before lexical/semantic retrieval.
+
+    Words such as ``latest`` describe how matching records should be ordered;
+    they are not expected to occur in the record itself. Passing them to BM25
+    can turn an otherwise valid strict query into a zero-hit query, while
+    passing them to the embedder or reranker dilutes the clinical concept.
+    Temporal intent is still detected from the original query and applied by
+    :func:`apply_temporal_filter`.
+    """
+    resolved = mode or detect_temporal_mode(query)
+    if resolved == "all":
+        return query.strip()
+
+    cleaned = query
+    for pattern_mode, patterns in _TEMPORAL_PATTERNS:
+        if pattern_mode == resolved:
+            for pattern in patterns:
+                cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n,;:-")
+    # A control-only query has no clinical retrieval term. Preserve the
+    # original rather than manufacturing an empty embedding/search.
+    return cleaned or query.strip()
+
+
+def temporal_candidate_limit(
+    configured_top_n: int,
+    mode: str,
+    subject_id: Optional[int],
+) -> int:
+    """Widen only patient-scoped pools that will be ordered by time."""
+    if subject_id is not None and mode not in ("", "all", None):
+        return max(configured_top_n, TEMPORAL_SCOPED_TOP_N)
+    return configured_top_n
 
 
 
@@ -658,7 +702,8 @@ def apply_temporal_filter(
       "recent"               -> drop records older than recency_days before the
                                 subject's anchor; boost survivors by recency
       "latest"/"most_recent" -> boost toward newest per subject; keep all
-      "trend"/"oldest_first" -> chronological ascending (undated sink last)
+      "earliest"/"trend"/"oldest_first" -> chronological ascending
+                                             (undated sink last)
 
     Recency is a half-life decay on the real intra-patient interval, applied
     additively to rrf_score (additive avoids the min-maxed "0 stays 0" trap).
@@ -667,6 +712,8 @@ def apply_temporal_filter(
     """
     mode = (mode or "all").lower()
     if mode == "oldest_first":
+        mode = "trend"
+    if mode == "earliest":
         mode = "trend"
     if mode == "most_recent":
         mode = "latest"
@@ -731,6 +778,26 @@ def apply_temporal_filter(
 # BGE Cross-Encoder Reranker
 # ===========================================================================
 
+def _rerank_document(result: RetrievalResult) -> str:
+    """Put the matched chunk before its neighbours for truncation safety.
+
+    Context windows are larger than the reranker's 512-token input. Their
+    chronological assembly can place a preceding neighbour first and cause the
+    actual matched chunk—including a deep-note fact—to be truncated away. The
+    focal chunk is therefore presented first, followed by non-duplicated
+    supporting context. Returned context remains chronological; this affects
+    only the text scored by the cross-encoder.
+    """
+    focal = (result.chunk_text or "").strip()
+    context = (result.context_text or "").strip()
+    if not context or context == focal:
+        return focal or context
+
+    supporting = context.replace(focal, "", 1).strip()
+    if not supporting:
+        return focal
+    return f"{focal}\n\nSupporting context:\n{supporting}"
+
 class BGEReranker:
     """
     Cross-encoder reranker using BGE-reranker-v2-m3.
@@ -767,16 +834,14 @@ class BGEReranker:
         self, query: str, results: list[RetrievalResult], top_k: int = 10
     ) -> list[RetrievalResult]:
         """
-        Rerank using context_text (expanded window) if available,
-        otherwise falls back to chunk_text.
+        Rerank with the matched chunk first and adjacent context second so
+        tokenizer truncation cannot discard the focal evidence merely because
+        an earlier neighbouring chunk was assembled before it.
         """
         if not results:
             return []
 
-        pairs = [
-            [query, r.context_text or r.chunk_text]
-            for r in results
-        ]
+        pairs = [[query, _rerank_document(r)] for r in results]
 
         # Batch processing
         batch_size = 16
@@ -889,37 +954,45 @@ class HybridRetriever:
             logger.info("Empty query — returning no results")
             return []
 
-        # Stage 1: Query expansion
-        expansions = []
-        if self.use_query_expansion:
-            query, expansions = expand_query(query)
-            if expansions:
-                logger.debug(f"  Expanded: +{len(expansions)} terms")
-        
-        # Resolve temporal intent from the query when set to "auto"
+        # Resolve temporal intent from the original query, then remove those
+        # ordering words from the text sent to retrieval and reranking.
         resolved_temporal = (
             detect_temporal_mode(query) if temporal_filter == "auto" else temporal_filter
         )
+        retrieval_query = strip_temporal_intent(query, resolved_temporal)
+        bm25_top_n = temporal_candidate_limit(
+            self.bm25_top_n, resolved_temporal, subject_id
+        )
+        vector_top_n = temporal_candidate_limit(
+            self.vector_top_n, resolved_temporal, subject_id
+        )
+
+        # Stage 1: Query expansion
+        expansions = []
+        if self.use_query_expansion:
+            retrieval_query, expansions = expand_query(retrieval_query)
+            if expansions:
+                logger.debug(f"  Expanded: +{len(expansions)} terms")
 
         # Stage 2: BM25 search (with expansions)
         bm25_results = bm25_search(
-            query=query,
+            query=retrieval_query,
             expansions=expansions,
             subject_id=subject_id,
             hadm_id=hadm_id,
             note_type=note_type,
-            top_n=self.bm25_top_n,
+            top_n=bm25_top_n,
             min_tokens=self.min_chunk_tokens,
         )
 
         # Stage 3: Vector search
-        query_vec = self.embedder.embed_query(query)
+        query_vec = self.embedder.embed_query(retrieval_query)
         vec_results = vector_search(
             query_embedding=query_vec,
             subject_id=subject_id,
             hadm_id=hadm_id,
             note_type=note_type,
-            top_n=self.vector_top_n,
+            top_n=vector_top_n,
             min_tokens=self.min_chunk_tokens,
         )
 
@@ -952,7 +1025,9 @@ class HybridRetriever:
         # reorders on temporal signal, and truncating first would throw away the
         # very records that signal is meant to promote.
         if self.reranker and candidates:
-            reranked = self.reranker.rerank(query, candidates, top_k=len(candidates))
+            reranked = self.reranker.rerank(
+                retrieval_query, candidates, top_k=len(candidates)
+            )
             # Fall back to RRF order if reranker confidence is too low — this
             # happens when the query type (lab values, culture results) doesn't
             # match the cross-encoder's training distribution well

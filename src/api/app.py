@@ -8,9 +8,9 @@ hybrid retrieval -> local qwen synthesis -> verification -> human review), and
 
     LUMEN_DATA_PLANE=demo uvicorn src.api.app:app --host 127.0.0.1 --port 8000
 
-Data planes: src.storage picks the database from LUMEN_DATA_PLANE (demo ->
-lumen_demo, research -> lumen). The research plane holds real MIMIC-derived
-text, so it only answers loopback clients.
+Data planes: src.storage picks the isolated database from LUMEN_DATA_PLANE
+(demo -> lumen_demo, synthea -> lumen_synthea, research -> lumen). The research
+plane holds real MIMIC-derived text, so it only answers loopback clients.
 """
 
 from __future__ import annotations
@@ -46,7 +46,12 @@ from src.api.schemas import (AskRequest, AskResponse, RetrieveRequest, RetrieveR
 logger = logging.getLogger("lumen.api")
 
 DATA_PLANE = storage.DATA_PLANE
-EXPECTED_DB = storage.DEMO_DB_NAME if DATA_PLANE == "demo" else storage.RESEARCH_DB_NAME
+_PLANE_DATABASES = {
+    "demo": storage.DEMO_DB_NAME,
+    "synthea": storage.SYNTHEA_DB_NAME,
+    "research": storage.RESEARCH_DB_NAME,
+}
+EXPECTED_DB = _PLANE_DATABASES[DATA_PLANE]
 READY_TIMEOUT_S = 3.0
 _RID_RE = re.compile(r"[A-Za-z0-9._-]{8,64}")
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
@@ -224,11 +229,11 @@ def _check_database() -> dict:
                       SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id=nis.note_id
                   )
             """), {"config_hash": index_configuration_hash()}).scalar()
-            if DATA_PLANE == "research":
+            if DATA_PLANE in {"synthea", "research"}:
                 ingestion_status = c.execute(text("""
                     SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
                 """)).scalar()
-                if ingestion_status is None:
+                if DATA_PLANE == "research" and ingestion_status is None:
                     legacy_completed = c.execute(text("""
                         SELECT COUNT(*) FROM (
                             SELECT DISTINCT ON (table_name) table_name, status
@@ -239,7 +244,7 @@ def _check_database() -> dict:
                     """)).scalar()
                     if legacy_completed == 3:
                         ingestion_status = "legacy_completed"
-    plane_ok = db == EXPECTED_DB and not (DATA_PLANE == "demo" and db == storage.RESEARCH_DB_NAME)
+    plane_ok = db == EXPECTED_DB
     required_indexes = {"idx_chunks_fts", "idx_chunks_embedding", "idx_chunks_subject"}
     schema_ok = (not missing_tables and schema_version == SCHEMA_VERSION
                  and required_indexes.issubset(indexes))
@@ -395,7 +400,9 @@ async def retrieve(req: RetrieveRequest, request: Request):
         temporal_mode=mode, latency_ms=t.ms,
         # chunk_text comes from note_chunks (de-identified in research, synthetic in demo);
         # clinical_notes.text_original is never read by the retriever.
-        results=[RetrievedChunk(rank=i, chunk_id=r.chunk_id, note_id=r.note_id, note_type=r.note_type,
+        results=[RetrievedChunk(rank=i, chunk_id=r.chunk_id, note_id=r.note_id,
+                                subject_id=r.subject_id, hadm_id=r.hadm_id,
+                                chunk_index=r.chunk_index, note_type=r.note_type,
                                 charttime=r.charttime, score=round(float(r.final_score), 4),
                                 sources=[s for s in r.sources if s != "both"], text=r.chunk_text)
                  for i, r in enumerate(results, 1)],
@@ -454,6 +461,8 @@ async def ask(req: AskRequest, request: Request):
         citations=[Citation(label=c.get("label") or "", chunk_id=int(c.get("chunk_id", -1)), claim=c.get("claim", ""),
                             verified=bool(c.get("verified"))) for c in cites],
         sources=[Source(label=e["label"], chunk_id=int(e["chunk_id"]), source_type=e.get("source_type", ""),
+                        note_id=e.get("note_id"), subject_id=e.get("subject_id"),
+                        hadm_id=e.get("hadm_id"), chunk_index=e.get("chunk_index"),
                         note_type=e.get("note_type"), charttime=e.get("charttime")) for e in evidence],
         flagged_claims=flagged, needs_human_review=interrupted or bool(st.get("needs_human_review")),
         query_type=st.get("query_type"), temporal_mode=st.get("temporal_mode"),

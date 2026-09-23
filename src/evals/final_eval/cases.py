@@ -91,6 +91,9 @@ class EvalCase:
     must_not_contain: tuple
     evidence_hadm_ids: tuple
     evidence_note_types: tuple
+    evidence_note_ids: tuple = ()
+    evidence_provenance: tuple = ()
+    gold_profile: str | None = None
 
     # --- derived expectations -------------------------------------------
     @property
@@ -107,7 +110,7 @@ class EvalCase:
 
     @property
     def temporal_applicable(self) -> bool:
-        return self.temporal in ("latest", "trend")
+        return self.temporal in ("latest", "earliest", "trend")
 
     @property
     def admission_scope_applicable(self) -> bool:
@@ -151,6 +154,9 @@ def _to_case(r: dict, p: Path) -> EvalCase:
         must_not_contain=tuple(r.get("must_not_contain") or []),
         evidence_hadm_ids=tuple(r.get("evidence_hadm_ids") or []),
         evidence_note_types=tuple(r.get("evidence_note_types") or []),
+        evidence_note_ids=tuple(r.get("evidence_note_ids") or []),
+        evidence_provenance=tuple(r.get("evidence_provenance") or []),
+        gold_profile=r.get("gold_profile"),
     )
 
 
