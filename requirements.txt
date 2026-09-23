@@ -68,3 +68,4 @@ python-dotenv==1.2.2
 # research tracing must stay local; demo tracing may use remote HTTPS.
 # src/obs/tracing.py enforces the selected plane's policy.
 langfuse==4.15.1
+langchain==1.2.18
