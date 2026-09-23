@@ -84,3 +84,7 @@ backups/
 # graded against and is the only file there carrying note text.
 results/final_eval/
 .cache/final_eval_judge.json
+
+# Generated deployment/evaluation metadata
+.deployment_source.json
+artifacts/
