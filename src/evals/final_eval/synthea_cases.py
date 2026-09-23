@@ -20,7 +20,7 @@ from src.storage.ingest_synthea import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-GENERATOR_VERSION = "synthea-golden-v1"
+GENERATOR_VERSION = "synthea-golden-v2"
 PROFILES = ("dev", "eval")
 TARGETS = {"dev": 28, "eval": 100}
 QUOTAS = {
@@ -124,6 +124,9 @@ def _fact(value: str, code: str = "") -> str:
 
 def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
     by_encounter, _ = _note_maps(notes)
+    encounter_dates = {
+        row["Id"]: _date(row["START"]) for row in source.rows["encounters.csv"]
+    }
     out: dict[str, list[dict]] = defaultdict(list)
 
     conditions = _linked(source.rows["conditions.csv"], by_encounter)
@@ -132,9 +135,11 @@ def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
             if row["SYSTEM"] != system or not row["DESCRIPTION"]:
                 continue
             fact = _fact(row["DESCRIPTION"], row["CODE"])
+            encounter_date = encounter_dates[row["ENCOUNTER"]]
             out["condition"].append(_base(
                 source, mappings, by_encounter, row, category="condition",
-                question=f"What condition was documented during this encounter ({row['CODE']})?",
+                question=(f"What condition with code {row['CODE']} was documented during "
+                          f"the encounter starting {encounter_date}?"),
                 facts=[fact], answer=f"The record documents {fact} in {system}.",
                 source_file="conditions.csv", answer_type="condition_history"))
             out["condition"][-1]["_variant"] = system
@@ -145,9 +150,11 @@ def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
             if row["SYSTEM"] != system or not row["DESCRIPTION"]:
                 continue
             fact = _fact(row["DESCRIPTION"], row["CODE"])
+            encounter_date = encounter_dates[row["ENCOUNTER"]]
             out["procedure"].append(_base(
                 source, mappings, by_encounter, row, category="procedure",
-                question=f"Which procedure was recorded during this encounter ({row['CODE']})?",
+                question=(f"Which procedure with code {row['CODE']} was recorded during "
+                          f"the encounter starting {encounter_date}?"),
                 facts=[fact], answer=f"The documented procedure was {fact} ({system}).",
                 source_file="procedures.csv", answer_type="procedure_fact"))
             out["procedure"][-1]["_variant"] = system
@@ -155,9 +162,11 @@ def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
     for row in _linked(source.rows["medications.csv"], by_encounter):
         if row["DESCRIPTION"]:
             fact = _fact(row["DESCRIPTION"], row["CODE"])
+            encounter_date = encounter_dates[row["ENCOUNTER"]]
             out["medication"].append(_base(
                 source, mappings, by_encounter, row, category="medication",
-                question=f"What medication was recorded during this encounter ({row['CODE']})?",
+                question=(f"What medication with code {row['CODE']} was recorded during "
+                          f"the encounter starting {encounter_date}?"),
                 facts=[fact], answer=f"The recorded medication was {fact}.",
                 source_file="medications.csv", answer_type="medication_history"))
 
@@ -168,9 +177,12 @@ def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
                 continue
             value = f"{row['VALUE']} {row['UNITS']}".strip()
             fact = f"{row['DESCRIPTION']} {value}"
+            encounter_date = encounter_dates[row["ENCOUNTER"]]
             out["observation"].append(_base(
                 source, mappings, by_encounter, row, category="observation",
-                question=f"What value was recorded for {row['DESCRIPTION']} during the encounter?",
+                question=(f"What value was recorded for {row['DESCRIPTION']} "
+                          f"(code {row['CODE']}) during the encounter starting "
+                          f"{encounter_date}?"),
                 facts=[fact], answer=f"{row['DESCRIPTION']} was recorded as {value}.",
                 source_file="observations.csv", answer_type="observation_value"))
             out["observation"][-1]["_variant"] = kind
@@ -182,9 +194,11 @@ def _simple_candidates(source, mappings, notes) -> dict[str, list[dict]]:
     for row in complement:
         filename = "conditions.csv" if "conditions" in source.rows and row in conditions else "procedures.csv"
         fact = _fact(row["DESCRIPTION"], row["CODE"])
+        encounter_date = encounter_dates[row["ENCOUNTER"]]
         out["structured_narrative"].append(_base(
             source, mappings, by_encounter, row, category="structured_narrative",
-            question=f"What non-ICD narrative fact with code {row['CODE']} appears in the encounter note?",
+            question=(f"What non-ICD narrative fact with code {row['CODE']} appears in "
+                      f"the note for the encounter starting {encounter_date}?"),
             facts=[fact], answer=f"The encounter note documents {fact} ({row['SYSTEM']}).",
             source_file=filename, answer_type="narrative_complement"))
         out["structured_narrative"][-1]["_variant"] = row["SYSTEM"]
@@ -293,6 +307,9 @@ def _negative_candidates(source, mappings, notes) -> dict[str, list[dict]]:
 
 def _long_note_candidates(source, mappings, notes) -> list[dict]:
     by_encounter, _ = _note_maps(notes)
+    encounter_dates = {
+        row["Id"]: _date(row["START"]) for row in source.rows["encounters.csv"]
+    }
     observations = defaultdict(list)
     for row in _linked(source.rows["observations.csv"], by_encounter):
         observations[row["ENCOUNTER"]].append(row)
@@ -305,9 +322,12 @@ def _long_note_candidates(source, mappings, notes) -> list[dict]:
             if position < int(len(text) * 0.60) or not row["VALUE"]:
                 continue
             value = f"{row['VALUE']} {row['UNITS']}".strip()
+            encounter_date = encounter_dates[row["ENCOUNTER"]]
             case = _base(
                 source, mappings, by_encounter, row, category="long_note",
-                question=f"What value is documented for {row['DESCRIPTION']} in the detailed encounter record?",
+                question=(f"What value is documented for {row['DESCRIPTION']} "
+                          f"(code {row['CODE']}) in the detailed record for the "
+                          f"encounter starting {encounter_date}?"),
                 facts=[f"{row['DESCRIPTION']} {value}"],
                 answer=f"{row['DESCRIPTION']} was recorded as {value}.",
                 source_file="observations.csv", answer_type="deep_note_fact")

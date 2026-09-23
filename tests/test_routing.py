@@ -13,6 +13,7 @@ import pytest
 
 from src.agents import verify as verify_util
 from src.agents.classify import classify, wants_deterministic_lab
+from src.generation.lab_query import LabResolver
 from src.llm import local_client
 
 
@@ -495,6 +496,38 @@ def test_out_of_scope_and_injection_still_reach_the_model(query):
 # Analyte disambiguation on the deterministic lab path
 # ===========================================================================
 LAB_LABELS = ["Creatinine", "Hemoglobin", "Hemoglobin A1c", "Glucose", "Sodium"]
+
+
+def _resolver(*items):
+    resolver = LabResolver.__new__(LabResolver)
+    resolver._items = list(items)
+    return resolver
+
+
+def test_literal_synthea_analyte_label_resolves_without_curated_synonym():
+    resolver = _resolver(
+        (980001, "weight-for-length per age and sex", ""),
+        (980002, "body height", ""),
+    )
+    itemids, matched = resolver.match(
+        "What was the latest recorded Weight-for-length Per age and sex value?"
+    )
+    assert itemids == [980001]
+    assert matched == ["weight-for-length per age and sex"]
+
+
+def test_literal_label_match_keeps_only_the_most_specific_label():
+    resolver = _resolver(
+        (1, "erythrocyte distwidth", "blood"),
+        (2, "erythrocyte distwidth in blood", "blood"),
+    )
+    itemids, _ = resolver.match("latest erythrocyte distwidth in blood value")
+    assert itemids == [2]
+
+
+def test_generic_single_word_dictionary_label_does_not_create_a_lab_route():
+    resolver = _resolver((1, "age", ""))
+    assert resolver.match("What is the patient's age?") == ([], [])
 
 
 def _series(*labels):

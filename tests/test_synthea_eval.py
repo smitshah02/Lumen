@@ -24,6 +24,11 @@ def _fixture():
     source = SimpleNamespace(
         profile="dev",
         rows={
+            "encounters.csv": [
+                {"Id": encounter, "PATIENT": patient,
+                 "START": f"202{i}-01-0{i+1}T00:00:00Z"}
+                for i, encounter in enumerate(encounters)
+            ],
             "observations.csv": observations,
             "conditions.csv": [{"START": "2020-01-01", "STOP": "", "PATIENT": patient,
                 "ENCOUNTER": "enc-a", "SYSTEM": "SNOMED-CT", "CODE": "unique-c",
@@ -38,10 +43,29 @@ def _fixture():
     notes = SimpleNamespace(rows=[
         {"encounter_uuid": e, "note_id": 850000001 + i,
          "subject_id": 80000001, "hadm_id": 800000001 + i,
-         "text": "Encounter Summary\nDescription=Example analyte\n"}
+         "text": ("Encounter Summary\n" + "context\n" * 20
+                  + "Description=Example analyte\n")}
         for i, e in enumerate(encounters)
     ])
     return source, mappings, notes
+
+
+def test_encounter_specific_questions_include_source_date_and_code():
+    source, mappings, notes = _fixture()
+    simple = S._simple_candidates(source, mappings, notes)
+    condition = simple["condition"][0]
+    observation = simple["observation"][0]
+    assert "2020-01-01" in condition["query"]
+    assert "unique-c" in condition["query"]
+    assert "2020-01-01" in observation["query"]
+    assert "x-1" in observation["query"]
+
+
+def test_long_note_question_identifies_encounter_date_and_observation_code():
+    source, mappings, notes = _fixture()
+    case = S._long_note_candidates(source, mappings, notes)[0]
+    assert "2020-01-01" in case["query"]
+    assert "x-1" in case["query"]
 
 
 def test_temporal_gold_uses_source_timestamps_and_is_deterministic():

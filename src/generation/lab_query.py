@@ -130,6 +130,24 @@ class LabResolver:
                 matched.append(concept)
                 for kw in keywords:
                     itemids.extend(self._keyword_to_itemids(kw))
+
+        # Synthea exposes many valid observation labels outside the small MIMIC-
+        # oriented synonym map above.  Resolve a multi-word d_labitems label when
+        # the question names it literally.  Keep only the most-specific matching
+        # labels so a longer analyte name cannot be diluted by its substring.
+        literal = {
+            label for _, label, _ in self._items
+            if len(re.findall(r"[a-z0-9]+", label)) >= 2 and _mentions(q, label)
+        }
+        literal = {
+            label for label in literal
+            if not any(label != other and label in other for other in literal)
+        }
+        if literal:
+            matched.extend(sorted(literal))
+            itemids.extend(
+                itemid for itemid, label, _ in self._items if label in literal
+            )
         # dedupe, preserve order
         seen = set()
         itemids = [i for i in itemids if not (i in seen or seen.add(i))]
