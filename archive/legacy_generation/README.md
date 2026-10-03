@@ -14,3 +14,7 @@ These files are not part of the active application. They were superseded by:
 structured laboratory-data retrieval. The archived files may refer to their
 former `src.generation` module paths and are retained as historical source, not
 as supported commands.
+
+`answer_generator.py` was removed on 2026-10-02: it sent retrieved MIMIC context
+to an unvalidated host. It remains in Git history; `batch_test_generation.py`
+depended on it and no longer runs.

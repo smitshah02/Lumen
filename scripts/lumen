@@ -25,6 +25,8 @@ research commands:
   db          start the explicitly selected external Postgres volume
   schema      apply additive schema upgrades
   ingest      ingest MIMIC only with --confirm-research-ingest
+  adopt       record an index built before provenance tracking
+              (--check, or --apply --confirm-legacy-adoption)
   index       index notes (extra args passed through)
   start       start the local API; never ingests
   test        run offline regression tests
@@ -35,6 +37,16 @@ EOF
 [ "$#" -ge 2 ] || { usage; exit 2; }
 plane=$1 command=$2
 shift 2
+
+if [ "$plane" = "research" ]; then
+  # MIMIC stays on this machine for every research command: no tracing, no
+  # Hugging Face lookups, no remote model endpoint, no proxy for local calls.
+  export LUMEN_DATA_PLANE=research LUMEN_TRACING=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=0 NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+  # uvicorn reads UVICORN_* from the environment; a socket fd or path would
+  # replace the loopback bind below.
+  unset UVICORN_FD UVICORN_UDS UVICORN_HOST
+fi
 
 if [ "$plane" = "demo" ]; then
   export LUMEN_LLM_MAIN="${LUMEN_LLM_MAIN:-$($PY -c 'from src.config import MAIN_MODEL_DEFAULT; print(MAIN_MODEL_DEFAULT)')}"
@@ -69,8 +81,16 @@ case "$plane:$command" in
     LUMEN_DATA_PLANE=research "$PY" -m src.storage.ingest "$@"
     ;;
   research:index) LUMEN_DATA_PLANE=research "$PY" -m src.retrieval.index_notes "$@" ;;
+  research:adopt) "$PY" -m src.storage.adopt_legacy_index "$@" ;;
   research:start)
-    exec env LUMEN_DATA_PLANE=research "$PY" -m uvicorn src.api.app:app \
+    for arg in "$@"; do
+      case "$arg" in
+        --host|--host=*|--uds|--uds=*|--fd|--fd=*)
+          echo "refusing: the research API binds loopback only ($arg is not allowed)" >&2
+          exit 2 ;;
+      esac
+    done
+    exec "$PY" -m uvicorn src.api.app:app \
       --host 127.0.0.1 --port "${LUMEN_API_PORT:-8000}" --workers 1 "$@"
     ;;
   research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;

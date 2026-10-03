@@ -14,8 +14,8 @@ Profiles
 `final` (default) is the pre-benchmark contract: every prerequisite for a real
 final run is REQUIRED, and a missing one exits non-zero.
 
-`local` is for a development box. The environment-dependent checks — the 30B
-main model, the GPU, the database, the reranker weights — are demoted to
+`local` is for a development box. The environment-dependent checks — the MAIN
+model, the GPU, the database, the reranker weights — are demoted to
 advisory, because a Mac not having the cloud configuration is a fact about the
 Mac, not a defect in the evaluator. Everything the repository itself controls
 (dataset hash, case counts, judge independence, output writability) stays

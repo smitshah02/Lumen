@@ -47,18 +47,38 @@ from src.obs.logging import log_event, add_timing, bump
 
 logger = logging.getLogger(__name__)
 
+# Every model call goes through this session. trust_env=False: a proxy set in
+# the environment (HTTP_PROXY, ALL_PROXY) must never carry a prompt holding
+# note text off the machine, even though the endpoint itself is local.
+HTTP = requests.Session()
+HTTP.trust_env = False
+
 HOST = validate_model_endpoint(os.environ.get("LUMEN_LLM_HOST", LLM_HOST_DEFAULT))
 MAIN_MODEL = os.environ.get("LUMEN_LLM_MAIN", MAIN_MODEL_DEFAULT)
 FAST_MODEL = os.environ.get("LUMEN_LLM_FAST", FAST_MODEL_DEFAULT)
 
-# Context windows. Ollama defaults are far below what clinical work needs:
-# a judged chunk runs ~1k tokens, a synthesis prompt with 8 chunks runs ~6k+.
-# Raising num_ctx costs KV-cache RAM, so keep the fast tier modest.
-CTX_FAST = 8192
-CTX_MAIN = 12288
+# ONE context window for every role and both tiers. Ollama reloads a model
+# whenever num_ctx changes (1.5-2.7 s measured on an M5), so per-role windows
+# turned every request into two or three reloads. 8192 clears the largest
+# prompt+completion seen on the MIMIC plane (4,077 tokens) with room to spare.
+def _num_ctx() -> int:
+    raw = os.environ.get("LUMEN_LLM_NUM_CTX", "").strip() or "8192"
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"LUMEN_LLM_NUM_CTX={raw!r} is not an integer") from None
+    if not 2048 <= value <= 131072:
+        raise ValueError(f"LUMEN_LLM_NUM_CTX={value} is outside 2048..131072")
+    return value
 
-# Seconds a model stays resident after its last call. On a 16GB Mac set
-# LUMEN_LLM_KEEPALIVE=30s so the 14B evicts before the reranker needs MPS.
+
+NUM_CTX = _num_ctx()
+CTX_FAST = NUM_CTX
+CTX_MAIN = NUM_CTX
+
+# How long a model stays resident after its last call (10m unless set; the
+# local runtime's .env sets 2h). Stop the API or `ollama stop <tag>` before an
+# offline 14B judge run, or the two will not both fit in 16 GB.
 KEEP_ALIVE = os.environ.get("LUMEN_LLM_KEEPALIVE", "10m")
 _SUPPORTS_THINK_PARAM = True
 
@@ -67,20 +87,20 @@ _SUPPORTS_THINK_PARAM = True
 # Nodes call chat_for("<role>", ...); they never name a model or a tier, so the
 # main/fast split and the token budgets stay changeable from here alone.
 #   tier        which model tag runs it
-#   num_ctx     prompt window (KV-cache RAM); sized to the real prompt, not the max
+#   num_ctx     prompt window; identical for every role so the model never reloads
 #   max_tokens  num_predict — an online answer that runs long is a latency bug
 # ---------------------------------------------------------------------------
 ROLES: dict[str, dict] = {
     # classification fallback: only runs when the deterministic classifier is unsure
-    "triage":            {"tier": "fast", "num_ctx": 2048,  "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
+    "triage":            {"tier": "fast", "num_ctx": NUM_CTX, "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
     # external-search concept extraction (literature path only)
-    "concept":           {"tier": "fast", "num_ctx": 2048,  "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
+    "concept":           {"tier": "fast", "num_ctx": NUM_CTX, "max_tokens": 64,  "temperature": 0.0, "json_mode": True},
     # short factual answers over a handful of chunks
-    "synthesis_simple":  {"tier": "fast", "num_ctx": 8192,  "max_tokens": 320, "temperature": 0.0, "json_mode": False},
+    "synthesis_simple":  {"tier": "fast", "num_ctx": NUM_CTX, "max_tokens": 320, "temperature": 0.0, "json_mode": False},
     # longitudinal synthesis, comparisons, conflicting evidence
-    "synthesis_complex": {"tier": "main", "num_ctx": 12288, "max_tokens": 500, "temperature": 0.0, "json_mode": False},
+    "synthesis_complex": {"tier": "main", "num_ctx": NUM_CTX, "max_tokens": 500, "temperature": 0.0, "json_mode": False},
     # batched claim verification for claims deterministic checks could not resolve
-    "verify":            {"tier": "fast", "num_ctx": 8192,  "max_tokens": 320, "temperature": 0.0, "json_mode": True},
+    "verify":            {"tier": "fast", "num_ctx": NUM_CTX, "max_tokens": 320, "temperature": 0.0, "json_mode": True},
 }
 
 
@@ -155,7 +175,7 @@ def chat(
     with tracing.generation(f"ollama:{tier}:{role}", resolved_model, prompt=messages) as gen:
         for attempt in range(max_retries + 1):
             try:
-                resp = requests.post(f"{HOST}/api/chat", json=payload, timeout=timeout)
+                resp = HTTP.post(f"{HOST}/api/chat", json=payload, timeout=timeout)
                 # Older Ollama builds reject the `think` field; drop it and retry once.
                 if resp.status_code == 400 and "think" in payload:
                     logger.warning("ollama rejected `think`; falling back to tag stripping")
@@ -166,6 +186,13 @@ def chat(
                 body = resp.json()
                 text_out = _strip_thinking(body["message"]["content"])
                 ms = round((time.perf_counter() - t0) * 1000, 1)
+                used = (body.get("prompt_eval_count") or 0) + (body.get("eval_count") or 0)
+                if used >= (num_ctx or default_ctx):
+                    # Ollama truncates an over-long prompt silently; evidence may
+                    # have been cut. Say so rather than verify against less text.
+                    log_event(logger, "llm_context_full", level=logging.WARNING, model=resolved_model,
+                              llm_role=role, prompt_tokens=body.get("prompt_eval_count"),
+                              completion_tokens=body.get("eval_count"))
                 add_timing("llm_ms", ms)
                 # Per-tier accumulators: add_timing also maintains llm_<tier>_calls,
                 # so /ask timings report how the work split between main and fast.
@@ -205,17 +232,25 @@ def warmup(tiers: tuple[str, ...] = ("main", "fast")) -> dict:
     holds it. Failures are reported, never raised: a cold model is a latency
     problem, not a correctness one, and readiness has its own check."""
     out = {}
+    warmed: dict[str, dict] = {}
     for tier in tiers:
         model, _ = _resolve(tier, None)
+        if model in warmed:               # both tiers on one tag: one load is enough
+            out[tier] = warmed[model]
+            continue
         t0 = time.perf_counter()
         try:
-            requests.post(f"{HOST}/api/chat", timeout=600, json={
+            # num_ctx must match the roles': warming at Ollama's default window
+            # loads a runner the first real call then has to throw away.
+            HTTP.post(f"{HOST}/api/chat", timeout=600, json={
                 "model": model, "messages": [{"role": "user", "content": "ok"}], "stream": False,
-                "keep_alive": KEEP_ALIVE, "options": {"num_predict": 1, "temperature": 0.0},
+                "keep_alive": KEEP_ALIVE,
+                "options": {"num_predict": 1, "temperature": 0.0, "num_ctx": NUM_CTX},
             }).raise_for_status()
             out[tier] = {"model": model, "ok": True, "ms": round((time.perf_counter() - t0) * 1000, 1)}
         except Exception as e:
             out[tier] = {"model": model, "ok": False, "error": type(e).__name__}
+        warmed[model] = out[tier]
         log_event(logger, "llm_warmup", model=model, tier=tier,
                   duration_ms=out[tier].get("ms"), error_type=out[tier].get("error"))
     return out
@@ -235,7 +270,7 @@ def unload(tier: str = "main", model: Optional[str] = None) -> None:
     """Evict a model from memory immediately. Call before heavy MPS work."""
     resolved_model, _ = _resolve(tier, model)
     try:
-        requests.post(
+        HTTP.post(
             f"{HOST}/api/chat",
             json={"model": resolved_model, "messages": [], "keep_alive": 0},
             timeout=30,
@@ -263,7 +298,7 @@ def health() -> dict:
     """Check the server is up and both configured models exist."""
     out = {"host": HOST, "reachable": False, "models": [], "main_ok": False, "fast_ok": False}
     try:
-        r = requests.get(f"{HOST}/api/tags", timeout=10)
+        r = HTTP.get(f"{HOST}/api/tags", timeout=10)
         r.raise_for_status()
         out["reachable"] = True
         out["models"] = [m["name"] for m in r.json().get("models", [])]

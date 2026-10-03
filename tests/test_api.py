@@ -81,6 +81,19 @@ def test_ready_ok(monkeypatch):
     assert r.json()["data_plane"] == "demo" and r.json()["database"] == "lumen_demo"
 
 
+def test_ready_reports_a_legacy_adopted_index_as_usable(monkeypatch):
+    monkeypatch.setattr(api, "_check_database", lambda: {
+        **_ok_db(), "index_provenance": "legacy_adopted", "pgvector_version": "0.8.2",
+        "pgvector_patch_mismatch": True})
+    monkeypatch.setattr(api, "_check_ollama", _ok_llm)
+    monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
+    r = client.get("/ready")
+    assert r.status_code == 200 and r.json()["status"] == "ready"
+    details = r.json()["database_details"]
+    assert details["index_provenance"] == "legacy_adopted"
+    assert details["pgvector_patch_mismatch"] is True
+
+
 def test_ready_accepts_synthea_plane_and_reports_isolated_database(monkeypatch):
     monkeypatch.setattr(api, "DATA_PLANE", "synthea")
     monkeypatch.setattr(api, "EXPECTED_DB", "lumen_synthea")
@@ -235,3 +248,10 @@ def test_research_plane_refuses_non_loopback_clients(monkeypatch):
     monkeypatch.setattr(api, "DATA_PLANE", "research")
     r = client.get("/health")                      # TestClient's client host is "testclient"
     assert r.status_code == 403 and r.json()["error"] == "forbidden"
+
+
+@pytest.mark.parametrize("installed,status,mismatch", [
+    ("0.8.6", "ok", False), ("0.8.2", "ok", True), ("0.7.4", "missing_or_wrong_version", False),
+    (None, "missing_or_wrong_version", False)])
+def test_readiness_maps_pgvector_versions(installed, status, mismatch):
+    assert api._extension_status(installed) == (status, mismatch)

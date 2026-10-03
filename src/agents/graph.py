@@ -36,6 +36,7 @@ from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import classify, wants_deterministic_lab
+from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
 from src.obs.logging import bump
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
@@ -193,9 +194,11 @@ def lab_lookup(state: AgentState) -> dict:
     number in the answer IS the number in the row. It is a shortcut around
     asking a language model to re-read a number a query can select.
 
-    A miss — no matching analyte, no rows for this patient, or a question that
-    does not resolve to exactly one analyte — returns nothing, and the router
-    sends the question down the normal retrieval path with nothing lost.
+    A miss — no matching analyte, no rows for this patient, a question that
+    does not resolve to exactly one analyte or carries words beyond it, a
+    non-numeric result at or after the last number, two different results at
+    the newest time, or a series drawn from more than one specimen — returns nothing, and the router sends the
+    question down the normal retrieval path with nothing lost.
     """
     query, sid = state["query"], state.get("subject_id")
     try:
@@ -207,7 +210,11 @@ def lab_lookup(state: AgentState) -> dict:
         return {"node_trail": _trail(state, "lab_lookup")}
 
     series = [g for g in series if g.get("values")]
-    series = _disambiguate(series, query, resolver.labels)
+    series = _disambiguate(series, query, resolver.labels, matched, resolver.labels_for(itemids))
+    if any(g.get("newer_non_numeric") or g.get("conflicting_latest") or len(g.get("fluids") or ()) > 1
+           for g in series):
+        logger.info("[lab_lookup] no single latest numeric result — using retrieval")
+        return {"node_trail": _trail(state, "lab_lookup")}
     if len(series) != 1:
         logger.info(f"[lab_lookup] {len(series)} analyte(s) for {matched or 'no match'} — using retrieval")
         return {"node_trail": _trail(state, "lab_lookup")}
@@ -216,9 +223,10 @@ def lab_lookup(state: AgentState) -> dict:
     for i, grp in enumerate(series, 1):
         label = f"L{i}"
         recent = grp["values"][-LAB_RECENT_POINTS:]
-        uom = _uom(grp["uom"])
         latest = recent[-1]
-        history = "; ".join(f"{v['date']} {_num(v['valuenum'])}{uom}" for v in recent)
+        uom = _uom(latest.get("uom") or grp["uom"])
+        history = "; ".join(f"{v['date']} {_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])}"
+                            for v in recent)
         ev.append({
             "chunk_id": -1, "source_type": "lab", "note_type": "lab",
             "charttime": latest["charttime"], "score": 1.0, "label": label,
@@ -262,40 +270,75 @@ def _uom(unit: str) -> str:
     return unit if unit == "%" else f" {unit}"
 
 
-def _disambiguate(series: list[dict], query: str, known_labels: list[str]) -> list[dict]:
-    """Narrow a resolver match down to the ONE analyte the question asked about.
+# Words a plain "latest <analyte>" question may contain besides the analyte.
+# Anything else ("urine", "clearance", "ionized", "and", "supplements") means
+# the question asks something narrower or different, and the verified shortcut
+# must not answer it. Unknown words fail toward retrieval, never toward a value.
+_QUESTION_FILLER = frozenset("""
+    what what's whats was were is are the a an his her their this that patient patient's patients s
+    most recent recently latest last current currently newest value values level levels result results
+    reading readings lab labs measured recorded documented measurement for of on in at me tell show give
+    blood serum plasma
+""".split())
+
+
+def _disambiguate(series: list[dict], query: str, known_labels: list[str],
+                  concepts=(), resolved_labels=None) -> list[dict]:
+    """Narrow a resolver match down to the ONE analyte the question asked about,
+    or to nothing when the question is not a plain request for one analyte.
 
     LabResolver.match is a substring matcher built for retrieval, where pulling
     in a neighbouring analyte only adds harmless context. As an *answer* path
-    that over-match is wrong in two different ways:
+    — one whose result is marked verified with no model in the loop — an
+    over-match is a wrong answer. So the shortcut answers only a question it
+    fully accounts for:
 
-      "most recent hemoglobin A1c"  -> resolves to Hemoglobin AND Hemoglobin A1c;
-                                       answering with plain hemoglobin answers a
-                                       question nobody asked.
-      same question, patient has no A1c at all
-                                    -> resolves to Hemoglobin alone, and a
-                                       confident "hemoglobin was 13.1 g/dL"
-                                       replaces the correct answer, which is that
-                                       no A1c is documented.
+      every word is filler, a time word, or part of the analyte it named or a
+      synonym the resolver matched ("blood sugar", "bun"). "urine creatinine",
+      "creatinine clearance", "creatinine and BUN", "potassium supplements"
+      all leave a word over and go to retrieval.
 
-    The second case is why a single result is not automatically safe. So: work
-    out which known analyte names the question actually contains, let the most
-    specific one win (A1c beats hemoglobin), and if this patient has no rows for
-    the analyte that was named, return nothing — retrieval and synthesis will
-    say it is not documented. Only the deterministic path is narrowed here; the
-    resolver and retrieval are untouched.
+      every synonym the resolver matched must be in the answer: "INR, PTT"
+      and "BUN/creatinine" ask for two analytes and get none, not one.
+
+      a question that names no label is ambiguous when its synonym resolves
+      to several dictionary analytes ("cholesterol": total, HDL, LDL), even if
+      this patient only has rows for one of them.
+
+      a dictionary label counts as named when all its words appear in the
+      question, in any order ("urine creatinine" names "Creatinine, Urine").
+      Labels made only of filler words (MIMIC's urine dipstick "Blood") name
+      nothing.
+      The most specific named label wins (A1c beats hemoglobin), and if this
+      patient has no rows for it, return nothing — retrieval and synthesis
+      will say it is not documented. A label of one or two letters ("H", "I",
+      "CR") names nothing unless the question contains it as a word.
     """
-    q = (query or "").lower()
-    named = {lab.lower() for lab in known_labels if lab and lab.lower() in q}
-    named = {l for l in named if not any(o != l and l in o for o in named)}
+    q = label_tokens(query)
+    keys = {label_tokens(label) for label in known_labels}
+    named = {k for k in keys if k and k <= q and not k <= _QUESTION_FILLER}
+    named = {k for k in named if not any(o > k for o in named)}
+    concepts = list(concepts or ())
+    explained = set(_QUESTION_FILLER).union(*named, *(label_tokens(c) for c in concepts))
+    if not q <= explained:
+        return []                      # a word the shortcut does not understand
     if not named:
-        # The question used a synonym ("blood sugar"), not a label. Trust the
-        # resolver only when it came back with exactly one analyte.
-        return series if len(series) == 1 else []
-    have = {g["label"].lower() for g in series}
-    if not named <= have:
-        return []                      # asked for something this patient has no rows for
-    return [g for g in series if g["label"].lower() in named]
+        # The question used a synonym ("blood sugar"), not a label. Trust it
+        # only when it resolves to exactly one analyte in the dictionary.
+        if resolved_labels is not None and len({label_tokens(l) for l in resolved_labels}) != 1:
+            return []
+        chosen = series if len(series) == 1 else []
+    else:
+        have = {label_tokens(g["label"]) for g in series}
+        if not named <= have:
+            return []                  # asked for something this patient has no rows for
+        chosen = [g for g in series if label_tokens(g["label"]) in named]
+    for concept in concepts:           # every analyte asked for must be in the answer
+        words = SYNONYMS.get(concept)
+        if not all(any(kw in g["label"].lower() for kw in words) if words
+                   else label_tokens(concept) <= label_tokens(g["label"]) for g in chosen):
+            return []
+    return chosen
 
 
 def patient_retrieval(state: AgentState) -> dict:

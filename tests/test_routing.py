@@ -173,7 +173,7 @@ def test_health_requires_the_exact_tag(monkeypatch):
         status_code = 200
         def raise_for_status(self): pass
         def json(self): return {"models": [{"name": "qwen3:8b"}]}
-    monkeypatch.setattr(local_client.requests, "get", lambda *a, **k: _R())
+    monkeypatch.setattr(local_client.HTTP, "get", lambda *a, **k: _R())
     monkeypatch.setattr(local_client, "MAIN_MODEL", "qwen3:30b-a3b-instruct-2507-q4_K_M")
     monkeypatch.setattr(local_client, "FAST_MODEL", "qwen3:4b-instruct-2507-q4_K_M")
     h = local_client.health()
@@ -402,6 +402,7 @@ def test_synthesis_picks_fast_only_for_confident_simple_patient_only_queries(gra
 def test_lab_lookup_miss_falls_through_to_retrieval(graph_mod, monkeypatch, spy):
     class _Resolver:
         labels = ["Creatinine", "Hemoglobin"]
+        def labels_for(self, itemids): return ["Creatinine"]
         def match(self, q): return ([1], ["creatinine"])
         def fetch(self, sid, ids, **kw): return []
     monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: _Resolver())
@@ -414,6 +415,7 @@ def test_lab_lookup_miss_falls_through_to_retrieval(graph_mod, monkeypatch, spy)
 def test_lab_lookup_hit_answers_with_no_model_call(graph_mod, monkeypatch, spy):
     class _Resolver:
         labels = ["Creatinine", "Hemoglobin"]
+        def labels_for(self, itemids): return ["Creatinine"]
         def match(self, q): return ([1], ["creatinine"])
         def fetch(self, sid, ids, **kw):
             return [{"label": "Creatinine", "uom": "mg/dL", "n_total": 2, "n_shown": 2, "n_abnormal": 0,
@@ -560,7 +562,8 @@ def test_named_analyte_with_no_rows_falls_through_rather_than_substituting(graph
 
 def test_synonym_questions_still_resolve_when_unambiguous(graph_mod):
     """'blood sugar' names no label literally; a single resolver hit is enough."""
-    out = graph_mod._disambiguate(_series("Glucose"), "what was his blood sugar", LAB_LABELS)
+    out = graph_mod._disambiguate(_series("Glucose"), "what was his blood sugar", LAB_LABELS,
+                                  concepts=["blood sugar"])
     assert [g["label"] for g in out] == ["Glucose"]
 
 
@@ -568,6 +571,300 @@ def test_synonym_question_with_several_analytes_falls_through(graph_mod):
     out = graph_mod._disambiguate(_series("Creatinine", "Urea Nitrogen"),
                                   "how is his kidney function", LAB_LABELS)
     assert out == []
+
+
+# --- MIMIC-shaped dictionary -------------------------------------------------
+# d_labitems in MIMIC-IV carries labels of one or two characters ("H", "I",
+# "CR") and one that is a single space. Matched as raw substrings they are
+# "named" by every question, no patient has rows for all of them, and the
+# deterministic path never fired on the research plane.
+MIMIC_ITEMS = (
+    (50912, "creatinine", "blood"), (52546, "creatinine", "blood"),
+    (52024, "creatinine, whole blood", "blood"), (51082, "creatinine, urine", "urine"),
+    (50971, "potassium", "blood"), (50822, "potassium, whole blood", "blood"),
+    (51222, "hemoglobin", "blood"), (50852, "% hemoglobin a1c", "blood"),
+    (50902, "chloride", "blood"),
+    (1, "h", "blood"), (2, "i", "blood"), (3, "cr", "blood"), (4, " ", "blood"),
+)
+
+
+@pytest.mark.parametrize("question,label,unit", [
+    ("What was the most recent creatinine?", "Creatinine", "mg/dL"),
+    ("What is the latest potassium?", "Potassium", "mEq/L"),
+])
+def test_mimic_dictionary_lab_question_takes_the_shortcut(graph_mod, monkeypatch, spy,
+                                                          question, label, unit):
+    resolver = _resolver(*MIMIC_ITEMS)
+    resolver.fetch = lambda sid, ids, **kw: [{
+        "label": label, "uom": unit, "n_total": 1, "n_shown": 1, "n_abnormal": 0,
+        "values": [{"charttime": "2150-01-02 06:00", "date": "2150-01-02", "valuenum": 4.2,
+                    "uom": unit, "abnormal": False}]}]
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    out = graph_mod.lab_lookup({"query": question, "subject_id": 1})
+    assert spy == []                                   # no model call
+    assert f"4.2 {unit}" in out["final_answer"]
+    assert out["citations"][0]["verified"] is True
+    assert graph_mod.route_after_lab_lookup(out) == "finalize"
+
+
+def test_short_dictionary_labels_are_not_named_by_every_question(graph_mod):
+    """'h', 'i' and 'cr' all occur inside 'the most recent creatinine'."""
+    out = graph_mod._disambiguate(_series("Creatinine"), "What was the most recent creatinine?",
+                                  ["h", "i", "cr", " ", "creatinine"])
+    assert [g["label"] for g in out] == ["Creatinine"]
+
+
+def test_a_label_inside_another_word_is_not_named(graph_mod):
+    """'so' and 'di' inside 'sodium' are not requests for other analytes."""
+    out = graph_mod._disambiguate(_series("Sodium"), "most recent sodium", ["sodium", "so", "di"])
+    assert [g["label"] for g in out] == ["Sodium"]
+
+
+def test_punctuated_mimic_label_is_matched_the_way_a_question_names_it(graph_mod):
+    labels = ["hemoglobin", "% hemoglobin a1c"]
+    out = graph_mod._disambiguate(_series("Hemoglobin", "% Hemoglobin A1c"),
+                                  "What was the most recent hemoglobin A1c?", labels)
+    assert [g["label"] for g in out] == ["% Hemoglobin A1c"]
+    # ...and a patient with no A1c rows is still not handed their hemoglobin
+    assert graph_mod._disambiguate(_series("Hemoglobin"),
+                                   "What was the most recent hemoglobin A1c?", labels) == []
+
+
+QUALIFIED_ITEMS = MIMIC_ITEMS + (
+    (51081, "creatinine, urine", "urine"), (50909, "creatinine clearance", "urine"),
+    (51006, "urea nitrogen", "blood"), (50893, "calcium, total", "blood"),
+    (51237, "inr(pt)", "blood"), (51275, "ptt", "blood"),
+    (50907, "cholesterol, total", "blood"), (50904, "cholesterol, hdl", "blood"),
+    (50931, "glucose", "blood"), (51466, "blood", "urine"),      # MIMIC has a bare "Blood" label
+)
+
+
+def _mimic_lookup(graph_mod, monkeypatch, question, series):
+    resolver = _resolver(*QUALIFIED_ITEMS)
+    resolver.fetch = lambda sid, ids, **kw: series
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    return graph_mod.lab_lookup({"query": question, "subject_id": 1})
+
+
+def _lab(label, *points, unit="mg/dL", newer_non_numeric=False, fluids=("blood",)):
+    values = [{"charttime": f"{d} 06:00", "date": d, "valuenum": v, "uom": u or unit, "abnormal": False}
+              for d, v, u in points]
+    return {"label": label, "uom": unit, "n_total": len(values), "n_shown": len(values),
+            "n_abnormal": 0, "values": values, "newer_non_numeric": newer_non_numeric,
+            "fluids": list(fluids)}
+
+
+@pytest.mark.parametrize("question", [
+    "What was the most recent urine creatinine?",          # specimen the shortcut did not fetch
+    "What was the latest creatinine clearance?",            # a different, more specific analyte
+    "What was the most recent creatinine and BUN?",         # two analytes, one answer
+    "Is the patient currently on potassium supplements?",   # a medication question
+    "What was the latest ionized calcium?",                 # qualifier with no dictionary label
+])
+@pytest.mark.parametrize("label", ["Creatinine", "Potassium", "Calcium, Total"])
+def test_shortcut_never_answers_a_question_it_does_not_fully_understand(graph_mod, monkeypatch, spy,
+                                                                        question, label):
+    """Each of these used to come back as a verified serum value."""
+    out = _mimic_lookup(graph_mod, monkeypatch, question, [_lab(label, ("2150-01-02", 1.1, None))])
+    assert "lab_evidence" not in out and graph_mod.route_after_lab_lookup(out) == "patient_retrieval"
+
+
+@pytest.mark.parametrize("question,series", [
+    # every synonym in the question must be in the answer, not just "explained"
+    ("What was the latest INR, PTT?", [_lab("INR(PT)", ("2150-01-02", 1.1, None)), _lab("PTT", ("2150-01-02", 30.0, None))]),
+    ("What was the latest BUN/creatinine?", [_lab("Creatinine", ("2150-01-02", 1.1, None)),
+                                            _lab("Urea Nitrogen", ("2150-01-02", 18.0, None))]),
+    # ambiguity is a property of the dictionary, not of which rows this patient has
+    ("What was the latest cholesterol?", [_lab("Cholesterol, HDL", ("2150-01-02", 45.0, None))]),
+    # one series drawn from two specimens has no single "latest"
+    ("What was the most recent creatinine?", [_lab("Creatinine", ("2150-01-02", 1.1, None), fluids=("blood", "urine"))]),
+])
+def test_shortcut_never_returns_part_of_an_answer(graph_mod, monkeypatch, spy, question, series):
+    out = _mimic_lookup(graph_mod, monkeypatch, question, series)
+    assert "lab_evidence" not in out
+
+
+def test_ionized_qualifier_is_rejected_after_the_series_is_fetched(graph_mod, monkeypatch, spy):
+    resolver = _resolver(*QUALIFIED_ITEMS)
+    fetched = []
+    resolver.fetch = lambda sid, ids, **kw: fetched.append(ids) or [_lab("Calcium, Total", ("2150-01-02", 9.1, None))]
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    out = graph_mod.lab_lookup({"query": "What was the latest ionized calcium?", "subject_id": 1})
+    assert fetched and "lab_evidence" not in out
+    out = graph_mod.lab_lookup({"query": "What was the latest calcium?", "subject_id": 1})
+    assert "lab_evidence" in out                       # the plain question still answers
+
+
+def test_synonym_question_answers_end_to_end(graph_mod, monkeypatch, spy):
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent BUN?",
+                        [_lab("Urea Nitrogen", ("2150-01-02", 18.0, None))])
+    assert spy == [] and "18 mg/dL" in out["final_answer"]
+
+
+def test_a_label_made_only_of_filler_words_names_nothing(graph_mod, monkeypatch, spy):
+    """MIMIC's urine dipstick label "Blood" must not turn "blood glucose" into a two-analyte question."""
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent blood glucose?",
+                        [_lab("Glucose", ("2150-01-02", 101.0, None))])
+    assert "101 mg/dL" in out["final_answer"]
+
+
+def test_synthea_latest_template_still_takes_the_shortcut(graph_mod, monkeypatch, spy):
+    resolver = _resolver((980001, "weight-for-length per age and sex", ""))
+    resolver.fetch = lambda sid, ids, **kw: [_lab("Weight-for-length Per age and sex",
+                                                  ("2020-01-02", 55.0, None), unit="%", fluids=("",))]
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    out = graph_mod.lab_lookup({"query": "What was the latest recorded Weight-for-length Per age and sex value?",
+                                "subject_id": 1})
+    assert spy == [] and graph_mod.route_after_lab_lookup(out) == "finalize"
+
+
+def test_each_historical_value_keeps_its_own_unit(graph_mod, monkeypatch, spy):
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent creatinine?",
+                        [_lab("Creatinine", ("2150-01-01", 97.0, "umol/L"), ("2150-01-02", 1.1, "mg/dL"))])
+    text = out["lab_evidence"][0]["text"]
+    assert "97 umol/L" in text and "1.1 mg/dL" in text
+
+
+def test_shortcut_still_answers_the_plain_question(graph_mod, monkeypatch, spy):
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent creatinine for this patient?",
+                        [_lab("Creatinine", ("2150-01-01", 1.3, None), ("2150-01-02", 1.1, None))])
+    assert "1.1 mg/dL" in out["final_answer"] and graph_mod.route_after_lab_lookup(out) == "finalize"
+
+
+def test_a_newer_non_numeric_result_sends_the_question_to_retrieval(graph_mod, monkeypatch, spy):
+    """'<0.01' or 'NEG' after the last number: the last number is not the latest result."""
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent creatinine?",
+                        [_lab("Creatinine", ("2150-01-02", 1.1, None), newer_non_numeric=True)])
+    assert "lab_evidence" not in out
+
+
+def test_the_unit_is_the_latest_rows_unit(graph_mod, monkeypatch, spy):
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent creatinine?",
+                        [_lab("Creatinine", ("2150-01-01", 97.0, "umol/L"), ("2150-01-02", 1.1, "mg/dL"),
+                              unit="umol/L")])
+    assert "1.1 mg/dL" in out["final_answer"]
+
+
+class _Rows:
+    def __init__(self, rows): self.rows = rows
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, *a, **k): return self
+    def fetchall(self): return self.rows
+
+
+def test_fetch_keeps_the_newest_values_when_it_caps_a_series(monkeypatch):
+    import src.generation.lab_query as lab_query
+    rows = [("Potassium", 50971, f"2150-01-{d:02d} 06:00", 4.0 + d / 100, "mEq/L", None, "Blood")
+            for d in range(1, 31)]
+    monkeypatch.setattr(lab_query, "engine", type("E", (), {"connect": lambda self: _Rows(rows)})())
+    (grp,) = _resolver(*MIMIC_ITEMS).fetch(1, [50971], per_lab_cap=5)
+    assert [v["date"] for v in grp["values"]][-1] == "2150-01-30"
+    assert grp["n_total"] == 30 and grp["n_shown"] == 5 and grp["newer_non_numeric"] is False
+    assert grp["fluids"] == ["blood"]
+
+
+def test_fetch_flags_a_non_numeric_result_newer_than_the_last_number(monkeypatch):
+    import src.generation.lab_query as lab_query
+    rows = [("Troponin T", 51003, "2150-01-01 06:00", 0.4, "ng/mL", "abnormal", "Blood"),
+            ("Troponin T", 51003, "2150-01-02 06:00", None, "ng/mL", None, "Blood")]
+    monkeypatch.setattr(lab_query, "engine", type("E", (), {"connect": lambda self: _Rows(rows)})())
+    (grp,) = _resolver((51003, "troponin t", "blood")).fetch(1, [51003])
+    assert grp["newer_non_numeric"] is True and len(grp["values"]) == 1
+
+
+def test_two_different_results_at_the_newest_time_are_not_a_latest_value(monkeypatch):
+    """Blood-gas and chemistry glucose share a label; at one charttime they can disagree."""
+    import src.generation.lab_query as lab_query
+    rows = [("Glucose", 50931, "2150-01-01 06:00", 98.0, "mg/dL", None, "Blood"),
+            ("Glucose", 50809, "2150-01-02 06:00", 101.0, "mg/dL", None, "Blood"),
+            ("Glucose", 50931, "2150-01-02 06:00", 140.0, "mg/dL", None, "Blood")]
+    monkeypatch.setattr(lab_query, "engine", type("E", (), {"connect": lambda self: _Rows(rows)})())
+    (grp,) = _resolver((50931, "glucose", "blood")).fetch(1, [50931, 50809])
+    assert grp["conflicting_latest"] is True
+
+
+def test_a_non_numeric_result_at_the_same_time_as_the_last_number_counts(monkeypatch):
+    import src.generation.lab_query as lab_query
+    rows = [("Potassium", 50971, "2150-01-02 06:00", 4.1, "mEq/L", None, "Blood"),
+            ("Potassium", 50822, "2150-01-02 06:00", None, "mEq/L", None, "Blood")]
+    monkeypatch.setattr(lab_query, "engine", type("E", (), {"connect": lambda self: _Rows(rows)})())
+    (grp,) = _resolver((50971, "potassium", "blood")).fetch(1, [50971, 50822])
+    assert grp["newer_non_numeric"] is True and grp["conflicting_latest"] is False
+
+
+def test_lab_lookup_falls_back_on_a_conflicting_latest_value(graph_mod, monkeypatch, spy):
+    series = [{**_lab("Glucose", ("2150-01-02", 140.0, None)), "conflicting_latest": True}]
+    out = _mimic_lookup(graph_mod, monkeypatch, "What was the most recent glucose?", series)
+    assert "lab_evidence" not in out
+
+
+def test_label_tokens_are_order_and_punctuation_free():
+    from src.generation.lab_query import label_tokens
+    assert label_tokens("% Hemoglobin A1c") == {"hemoglobin", "a1c"}
+    assert label_tokens("Creatinine, Urine") == label_tokens("urine creatinine")
+    assert label_tokens(" ") == frozenset() and label_tokens(None) == frozenset()
+
+
+# --- one context window, one warm-up ------------------------------------------
+@pytest.mark.parametrize("raw,expected", [("", 8192), ("2048", 2048), ("131072", 131072),
+                                          ("abc", None), ("2047", None), ("131073", None)])
+def test_context_window_setting_is_validated(monkeypatch, raw, expected):
+    monkeypatch.setenv("LUMEN_LLM_NUM_CTX", raw)
+    if expected is None:
+        with pytest.raises(ValueError):
+            local_client._num_ctx()
+    else:
+        assert local_client._num_ctx() == expected
+
+
+@pytest.mark.parametrize("prompt_tokens,warned", [(8000, True), (1000, False)])
+def test_a_full_context_window_is_reported(monkeypatch, prompt_tokens, warned):
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"message": {"content": "ok"}, "prompt_eval_count": prompt_tokens, "eval_count": 300}
+    events = []
+    monkeypatch.setattr(local_client.HTTP, "post", lambda *a, **k: _Resp())
+    monkeypatch.setattr(local_client, "log_event", lambda logger, event, **kw: events.append(event))
+    local_client.chat_for("verify", [{"role": "user", "content": "x"}])
+    assert ("llm_context_full" in events) is warned
+
+
+def test_every_role_shares_one_context_window():
+    """Ollama reloads a model when num_ctx changes; per-role windows meant a
+    reload between synthesis and verification on every request."""
+    assert {spec["num_ctx"] for spec in local_client.ROLES.values()} == {local_client.NUM_CTX}
+    assert local_client.CTX_MAIN == local_client.CTX_FAST == local_client.NUM_CTX
+
+
+def _capture_warmup(monkeypatch):
+    sent = []
+
+    class _Resp:
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(local_client.HTTP, "post",
+                        lambda url, **kw: sent.append(kw["json"]) or _Resp())
+    return sent
+
+
+def test_warmup_loads_the_model_at_the_runtime_context_window(monkeypatch):
+    sent = _capture_warmup(monkeypatch)
+    monkeypatch.setattr(local_client, "MAIN_MODEL", "main:tag")
+    monkeypatch.setattr(local_client, "FAST_MODEL", "fast:tag")
+    out = local_client.warmup()
+    assert [p["model"] for p in sent] == ["main:tag", "fast:tag"]
+    assert all(p["options"]["num_ctx"] == local_client.NUM_CTX for p in sent)
+    assert out["main"]["ok"] and out["fast"]["ok"]
+
+
+def test_warmup_loads_a_shared_tag_once(monkeypatch):
+    sent = _capture_warmup(monkeypatch)
+    monkeypatch.setattr(local_client, "MAIN_MODEL", "one:tag")
+    monkeypatch.setattr(local_client, "FAST_MODEL", "one:tag")
+    out = local_client.warmup()
+    assert len(sent) == 1 and out["main"] == out["fast"]
 
 
 def test_percent_units_render_the_way_notes_render_them(graph_mod):

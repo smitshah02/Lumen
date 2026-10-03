@@ -22,6 +22,7 @@ Public API:
 """
 from __future__ import annotations
 
+import functools
 import re
 import logging
 from collections import OrderedDict
@@ -95,6 +96,14 @@ def _mentions(question_lc: str, phrase: str) -> bool:
     return re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", question_lc) is not None
 
 
+def label_tokens(text: str) -> frozenset[str]:
+    """The words of a label or question, order- and punctuation-free:
+    '% Hemoglobin A1c' -> {'hemoglobin', 'a1c'}; 'Creatinine, Urine' and
+    'urine creatinine' -> {'creatinine', 'urine'}. Empty for a label with no
+    letters or digits (MIMIC has a single-space one)."""
+    return frozenset(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
 class LabResolver:
     def __init__(self):
         # (itemid, label_lower, fluid_lower) — small table, load once into memory.
@@ -106,11 +115,18 @@ class LabResolver:
                 self._items.append((int(itemid), (label or "").lower(), (fluid or "").lower()))
         logger.info("LabResolver loaded %d lab definitions", len(self._items))
 
-    @property
+    @functools.cached_property
     def labels(self) -> list[str]:
         """Every analyte name in d_labitems. Read-only; used by callers that must
         tell 'this patient has no A1c' apart from 'the question did not ask'."""
         return sorted({lab for (_, lab, _) in self._items if lab})
+
+    def labels_for(self, itemids: list[int]) -> list[str]:
+        """Distinct dictionary labels of the analytes a question resolved to.
+        More than one means the question is ambiguous whatever rows a given
+        patient happens to have ("cholesterol": total, HDL, LDL)."""
+        wanted = set(itemids)
+        return sorted({lab for (i, lab, _) in self._items if i in wanted and lab})
 
     def _keyword_to_itemids(self, keyword: str) -> list[int]:
         kw = keyword.lower()
@@ -159,12 +175,11 @@ class LabResolver:
             return []
         hadm_clause = "AND l.hadm_id = :hadm" if hadm_id is not None else ""
         stmt = sa.text(f"""
-            SELECT d.label, d.itemid, l.charttime, l.valuenum, l.valueuom, l.flag
+            SELECT d.label, d.itemid, l.charttime, l.valuenum, l.valueuom, l.flag, d.fluid
             FROM labevents l
             JOIN d_labitems d ON d.itemid = l.itemid
             WHERE l.subject_id = :sid
               AND l.itemid IN :itemids
-              AND l.valuenum IS NOT NULL
               {hadm_clause}
             ORDER BY d.label, l.charttime
         """).bindparams(sa.bindparam("itemids", expanding=True))
@@ -175,9 +190,18 @@ class LabResolver:
         with engine.connect() as c:
             raw = c.execute(stmt, params).fetchall()
 
-        # group by label, cap per analyte to protect the context window
+        # group by label, cap per analyte to protect the context window.
+        # Non-numeric results ("<0.01", "NEG") carry no valuenum and are not
+        # rendered, but the time of the newest one is kept: when it is later
+        # than the last number, that number is not the patient's latest result.
         grouped: "OrderedDict[str, list]" = OrderedDict()
-        for label, itemid, charttime, valuenum, uom, flag in raw:
+        last_non_numeric: dict[str, str] = {}
+        fluids: dict[str, set] = {}
+        for label, itemid, charttime, valuenum, uom, flag, fluid in raw:
+            fluids.setdefault(label, set()).add((fluid or "").lower())
+            if valuenum is None:
+                last_non_numeric[label] = max(last_non_numeric.get(label, ""), str(charttime))
+                continue
             grouped.setdefault(label, []).append({
                 "charttime": str(charttime),
                 "date": str(charttime)[:10],
@@ -188,14 +212,23 @@ class LabResolver:
 
         out = []
         for label, vals in grouped.items():
-            capped = vals[:per_lab_cap]
+            capped = vals[-per_lab_cap:]      # rows are ascending: keep the NEWEST
             out.append({
                 "label": label,
-                "uom": next((v["uom"] for v in capped if v["uom"]), ""),
+                "uom": next((v["uom"] for v in reversed(capped) if v["uom"]), ""),   # latest unit
                 "values": capped,
                 "n_total": len(vals),
                 "n_shown": len(capped),
                 "n_abnormal": sum(1 for v in vals if v["abnormal"]),
+                # >=: a non-numeric result at the same time is a competing latest result
+                "newer_non_numeric": last_non_numeric.get(label, "") >= vals[-1]["charttime"],
+                # itemids sharing a label (blood-gas vs chemistry glucose) can
+                # disagree at one charttime; then there is no single latest value
+                "conflicting_latest": len({v["valuenum"] for v in vals
+                                           if v["charttime"] == vals[-1]["charttime"]}) > 1,
+                # itemids can share a label across specimens; a series drawn
+                # from several has no single "latest" value
+                "fluids": sorted(fluids[label]),
             })
         return out
 

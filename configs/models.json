@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "ollama": {
-    "runtime_main": "qwen3:30b-a3b-instruct-2507-q4_K_M",
+    "runtime_main": "qwen3:4b-instruct-2507-q4_K_M",
     "runtime_fast": "qwen3:4b-instruct-2507-q4_K_M",
     "independent_judge": "qwen2.5:14b"
   },

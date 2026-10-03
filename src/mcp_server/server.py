@@ -140,7 +140,7 @@ def search_guidelines(query: str, top_k: int = 3) -> dict:
 
 @mcp.tool()
 def get_lab_trend(subject_id: int, lab_name: str, limit: int = 20) -> dict:
-    """Return a patient's values for one lab test over time, oldest first.
+    """Return a patient's newest `limit` values for one lab test, oldest first.
 
     Args:
         subject_id: patient identifier
@@ -167,7 +167,7 @@ def get_lab_trend(subject_id: int, lab_name: str, limit: int = 20) -> dict:
         for value in group["values"]
     ]
     values.sort(key=lambda value: value["charttime"])
-    values = values[:limit]
+    values = values[-limit:]
 
     return {
         "notice": planes.banner(), "lab": lab_name, "matched": matched,

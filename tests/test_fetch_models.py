@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from scripts import fetch_models as models
 
 
@@ -57,3 +59,41 @@ def test_written_manifest_records_hashes_not_absolute_paths(tmp_path):
     payload = json.loads((target / models.LOCAL_MANIFEST).read_text())
     assert set(payload["files"]) == {"config.json", "model.safetensors"}
     assert len(payload["files"]["model.safetensors"]["sha256"]) == 64
+
+
+def test_adopt_local_records_weights_that_match_the_pinned_revision(tmp_path):
+    target = tmp_path / "example"
+    make_model(target)
+    published = lambda spec: models.sha256_file(target / "model.safetensors")
+    assert models.adopt_local_model("example", SPEC, target, published=published) == []
+    manifest = json.loads((target / models.LOCAL_MANIFEST).read_text())
+    assert manifest["revision"] == SPEC["revision"]
+    assert models.verify_local_model("example", SPEC, target) == []
+
+
+def test_adopt_local_refuses_weights_that_are_not_the_pinned_revision(tmp_path):
+    target = tmp_path / "example"
+    make_model(target)
+    errors = models.adopt_local_model("example", SPEC, target, published=lambda spec: "0" * 64)
+    assert errors == ["local model.safetensors does not match the pinned revision"]
+    assert not (target / models.LOCAL_MANIFEST).exists()      # nothing recorded
+    assert models.adopt_local_model("example", SPEC, target, published=lambda spec: None)
+
+
+def test_adopt_local_cli_refuses_weights_that_do_not_match(tmp_path, monkeypatch, capsys):
+    make_model(tmp_path / "example")
+    monkeypatch.setattr(models, "MODELS_DIR", tmp_path)
+    monkeypatch.setattr(models, "selected_models", lambda profile: {"example": SPEC})
+    monkeypatch.setattr(models, "published_weights_sha256", lambda spec: "0" * 64)
+    assert models.main(["--adopt-local"]) == 1
+    assert not (tmp_path / "example" / models.LOCAL_MANIFEST).exists()
+
+
+def test_adopt_local_cli_reports_an_already_verified_model_as_such(tmp_path, monkeypatch, capsys):
+    make_model(tmp_path / "example")
+    models.write_local_manifest("example", SPEC, tmp_path / "example")
+    monkeypatch.setattr(models, "MODELS_DIR", tmp_path)
+    monkeypatch.setattr(models, "selected_models", lambda profile: {"example": SPEC})
+    monkeypatch.setattr(models, "published_weights_sha256", lambda spec: pytest.fail("no Hub call needed"))
+    assert models.main(["--adopt-local"]) == 0
+    assert "already verified" in capsys.readouterr().out

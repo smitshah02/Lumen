@@ -157,7 +157,7 @@ def compare_one(row: dict, http_status: int, payload: dict) -> dict:
 
 def default_caller(base_url: str, timeout: int = 300):
     """A POST /ask caller. Injected in tests so the logic needs no server."""
-    import requests
+    from src.llm.local_client import HTTP as requests  # proxy-free: answers stay local
     base = (base_url or "").rstrip("/")
 
     def call(subject_id: int, query: str, request_id: str):
@@ -174,7 +174,7 @@ def default_caller(base_url: str, timeout: int = 300):
 def probe(base_url: str, timeout: int = 10) -> dict:
     """Is the API reachable? A negative answer is a skip, never a failure."""
     try:
-        import requests
+        from src.llm.local_client import HTTP as requests  # proxy-free: answers stay local
         r = requests.get(f"{(base_url or '').rstrip('/')}/health", timeout=timeout)
         return {"reachable": r.status_code == 200, "http": r.status_code}
     except Exception as e:

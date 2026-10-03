@@ -6,7 +6,13 @@ manifest exists and every recorded file hash still matches.
 
     python scripts/fetch_models.py
     python scripts/fetch_models.py --verify
+    python scripts/fetch_models.py --adopt-local
     python scripts/fetch_models.py --profile legacy-eval
+
+``--adopt-local`` is for weights already on disk without a manifest. It
+downloads nothing: it asks the Hub for the pinned revision's published
+``model.safetensors`` hash (repository and revision identifiers are the only
+thing sent) and writes the manifest only when the local file matches.
 
 The runtime profile contains MedCPT query/article encoders and the BGE
 reranker. The retired MedCPT cross-encoder comparison is fetched only through
@@ -123,10 +129,38 @@ def verify_local_model(name: str, spec: dict, target: Path) -> list[str]:
     return errors
 
 
+def published_weights_sha256(spec: dict) -> str | None:
+    """SHA-256 the Hub publishes for model.safetensors at the pinned revision."""
+    from huggingface_hub import HfApi
+    info = HfApi().model_info(spec["repo"], revision=spec["revision"], files_metadata=True)
+    for sibling in info.siblings or []:
+        if sibling.rfilename == "model.safetensors" and sibling.lfs:
+            lfs = sibling.lfs
+            return lfs["sha256"] if isinstance(lfs, dict) else lfs.sha256
+    return None
+
+
+def adopt_local_model(name: str, spec: dict, target: Path, published=None) -> list[str]:
+    """Write the manifest for weights already on disk, if they are the pinned ones."""
+    weights = target / "model.safetensors"
+    if not weights.is_file() or not (target / "config.json").is_file():
+        return ["required config.json/model.safetensors is missing"]
+    expected = (published or published_weights_sha256)(spec)
+    if not expected:
+        return ["the Hub publishes no model.safetensors hash for the pinned revision"]
+    if sha256_file(weights) != expected:
+        return ["local model.safetensors does not match the pinned revision"]
+    write_local_manifest(name, spec, target)
+    return verify_local_model(name, spec, target)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("runtime", "legacy-eval", "all"), default="runtime")
     parser.add_argument("--verify", action="store_true", help="verify locally; never download")
+    parser.add_argument("--adopt-local", action="store_true",
+                        help="record existing local weights after checking their hash against "
+                             "the pinned revision; never downloads weights")
     return parser.parse_args(argv)
 
 
@@ -141,6 +175,18 @@ def main(argv: list[str] | None = None) -> int:
         for name, spec in chosen.items():
             errors = verify_local_model(name, spec, MODELS_DIR / name)
             print(f"{name}: {'FAILED — ' + '; '.join(errors) if errors else 'verified'}")
+            failed |= bool(errors)
+        return 1 if failed else 0
+
+    if args.adopt_local:
+        failed = False
+        for name, spec in chosen.items():
+            target = MODELS_DIR / name
+            if not verify_local_model(name, spec, target):
+                print(f"{name}: already verified, nothing to adopt")
+                continue
+            errors = adopt_local_model(name, spec, target)
+            print(f"{name}: {'REFUSED — ' + '; '.join(errors) if errors else 'adopted, matches ' + spec['revision'][:12]}")
             failed |= bool(errors)
         return 1 if failed else 0
 

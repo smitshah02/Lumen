@@ -1,9 +1,12 @@
 """
 LLM-as-Judge for Clinical Retrieval Relevance
 =============================================
-Grades how well a retrieved chunk answers a query, on a 0-3 scale, using a GROQ
-model (default Llama-3.3-70B). Built to replace the keyword-presence judge,
-whose circularity inflated and saturated the earlier scores.
+Grades how well a retrieved chunk answers a query, on a 0-3 scale, using a
+LOCAL model. The judge has no hosted backend: it only ever calls the `call_fn`
+it is given, and `make_ollama_judge()` is the supported way to build one, so
+retrieved clinical text cannot leave the machine through this module. Built to
+replace the keyword-presence judge, whose circularity inflated and saturated
+the earlier scores.
 
 Robustness features:
   - Deterministic grading (temperature 0) so re-runs are stable.
@@ -21,12 +24,11 @@ Robustness features:
 Usage:
     from src.evals.llm_judge import LLMJudge, build_pooled_relevance
 
-    judge = LLMJudge(model="llama-3.3-70b-versatile")   # reads GROQ_API_KEY
+    from src.evals.ollama_backend import make_ollama_judge
+    judge = make_ollama_judge()                          # local Ollama only
     relevant_ids, grades, per_config = build_pooled_relevance(
         query_text, configs_results, judge, threshold=2
     )
-
-Requires: pip install groq   (and env var GROQ_API_KEY)
 """
 
 from __future__ import annotations
@@ -149,7 +151,7 @@ def _with_retries(fn: Callable, max_retries: int, base_delay: float, max_rate_li
 
     429s don't spend the same limited `max_retries` budget as genuine errors:
     the real wait time is already enforced by the caller's shared throttle
-    (LLMJudge._note_rate_limit sets the resume time from Groq's own
+    (LLMJudge._note_rate_limit sets the resume time from the backend's
     Retry-After header), so here we just keep retrying — bounded by
     `max_rate_limit_retries` — instead of giving up and silently scoring the
     chunk 0 after a handful of attempts, which would bias results toward
@@ -161,7 +163,7 @@ def _with_retries(fn: Callable, max_retries: int, base_delay: float, max_rate_li
     while True:
         try:
             return fn()
-        except Exception as e:  # broad: GROQ/openai SDK exception types vary by version
+        except Exception as e:  # broad: backend exception types vary
             last_exc = e
             msg = str(e).lower()
             status = getattr(e, "status_code", None)
@@ -190,8 +192,7 @@ def _with_retries(fn: Callable, max_retries: int, base_delay: float, max_rate_li
 class LLMJudge:
     def __init__(
         self,
-        model: str = "llama-3.1-8b-instant",
-        api_key: Optional[str] = None,
+        model: str = "unset",          # a label for the cache key; call_fn decides what runs
         temperature: float = 0.0,
         max_tokens: int = 200,
         timeout: float = 30.0,
@@ -207,7 +208,6 @@ class LLMJudge:
         requests_per_second: float = 0.5,
     ):
         self.model = model
-        self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -225,9 +225,8 @@ class LLMJudge:
         self._cache: dict[str, dict] = self._load_cache()
 
         # Global request pacing: spreads calls out across ALL worker threads so
-        # a `max_workers`-wide burst doesn't slam the Groq rate limit. Only
-        # applies to real API calls (not the injected call_fn used in tests),
-        # and only paces *when* a request starts — retries/backoff on 429s are
+        # a `max_workers`-wide burst doesn't overload the backend. It only
+        # paces *when* a request starts — retries/backoff on 429s are
         # unaffected, this just makes them rarer.
         self.requests_per_second = requests_per_second
         self._min_interval = (1.0 / requests_per_second) if requests_per_second and requests_per_second > 0 else 0.0
@@ -259,7 +258,7 @@ class LLMJudge:
             time.sleep(wait)
 
     def _note_rate_limit(self, exc: Exception):
-        """On a 429, read Groq's real Retry-After and push the SHARED cooldown
+        """On a 429, read the backend's Retry-After and push the SHARED cooldown
         out so every thread's next _throttle() blocks until then — not just
         the thread that got limited. Without this, N worker threads each back
         off independently and keep re-firing into a window that's still

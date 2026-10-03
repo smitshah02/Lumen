@@ -33,8 +33,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
-from src.config import MODELS_CONFIG, MODELS_DIR, PGVECTOR_VERSION, VALID_PLANES
-from src.retrieval.index_provenance import configuration_hash as index_configuration_hash
+from src.config import MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
+from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
+                                            legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
 from src.llm import local_client
 from src.obs import tracing
@@ -190,6 +191,13 @@ async def _on_generation(request: Request, exc: GenerationFailed):
 # ---------------------------------------------------------------------------
 # Dependencies (module-level so tests can replace them)
 # ---------------------------------------------------------------------------
+def _extension_status(installed) -> tuple[str, bool]:
+    """(readiness status, patch mismatch) for an installed pgvector version."""
+    status = pgvector_status(installed)
+    return ("ok" if status in ("ok", "patch_mismatch") else "missing_or_wrong_version",
+            status == "patch_mismatch")
+
+
 def _check_database() -> dict:
     with storage.engine.connect() as c:
         db = c.execute(text("SELECT current_database()")).scalar()
@@ -209,6 +217,7 @@ def _check_database() -> dict:
         eligible_notes = None
         indexed_notes = None
         ingestion_status = None
+        index_provenance = None
         if not missing_tables:
             schema_version = c.execute(text(
                 "SELECT COALESCE(MAX(version), 0) FROM lumen_schema_version"
@@ -222,13 +231,22 @@ def _check_database() -> dict:
                 WHERE COALESCE(text_deid, text_original) IS NOT NULL
                   AND COALESCE(text_deid, text_original) != ''
             """)).scalar()
+            # The current configuration, or an index adopted as-is from before
+            # provenance was recorded (reported below, never hidden).
+            legacy = legacy_adopted_hashes(c)
             indexed_notes = c.execute(text("""
                 SELECT COUNT(*) FROM note_index_state nis
-                WHERE nis.status='completed' AND nis.config_hash=:config_hash
+                WHERE nis.status='completed' AND nis.config_hash = ANY(:config_hashes)
                   AND nis.chunk_count=(
                       SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id=nis.note_id
                   )
-            """), {"config_hash": index_configuration_hash()}).scalar()
+            """), {"config_hashes": [index_configuration_hash(), *legacy]}).scalar()
+            # From the state rows, not the run log: after a full --reindex the
+            # adopted run row remains but no note carries its hash any more.
+            index_provenance = "legacy_adopted" if legacy and c.execute(text("""
+                SELECT EXISTS (SELECT 1 FROM note_index_state
+                               WHERE status='completed' AND config_hash = ANY(:legacy))
+            """), {"legacy": legacy}).scalar() else "current"
             if DATA_PLANE in {"synthea", "research"}:
                 ingestion_status = c.execute(text("""
                     SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
@@ -251,7 +269,7 @@ def _check_database() -> dict:
     return {
         "database": "ok" if plane_ok else "wrong_database",
         "schema": "ok" if schema_ok else "missing_or_outdated",
-        "extension": "ok" if extension == PGVECTOR_VERSION else "missing_or_wrong_version",
+        "extension": _extension_status(extension)[0],
         "corpus": "ok" if chunks else "empty" if chunks == 0 else "unknown",
         "ingestion": ("ok" if DATA_PLANE == "demo" else
                       "ok" if ingestion_status in ("completed", "legacy_completed") else
@@ -260,6 +278,8 @@ def _check_database() -> dict:
                   "incomplete_or_stale" if eligible_notes is not None else "unknown"),
         "schema_version": schema_version,
         "pgvector_version": extension,
+        "pgvector_patch_mismatch": _extension_status(extension)[1],
+        "index_provenance": index_provenance,
         "missing_tables": missing_tables,
         "missing_indexes": sorted(required_indexes - indexes),
         "indexed_notes": indexed_notes,
@@ -371,6 +391,8 @@ async def ready(request: Request):
                        "roles": local_client.runtime_config()["roles"]}, "dependencies": deps,
             "database_details": {"schema_version": db.get("schema_version"),
                                  "pgvector_version": db.get("pgvector_version"),
+                                 "pgvector_patch_mismatch": db.get("pgvector_patch_mismatch", False),
+                                 "index_provenance": db.get("index_provenance"),
                                  "missing_tables": db.get("missing_tables", []),
                                  "missing_indexes": db.get("missing_indexes", []),
                                  "indexed_notes": db.get("indexed_notes"),

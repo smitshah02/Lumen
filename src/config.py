@@ -54,6 +54,24 @@ FAST_MODEL_DEFAULT = MODELS_CONFIG["ollama"]["runtime_fast"]
 JUDGE_MODEL_DEFAULT = MODELS_CONFIG["ollama"]["independent_judge"]
 PGVECTOR_VERSION = "0.8.6"
 
+
+def pgvector_status(installed: str | None, pinned: str = PGVECTOR_VERSION) -> str:
+    """Compare an installed pgvector version with the pin.
+
+    ok              exact match
+    patch_mismatch  same major.minor, different patch: usable. pgvector keeps the
+                    HNSW on-disk format within a minor line, so this is reported,
+                    not failed.
+    incompatible    missing, unparseable, or a different major/minor
+    """
+    if installed == pinned:
+        return "ok"
+    try:
+        have, want = [int(p) for p in (installed or "").split(".")], [int(p) for p in pinned.split(".")]
+    except ValueError:
+        return "incompatible"
+    return "patch_mismatch" if len(have) == 3 and have[:2] == want[:2] else "incompatible"
+
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _LOCAL_NAMES = frozenset({"localhost", "host.docker.internal"})
 

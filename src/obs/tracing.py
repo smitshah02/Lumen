@@ -53,8 +53,15 @@ def _hostname() -> str:
     return urlparse(_effective_url()).hostname or ""
 
 
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
 def _policy() -> tuple[bool, str]:
     url = urlparse(_effective_url())
+    if PLANE == "research" and any(os.environ.get(v) for v in _PROXY_VARS):
+        # The Langfuse SDK honours proxy settings, so a "local" endpoint is not
+        # local once a proxy is set, and research traces carry note text.
+        return False, "research tracing refused while a proxy is configured"
     if (url.hostname or "") in _LOCAL_HOSTS:
         return True, "local endpoint"
     if PLANE not in {"demo", "synthea"}:

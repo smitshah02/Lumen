@@ -33,7 +33,8 @@ from src.storage import engine
 from src.retrieval.chunker import ClinicalNoteChunker
 from src.retrieval.embeddings import MedCPTEmbedder
 from src.retrieval.index_provenance import (CHUNKER_CONFIG, configuration_hash,
-                                            index_configuration)
+                                            index_configuration,
+                                            legacy_adopted_hashes)
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def fetch_unindexed_note_ids(config_hash: str, note_type: Optional[str] = None) 
             SELECT 1 FROM note_index_state nis
             WHERE nis.note_id = cn.note_id
               AND nis.status = 'completed'
-              AND nis.config_hash = :config_hash
+              AND nis.config_hash = ANY(:config_hashes)
               AND nis.chunk_count = (
                   SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id = cn.note_id
               )
@@ -104,12 +105,14 @@ def fetch_unindexed_note_ids(config_hash: str, note_type: Optional[str] = None) 
           AND COALESCE(cn.text_deid, cn.text_original) IS NOT NULL
           AND COALESCE(cn.text_deid, cn.text_original) != ''
     """
-    params = {"config_hash": config_hash}
+    params = {}
     if note_type:
         query += " AND cn.note_type = :note_type"
         params["note_type"] = note_type
     query += " ORDER BY cn.note_id"
     with engine.connect() as conn:
+        # A legacy-adopted index counts as indexed; only --reindex replaces it.
+        params["config_hashes"] = [config_hash, *legacy_adopted_hashes(conn)]
         result = conn.execute(sa_text(query), params)
         return [row[0] for row in result]
 
@@ -354,6 +357,19 @@ def _run_indexing_steps(
     return {"notes": total_notes_done, "chunks": total_chunks_created}
 
 
+def _legacy_index_unadopted() -> bool:
+    """Some note has chunks but no index-state row: part of an index built
+    before provenance tracking that was never adopted. (A note indexed by this
+    module always gets its state row first, so this cannot be a run in
+    progress.) One adopted or --limit-indexed note must not hide the rest."""
+    with engine.connect() as conn:
+        return bool(conn.execute(sa_text("""
+            SELECT EXISTS (
+                SELECT 1 FROM note_chunks nc
+                WHERE NOT EXISTS (SELECT 1 FROM note_index_state nis WHERE nis.note_id = nc.note_id))
+        """)).scalar())
+
+
 def run_indexing(
     limit: Optional[int] = None,
     note_type: Optional[str] = None,
@@ -363,6 +379,14 @@ def run_indexing(
     cooldown_secs: int = 30,
 ):
     """Index notes with durable provenance and run completion accounting."""
+    if not reindex and _legacy_index_unadopted():
+        # Without this, every note looks unindexed and is deleted and re-embedded.
+        raise RuntimeError(
+            "note_chunks holds an index with no provenance rows; record it with "
+            "`python -m src.storage.adopt_legacy_index --apply --confirm-legacy-adoption` "
+            "(scripts/lumen research adopt), or pass --reindex to rebuild it deliberately; "
+            "adoption refuses an index that some notes already track, which leaves --reindex"
+        )
     configuration = {
         **index_configuration(),
         "scope": {"limit": limit, "note_type": note_type, "reindex": reindex},
