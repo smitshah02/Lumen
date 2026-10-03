@@ -628,6 +628,11 @@ _TEMPORAL_PATTERNS = [
 ]
 
 
+# Detected, never stripped: removing the verb leaves "How did creatinine the
+# patient's available record?", which retrieves nothing useful.
+_KEEP_WHEN_STRIPPING = frozenset({r"\bchang(?:e|ed|ing) over\b"})
+
+
 def detect_temporal_mode(query: str) -> str:
     q = query.lower()
     for mode, patterns in _TEMPORAL_PATTERNS:   # latest > earliest > trend > recent
@@ -654,9 +659,11 @@ def strip_temporal_intent(query: str, mode: Optional[str] = None) -> str:
     for pattern_mode, patterns in _TEMPORAL_PATTERNS:
         if pattern_mode == resolved:
             for pattern in patterns:
-                cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+                if pattern not in _KEEP_WHEN_STRIPPING:
+                    cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
 
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n,;:-")
+    cleaned = re.sub(r"\s+([?.!,])", r"\1", cleaned)      # "the creatinine ?" -> "the creatinine?"
     # A control-only query has no clinical retrieval term. Preserve the
     # original rather than manufacturing an empty embedding/search.
     return cleaned or query.strip()

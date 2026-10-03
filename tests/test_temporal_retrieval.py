@@ -119,6 +119,11 @@ def test_temporal_intent_detection(query, expected):
         ("earliest HbA1c value", "HbA1c value"),
         ("first recorded creatinine", "creatinine"),
         ("creatinine trend over time", "creatinine"),
+        # the verb is content: stripping "change over" left "How did creatinine the patient's..."
+        ("How did creatinine change over the patient's available record?",
+         "How did creatinine change over the patient's available record?"),
+        ("How has potassium changed over time?", "How has potassium changed?"),
+        ("What was the creatinine trend?", "What was the creatinine?"),
         ("abnormal potassium lab results", "abnormal potassium lab results"),
     ],
 )

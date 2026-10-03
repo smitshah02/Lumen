@@ -75,6 +75,12 @@ class AgentState(TypedDict, total=False):
     # row), label "L#" — so citations.validate and the API treat it like any
     # other source.
     lab_evidence: list[Evidence]
+    # Rows read from the admissions table by encounter_lookup, label "A#".
+    encounter_evidence: list[Evidence]
+    # Set by a structured lookup that FOUND rows for the question but declined
+    # to answer it (a word it did not understand). Verification will not
+    # auto-approve "the records do not contain enough information" while set.
+    structured_rows: int
 
     # --- generation ---
     draft_answer: str

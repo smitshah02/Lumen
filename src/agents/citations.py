@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-CITE_RE = re.compile(r"\[([SLGP]\d+)\]")   # P = published literature
+CITE_RE = re.compile(r"\[([SLGPA]\d+)\]")   # P = published literature, A = admissions table
 # Sentence split that tolerates clinical abbreviations (mg., q.d., Dr.)
 _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[])")
 
@@ -33,7 +33,7 @@ def split_claims(answer: str) -> list[str]:
 # trailing period). Models emit these as a line of their own after the sentence
 # they belong to — "The patient is taking furosemide.\n[S5]" — which the
 # sentence splitter then reads as two claims: one uncited and one meaningless.
-_CITE_ONLY_RE = re.compile(r"^(?:\s*\[[SLGP]\d+\]\s*)+\.?\s*$")
+_CITE_ONLY_RE = re.compile(r"^(?:\s*\[[SLGPA]\d+\]\s*)+\.?\s*$")
 _PARA_RE = re.compile(r"(\n[ \t]*\n)")
 _TRAILING_PUNCT_RE = re.compile(r"([.!?]+)\s*$")
 

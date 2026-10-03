@@ -181,13 +181,51 @@ def classify(query: str, temporal_mode: str = "all") -> Decision:
 
 
 def wants_deterministic_lab(d: Decision, temporal_mode: str, subject_id) -> bool:
-    """Is this a question the structured `labevents` path can answer outright?
+    """Is this a question the structured `labevents` path may try to answer?
 
-    Every condition has to hold: a confident single-analyte latest-value lookup
-    for one patient. Anything broader (a trend, a comparison, a second clause,
-    an uncertain classification) goes through normal retrieval and synthesis."""
-    return (subject_id is not None
-            and d.confident
-            and d.query_type == "lab_trend"
-            and d.complexity == "simple"
-            and temporal_mode == "latest")
+    A confident lab question about one patient asking for the latest value, the
+    earliest value, or the trend. This only opens the door: lab_lookup still
+    refuses anything it does not fully understand (a second analyte, a
+    qualifier, an extra clause) and hands it to retrieval and synthesis."""
+    if subject_id is None or not d.confident or d.query_type != "lab_trend":
+        return False
+    if temporal_mode == "latest":
+        return d.complexity == "simple"
+    return temporal_mode in ("earliest", "trend")
+
+
+_ENCOUNTER_RE = re.compile(r"\b(?:admissions?|admitted|hospitali[sz]ations?)\b", re.I)
+# Every word a question the admissions table can answer outright may contain.
+_ENCOUNTER_WORDS = frozenset("""
+    how many number of total hospital inpatient admission admissions admitted hospitalization
+    hospitalizations hospitalisation hospitalisations does do did has have had been there the a an
+    patient patient's patients s this their his her and when was were is are what which date
+    most recent recently latest last newest earliest first oldest one in on record records recorded
+""".split())
+_ENCOUNTER_INTENTS = {
+    "count": ({"many"}, {"number"}),
+    "latest": ({"recent"}, {"recently"}, {"latest"}, {"last"}, {"newest"}),
+    "earliest": ({"earliest"}, {"first"}, {"oldest"}),
+}
+
+
+def encounter_intents(query: str) -> tuple[set[str], bool]:
+    """What an admissions question asks for, and whether that is ALL it asks.
+
+    Returns ({"count", "latest", "earliest"} subset, fully_understood). The
+    admissions table answers a question only when every word is accounted for;
+    "how many admissions, and why?" has intents but is not fully understood."""
+    q = (query or "").lower()
+    if not _ENCOUNTER_RE.search(q):
+        return set(), False
+    words = set(re.findall(r"[a-z0-9]+", q))
+    intents = {name for name, alts in _ENCOUNTER_INTENTS.items() if any(a <= words for a in alts)}
+    return intents, bool(intents) and words <= _ENCOUNTER_WORDS
+
+
+def wants_encounter_lookup(d: Decision, query: str, subject_id) -> bool:
+    """Route to the admissions table when the question is about admissions and
+    asks for a count or a first/last one. encounter_lookup decides whether it
+    can answer; a miss falls through to retrieval."""
+    return (subject_id is not None and d.query_type not in ("unsupported", "guideline_check", "literature")
+            and bool(encounter_intents(query)[0]))

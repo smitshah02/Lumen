@@ -196,11 +196,15 @@ class LabResolver:
         # than the last number, that number is not the patient's latest result.
         grouped: "OrderedDict[str, list]" = OrderedDict()
         last_non_numeric: dict[str, str] = {}
+        first_non_numeric: dict[str, str] = {}
+        n_non_numeric: dict[str, int] = {}
         fluids: dict[str, set] = {}
         for label, itemid, charttime, valuenum, uom, flag, fluid in raw:
             fluids.setdefault(label, set()).add((fluid or "").lower())
             if valuenum is None:
                 last_non_numeric[label] = max(last_non_numeric.get(label, ""), str(charttime))
+                first_non_numeric[label] = min(first_non_numeric.get(label, "~"), str(charttime))
+                n_non_numeric[label] = n_non_numeric.get(label, 0) + 1
                 continue
             grouped.setdefault(label, []).append({
                 "charttime": str(charttime),
@@ -226,6 +230,12 @@ class LabResolver:
                 # disagree at one charttime; then there is no single latest value
                 "conflicting_latest": len({v["valuenum"] for v in vals
                                            if v["charttime"] == vals[-1]["charttime"]}) > 1,
+                # the same two questions about the OLDEST result, for "earliest"
+                # and for the first endpoint of a trend
+                "older_non_numeric": first_non_numeric.get(label, "~") <= vals[0]["charttime"],
+                "conflicting_earliest": len({v["valuenum"] for v in vals
+                                             if v["charttime"] == vals[0]["charttime"]}) > 1,
+                "n_non_numeric": n_non_numeric.get(label, 0),
                 # itemids can share a label across specimens; a series drawn
                 # from several has no single "latest" value
                 "fluids": sorted(fluids[label]),

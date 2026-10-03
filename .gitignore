@@ -88,3 +88,6 @@ results/final_eval/
 # Generated deployment/evaluation metadata
 .deployment_source.json
 artifacts/
+.archify/
+Lumen_Manual_Blackbox_Failure_Report_3_Patients.md
+TODOs.md

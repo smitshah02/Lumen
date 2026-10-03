@@ -6,8 +6,8 @@ Day 2: real node bodies and conditional routing.
     triage ──> patient_retrieval ──> guideline_retrieval ──> synthesis ──> verification
        │  │           │                       ▲
        │  │           └───────────────────────┘ (skipped unless needed)
-       │  └──> lab_lookup ──> finalize            (structured hit: no LLM at all)
-       │              └──────> patient_retrieval  (miss: normal path)
+       │  └──> lab_lookup / encounter_lookup ──> finalize   (structured hit: no LLM at all)
+       │              └──────> patient_retrieval            (miss: normal path)
        └──> refuse ──> END
 
 Latency shape: triage classifies in code and only calls the FAST model on an
@@ -30,12 +30,14 @@ from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
+import sqlalchemy as sa
 
 from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
 from src.agents import prompts, citations, verify as verify_util
-from src.agents.classify import classify, wants_deterministic_lab
+from src.agents.classify import (classify, encounter_intents, wants_deterministic_lab,
+                                 wants_encounter_lookup)
 from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
 from src.obs.logging import bump
@@ -51,11 +53,12 @@ logger = logging.getLogger(__name__)
 PATIENT_TOP_K = 5      # keep the synthesis prompt inside num_ctx on 16GB
 GUIDELINE_TOP_K = 3
 
-# The structured-lab shortcut answers "what was the most recent <analyte>"
-# straight from labevents. Set LUMEN_DETERMINISTIC_LABS=0 to force every
+# The structured shortcuts answer "most recent / earliest / trend of <analyte>"
+# straight from labevents, and admission counts and dates from admissions. Set LUMEN_DETERMINISTIC_LABS=0 to force every
 # question back through retrieval + synthesis (used for A/B latency runs).
 DETERMINISTIC_LABS = os.environ.get("LUMEN_DETERMINISTIC_LABS", "1").strip() not in ("0", "false", "no")
 LAB_RECENT_POINTS = 4   # values rendered per analyte as citable evidence
+LAB_SERIES_CAP = 100_000  # a trend's first/min/max need the whole series, not the newest 80
 
 _retriever: Optional[HybridRetriever] = None
 _guidelines: Optional[GuidelineRetriever] = None
@@ -126,6 +129,7 @@ def _gate_for(state: AgentState) -> EgressGate:
     gate.load_evidence(state.get("patient_evidence", []) or [])
     gate.load_evidence(state.get("guideline_evidence", []) or [])
     gate.load_evidence(state.get("lab_evidence", []) or [])
+    gate.load_evidence(state.get("encounter_evidence", []) or [])
     return gate
 
 
@@ -186,70 +190,196 @@ def triage(state: AgentState) -> dict:
 
 
 def lab_lookup(state: AgentState) -> dict:
-    """Answer a latest-value lab question straight from `labevents`.
+    """Answer a latest / earliest / trend lab question straight from `labevents`.
 
-    This is not a shortcut around grounding: the value, its unit and its date
-    are read from the structured table the notes are generated from, rendered
-    as citable [L#] evidence, and the claim is marked verified because the
-    number in the answer IS the number in the row. It is a shortcut around
-    asking a language model to re-read a number a query can select.
+    This is not a shortcut around grounding: the values, units and dates are
+    read from the structured table the notes are generated from, rendered as
+    citable [L#] evidence, and the claims are marked verified because the
+    numbers in the answer ARE the numbers in the rows. It is a shortcut around
+    asking a language model to re-read numbers a query can select — and, for a
+    trend, around guessing a series from the five note chunks retrieval kept.
 
     A miss — no matching analyte, no rows for this patient, a question that
     does not resolve to exactly one analyte or carries words beyond it, a
-    non-numeric result at or after the last number, two different results at
-    the newest time, or a series drawn from more than one specimen — returns nothing, and the router sends the
-    question down the normal retrieval path with nothing lost.
+    non-numeric or conflicting result at the end of the series the question
+    asks about, mixed units in a trend, or a series drawn from more than one
+    specimen — answers nothing, and the router sends the question down the
+    normal retrieval path. `structured_rows` records that rows existed, so
+    verification will not auto-approve an "insufficient information" answer.
     """
     query, sid = state["query"], state.get("subject_id")
+    mode = state.get("temporal_mode") or detect_temporal_mode(query)
+    if mode not in _MODE_FILLER:
+        mode = "latest"
     try:
         resolver = get_lab_resolver()
         itemids, matched = resolver.match(query)
-        series = resolver.fetch(sid, itemids) if itemids else []
+        series = resolver.fetch(sid, itemids, per_lab_cap=LAB_SERIES_CAP) if itemids else []
     except Exception as e:
         logger.warning(f"[lab_lookup] structured lookup failed ({e}); falling back to retrieval")
         return {"node_trail": _trail(state, "lab_lookup")}
 
     series = [g for g in series if g.get("values")]
-    series = _disambiguate(series, query, resolver.labels, matched, resolver.labels_for(itemids))
-    if any(g.get("newer_non_numeric") or g.get("conflicting_latest") or len(g.get("fluids") or ()) > 1
-           for g in series):
-        logger.info("[lab_lookup] no single latest numeric result — using retrieval")
-        return {"node_trail": _trail(state, "lab_lookup")}
+    miss = {"structured_rows": sum(len(g["values"]) for g in series),
+            "node_trail": _trail(state, "lab_lookup")}
+    series = _disambiguate(series, query, resolver.labels, matched, resolver.labels_for(itemids),
+                           filler=_QUESTION_FILLER | _MODE_FILLER[mode])
+    if any(_endpoint_unclear(g, mode) for g in series):
+        logger.info(f"[lab_lookup] no single {mode} numeric result — using retrieval")
+        return miss
     if len(series) != 1:
         logger.info(f"[lab_lookup] {len(series)} analyte(s) for {matched or 'no match'} — using retrieval")
-        return {"node_trail": _trail(state, "lab_lookup")}
+        return miss
 
-    ev, claims = [], []
-    for i, grp in enumerate(series, 1):
-        label = f"L{i}"
-        recent = grp["values"][-LAB_RECENT_POINTS:]
-        latest = recent[-1]
-        uom = _uom(latest.get("uom") or grp["uom"])
-        history = "; ".join(f"{v['date']} {_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])}"
-                            for v in recent)
-        ev.append({
-            "chunk_id": -1, "source_type": "lab", "note_type": "lab",
-            "charttime": latest["charttime"], "score": 1.0, "label": label,
-            "text": (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
-                     f"{history}. Source: labevents table, subject {sid}."),
-        })
-        claims.append({
-            "claim": (f"The most recent {grp['label'].lower()} was {_num(latest['valuenum'])}{uom} "
-                      f"on {latest['date']} [{label}]."),
-            "label": label, "chunk_id": -1, "verified": True,
-            "verification_note": "deterministic: value read directly from labevents",
-        })
+    grp, label = series[0], "L1"
+    vals, name = grp["values"], grp["label"].lower()
+
+    def point(v: dict) -> str:
+        return f"{_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])} on {v['date']}"
+
+    def history(points: list[dict]) -> str:
+        return "; ".join(f"{v['date']} {_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])}"
+                         for v in points)
+
+    source = f"Source: labevents table, subject {sid}."
+    if mode == "latest":
+        anchor = vals[-1]
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
+                f"{history(vals[-LAB_RECENT_POINTS:])}. {source}")
+        sentences = [f"The most recent {name} was {point(anchor)}"]
+    elif mode == "earliest":
+        anchor = vals[0]
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), earliest shown first: "
+                f"{history(vals[:LAB_RECENT_POINTS])}. {source}")
+        sentences = [f"The earliest {name} was {point(anchor)}"]
+    else:
+        anchor = vals[-1]
+        low, high = min(vals, key=lambda v: v["valuenum"]), max(vals, key=lambda v: v["valuenum"])
+        skipped = grp.get("n_non_numeric") or 0
+        text = (f"{grp['label']} — {len(vals)} numeric value(s) in time order, {vals[0]['date']} to "
+                f"{anchor['date']}. First: {point(vals[0])}. Most recent: {point(anchor)}. "
+                f"Lowest: {point(low)}. Highest: {point(high)}. "
+                f"Last {min(len(vals), LAB_RECENT_POINTS)} value(s): {history(vals[-LAB_RECENT_POINTS:])}. "
+                f"{source}")
+        if len(vals) == 1:
+            sentences = [f"Only one {name} value is recorded ({point(anchor)}), so no trend can be described"]
+        else:
+            sentences = [
+                f"{grp['label']} was measured {len(vals)} times between {vals[0]['date']} and {anchor['date']}"
+                + (f" ({skipped} non-numeric result(s) are not included)" if skipped else ""),
+                f"The first value was {point(vals[0])} and the most recent was {point(anchor)}",
+                f"The lowest value was {point(low)} and the highest was {point(high)}",
+                f"Overall, the values {_direction([v['valuenum'] for v in vals])}",
+            ]
+
+    ev = [{"chunk_id": -1, "source_type": "lab", "note_type": "lab",
+           "charttime": anchor["charttime"], "score": 1.0, "label": label, "text": text}]
+    claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
+               "verification_note": "deterministic: value read directly from labevents"}
+              for sentence in sentences]
 
     answer = " ".join(c["claim"] for c in claims)
     bump("deterministic_answer")
     bump("deterministic_verified", len(claims))
-    logger.info(f"[lab_lookup] answered deterministically from {len(series)} analyte(s), 0 LLM calls")
+    logger.info(f"[lab_lookup] answered {mode} deterministically, 0 LLM calls")
     return {
         "lab_evidence": ev, "draft_answer": answer, "final_answer": answer, "citations": claims,
         "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
                          "deterministic": len(claims), "llm_checked": 0},
-        "needs_human_review": False, "review_status": "auto_approved",
+        "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
         "node_trail": _trail(state, "lab_lookup"),
+    }
+
+
+def _endpoint_unclear(g: dict, mode: str) -> bool:
+    """Is the end of the series this question asks about not one plain number?"""
+    first = g.get("older_non_numeric") or g.get("conflicting_earliest")
+    last = g.get("newer_non_numeric") or g.get("conflicting_latest")
+    return bool(len(g.get("fluids") or ()) > 1
+                or len(g["values"]) < g.get("n_total", 0)          # capped: not the whole series
+                or (mode != "earliest" and last) or (mode != "latest" and first)
+                or (mode == "trend" and len({v.get("uom") for v in g["values"] if v.get("uom")}) > 1))
+
+
+def _direction(nums: list) -> str:
+    """Name a direction only when every consecutive step agrees with it. A
+    series that went up and came back down "fluctuated", whatever its ends say."""
+    steps = [b - a for a, b in zip(nums, nums[1:])]
+    if all(s == 0 for s in steps):
+        return "were unchanged across all measurements"
+    if all(s >= 0 for s in steps):
+        return "rose, with no decrease between consecutive measurements"
+    if all(s <= 0 for s in steps):
+        return "fell, with no increase between consecutive measurements"
+    end = ("higher than" if nums[-1] > nums[0] else "lower than" if nums[-1] < nums[0] else "the same as")
+    return (f"fluctuated, with both rises and falls between measurements; "
+            f"the most recent value is {end} the first")
+
+
+def _admissions(subject_id) -> list[tuple]:
+    """Every admission for one patient as (admittime, dischtime), oldest first."""
+    with engine.connect() as c:
+        return [tuple(r) for r in c.execute(sa.text(
+            "SELECT admittime, dischtime FROM admissions "
+            "WHERE subject_id = :sid ORDER BY admittime, hadm_id"), {"sid": subject_id})]
+
+
+def encounter_lookup(state: AgentState) -> dict:
+    """Answer "how many admissions / when was the first / most recent one" from
+    the `admissions` table. Retrieval sees five note chunks; the count of a
+    patient's admissions is a row count, and no number of chunks contains it.
+
+    Answers only a question every word of which it understands
+    (classify.encounter_intents). Anything else — an extra clause, no rows, an
+    admission with no admit time — falls through to retrieval, with
+    `structured_rows` recording that the table did have rows.
+    """
+    sid = state.get("subject_id")
+    intents, understood = encounter_intents(state["query"])
+    try:
+        rows = _admissions(sid)
+    except Exception as e:
+        logger.warning(f"[encounter_lookup] structured lookup failed ({e}); falling back to retrieval")
+        return {"node_trail": _trail(state, "encounter_lookup")}
+    if not rows or not understood or any(admit is None for admit, _ in rows):
+        logger.info(f"[encounter_lookup] {len(rows)} row(s), understood={understood} — using retrieval")
+        return {"structured_rows": len(rows), "node_trail": _trail(state, "encounter_lookup")}
+
+    def day(t) -> str:
+        return str(t)[:10]
+
+    def stay(which: str, row: tuple) -> str:
+        admit, disch = row
+        return (f"The {which} admission began on {day(admit)}; that stay's discharge date was "
+                f"{day(disch) if disch else 'not recorded'}")
+
+    n, label = len(rows), "A1"
+    sentences = []
+    if "count" in intents:
+        sentences.append(f"The patient has {n} recorded hospital admission{'' if n == 1 else 's'}")
+    if "earliest" in intents:
+        sentences.append(stay("earliest", rows[0]))
+    if "latest" in intents:
+        sentences.append(stay("most recent", rows[-1]))
+
+    ev = [{"chunk_id": -1, "source_type": "admissions", "note_type": "admissions",
+           "charttime": str(rows[-1][0]), "score": 1.0, "label": label,
+           "text": (f"{n} admission(s), admitted -> discharged, oldest first: "
+                    + "; ".join(f"{day(a)} -> {day(d) if d else 'not recorded'}" for a, d in rows)
+                    + f". Source: admissions table, subject {sid}.")}]
+    claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
+               "verification_note": "deterministic: read directly from the admissions table"}
+              for sentence in sentences]
+    answer = " ".join(c["claim"] for c in claims)
+    bump("deterministic_answer")
+    bump("deterministic_verified", len(claims))
+    logger.info(f"[encounter_lookup] answered {sorted(intents)} deterministically, 0 LLM calls")
+    return {
+        "encounter_evidence": ev, "draft_answer": answer, "final_answer": answer, "citations": claims,
+        "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
+                         "deterministic": len(claims), "llm_checked": 0},
+        "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
+        "node_trail": _trail(state, "encounter_lookup"),
     }
 
 
@@ -281,9 +411,20 @@ _QUESTION_FILLER = frozenset("""
     blood serum plasma
 """.split())
 
+# What each kind of question may say on top of that. Keyed by temporal mode, so
+# a word that asks for something else ("latest creatinine trend") is not filler.
+_MODE_FILLER = {
+    "latest": frozenset(),
+    "earliest": frozenset("earliest oldest first initial known".split()),
+    "trend": frozenset("""
+        how did does has have been change changed changes changing over time trend trends trending
+        trended available record records course whole entire
+    """.split()),
+}
+
 
 def _disambiguate(series: list[dict], query: str, known_labels: list[str],
-                  concepts=(), resolved_labels=None) -> list[dict]:
+                  concepts=(), resolved_labels=None, filler=_QUESTION_FILLER) -> list[dict]:
     """Narrow a resolver match down to the ONE analyte the question asked about,
     or to nothing when the question is not a plain request for one analyte.
 
@@ -316,10 +457,10 @@ def _disambiguate(series: list[dict], query: str, known_labels: list[str],
     """
     q = label_tokens(query)
     keys = {label_tokens(label) for label in known_labels}
-    named = {k for k in keys if k and k <= q and not k <= _QUESTION_FILLER}
+    named = {k for k in keys if k and k <= q and not k <= filler}
     named = {k for k in named if not any(o > k for o in named)}
     concepts = list(concepts or ())
-    explained = set(_QUESTION_FILLER).union(*named, *(label_tokens(c) for c in concepts))
+    explained = set(filler).union(*named, *(label_tokens(c) for c in concepts))
     if not q <= explained:
         return []                      # a word the shortcut does not understand
     if not named:
@@ -505,7 +646,8 @@ def verification(state: AgentState) -> dict:
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
                                   (state.get("literature_evidence", []) or []) +
-                                  (state.get("lab_evidence", []) or [])}
+                                  (state.get("lab_evidence", []) or []) +
+                                  (state.get("encounter_evidence", []) or [])}
     cites = state.get("citations", []) or []
     out: list[dict] = [dict(c) for c in cites]
     unsupported = 0
@@ -529,8 +671,22 @@ def verification(state: AgentState) -> dict:
     draft_now = (state.get("draft_answer") or "").strip()
     refusal = bool(draft_now) and citations.validate(draft_now, list(ev.values()))["is_refusal"]
     pure_refusal = refusal and not any(_labels_of(c) for c in out)
+    # ...unless a structured lookup found rows for this very question and only
+    # declined to phrase the answer. Then "the records do not contain enough
+    # information" is a statement about five note chunks, not about the record,
+    # and a clinician has to see it.
+    contradicted = pure_refusal and bool(state.get("structured_rows"))
 
-    if pure_refusal:
+    if contradicted:
+        note = (f"declined, but a structured lookup found {state['structured_rows']} row(s) "
+                "for this question")
+        out = out or [{"claim": draft_now, "label": "", "chunk_id": -1}]
+        for i, c in enumerate(out):
+            out[i] = {**c, "verified": False, "verification_note": note}
+            trace.append({"i": i, "labels": [], "stage": "refusal", "verdict": "unsupported",
+                          "reason": note, "final": "unsupported"})
+        unsupported, deterministic, checked, pure_refusal = len(out), 0, 0, False
+    elif pure_refusal:
         for i, c in enumerate(out):
             out[i] = {**c, "verified": True,
                       "verification_note": "declined: evidence does not answer the question"}
@@ -655,7 +811,8 @@ def human_review(state: AgentState) -> dict:
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
                                   (state.get("literature_evidence", []) or []) +
-                                  (state.get("lab_evidence", []) or [])}
+                                  (state.get("lab_evidence", []) or []) +
+                                  (state.get("encounter_evidence", []) or [])}
 
     payload = {
         "query": state.get("query", ""),
@@ -735,6 +892,9 @@ def route_from_triage(state: AgentState) -> str:
         return "refuse"
     if qt in ("guideline_check", "literature"):
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
+    if DETERMINISTIC_LABS and wants_encounter_lookup(
+            _decision_of(state), state.get("query") or "", state.get("subject_id")):
+        return "encounter_lookup"
     if DETERMINISTIC_LABS and wants_deterministic_lab(
             _decision_of(state), state.get("temporal_mode") or "all", state.get("subject_id")):
         return "lab_lookup"
@@ -755,6 +915,10 @@ def route_after_lab_lookup(state: AgentState) -> str:
     """A structured hit is already a finished, cited, verified answer. A miss
     falls through to the normal retrieval path with nothing lost."""
     return "finalize" if state.get("lab_evidence") else "patient_retrieval"
+
+
+def route_after_encounter_lookup(state: AgentState) -> str:
+    return "finalize" if state.get("encounter_evidence") else "patient_retrieval"
 
 
 def route_after_patient(state: AgentState) -> str:
@@ -807,10 +971,14 @@ def build_graph(setup: bool = False, validate_checkpoints: bool = True):
     b.add_node("refuse", refuse)
     b.add_node("literature_retrieval", literature_retrieval)
     b.add_node("lab_lookup", lab_lookup)
+    b.add_node("encounter_lookup", encounter_lookup)
 
     b.add_edge(START, "triage")
     b.add_conditional_edges("triage", route_from_triage,
-                            ["patient_retrieval", "guideline_retrieval", "lab_lookup", "refuse"])
+                            ["patient_retrieval", "guideline_retrieval", "lab_lookup",
+                             "encounter_lookup", "refuse"])
+    b.add_conditional_edges("encounter_lookup", route_after_encounter_lookup,
+                            ["finalize", "patient_retrieval"])
     b.add_conditional_edges("lab_lookup", route_after_lab_lookup,
                             ["finalize", "patient_retrieval"])
     b.add_conditional_edges("patient_retrieval", route_after_patient,

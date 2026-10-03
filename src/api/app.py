@@ -461,7 +461,8 @@ async def ask(req: AskRequest, request: Request):
         answer = st.get("final_answer") or st.get("draft_answer") or ""
         flagged = sum(1 for c in cites if not c.get("verified"))
     evidence = ((st.get("patient_evidence") or []) + (st.get("guideline_evidence") or [])
-                + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or []))
+                + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or [])
+                + (st.get("encounter_evidence") or []))
     timings = {"llm_calls": 0, "llm_main_calls": 0, "llm_fast_calls": 0,
                "deterministic_answer": 0, "deterministic_verified": 0, "llm_verified": 0,
                **current_timings(), "total_ms": t.ms,

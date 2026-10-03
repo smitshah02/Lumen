@@ -67,9 +67,15 @@ def test_deterministic_lab_gate():
     assert wants_deterministic_lab(latest, "latest", 90000001) is True
     # every guard must be able to veto it
     assert wants_deterministic_lab(latest, "latest", None) is False
-    assert wants_deterministic_lab(latest, "trend", 90000001) is False
+    assert wants_deterministic_lab(latest, "recent", 90000001) is False
+    assert wants_deterministic_lab(latest, "all", 90000001) is False
+    # trend and earliest questions now reach lab_lookup, which reads the series
+    # from labevents; its word gate, not this one, rejects what it cannot answer
     trend = classify("How did potassium change over time?", "trend")
-    assert wants_deterministic_lab(trend, "trend", 90000001) is False
+    assert wants_deterministic_lab(trend, "trend", 90000001) is True
+    assert wants_deterministic_lab(trend, "trend", None) is False
+    multipart = classify("most recent creatinine and is it improving?", "latest")
+    assert wants_deterministic_lab(multipart, "latest", 90000001) is False
 
 
 # ===========================================================================
