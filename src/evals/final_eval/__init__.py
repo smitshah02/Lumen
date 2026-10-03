@@ -7,7 +7,7 @@ the graph, retriever, API and prompts are read, executed and recorded, never
 modified.
 """
 
-# 1.2.0 — profile-bound deterministic Synthea gold/provider integration plus
+# 1.2.0 — case-provider boundary plus
 # the aj2 independent judge (per-criterion assessment + consistency
 # validation + one repair attempt), calibration, preflight doctor, read-only
 # comparison and the API contract cross-check. The measured system is

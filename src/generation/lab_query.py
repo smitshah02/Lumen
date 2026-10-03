@@ -147,8 +147,8 @@ class LabResolver:
                 for kw in keywords:
                     itemids.extend(self._keyword_to_itemids(kw))
 
-        # Synthea exposes many valid observation labels outside the small MIMIC-
-        # oriented synonym map above.  Resolve a multi-word d_labitems label when
+        # The dictionary holds many valid labels outside the small curated
+        # synonym map above.  Resolve a multi-word d_labitems label when
         # the question names it literally.  Keep only the most-specific matching
         # labels so a longer analyte name cannot be diluted by its substring.
         literal = {

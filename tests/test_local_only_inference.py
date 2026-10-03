@@ -79,8 +79,19 @@ def test_ollama_judge_refuses_a_remote_host_on_the_research_plane(monkeypatch):
 def test_research_facade_pins_local_only_settings_on_every_command():
     text = (ROOT / "scripts" / "lumen").read_text()
     research = text.split('if [ "$plane" = "research" ]; then')[1].split("fi")[0]
-    for pin in ("LUMEN_TRACING=0", "LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=0", "HF_HUB_OFFLINE=1"):
+    for pin in ("LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=0", "HF_HUB_OFFLINE=1", "NO_PROXY="):
         assert pin in research
+
+
+@pytest.mark.parametrize("url,allowed", [("http://localhost:3000", True), ("http://127.0.0.1:3000", True),
+                                         ("https://cloud.langfuse.com", False)])
+def test_research_tracing_reaches_only_a_local_langfuse(monkeypatch, url, allowed):
+    from src.obs import tracing
+    monkeypatch.setattr(tracing, "PLANE", "research")
+    for var in tracing._PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LANGFUSE_BASE_URL", url)
+    assert tracing._policy()[0] is allowed
 
 
 def test_research_start_refuses_to_override_the_loopback_bind():

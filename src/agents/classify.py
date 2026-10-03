@@ -194,6 +194,26 @@ def wants_deterministic_lab(d: Decision, temporal_mode: str, subject_id) -> bool
     return temporal_mode in ("earliest", "trend")
 
 
+_LAB_TREND_RE = re.compile(
+    r"\b(?:chang(?:e|ed|es|ing)|increas(?:e|ed|es|ing)|decreas(?:e|ed|es|ing)|trend(?:s|ed|ing)?)\b", re.I)
+
+
+def lab_mode(query: str, temporal_mode: str) -> str:
+    """The temporal mode the structured lab path should use. "How did creatinine
+    change?" carries no temporal phrase the retriever recognises, but for a lab
+    series it is a trend question. Retrieval's own temporal mode is untouched."""
+    if temporal_mode in ("all", "", None) and _LAB_TREND_RE.search(query or ""):
+        return "trend"
+    return temporal_mode
+
+
+def structured_admission_clause(query: str) -> bool:
+    """Does some clause of the question, on its own, ask exactly what the
+    admissions table answers? "How many admissions does the patient have, and
+    why?" does; "How many admissions were for heart failure?" does not."""
+    return any(encounter_intents(c)[1] for c in re.split(r"[,;]|\band\b", query or "", flags=re.I))
+
+
 _ENCOUNTER_RE = re.compile(r"\b(?:admissions?|admitted|hospitali[sz]ations?)\b", re.I)
 # Every word a question the admissions table can answer outright may contain.
 _ENCOUNTER_WORDS = frozenset("""

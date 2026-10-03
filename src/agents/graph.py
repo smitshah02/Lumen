@@ -22,6 +22,7 @@ and must be loaded exactly once per process.
 from __future__ import annotations
 
 import os
+import re
 import json
 import logging
 from typing import Optional
@@ -36,8 +37,8 @@ from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
 from src.agents import prompts, citations, verify as verify_util
-from src.agents.classify import (classify, encounter_intents, wants_deterministic_lab,
-                                 wants_encounter_lookup)
+from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
+                                 wants_deterministic_lab, wants_encounter_lookup)
 from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
 from src.obs.logging import bump
@@ -208,7 +209,7 @@ def lab_lookup(state: AgentState) -> dict:
     verification will not auto-approve an "insufficient information" answer.
     """
     query, sid = state["query"], state.get("subject_id")
-    mode = state.get("temporal_mode") or detect_temporal_mode(query)
+    mode = lab_mode(query, state.get("temporal_mode") or detect_temporal_mode(query))
     if mode not in _MODE_FILLER:
         mode = "latest"
     try:
@@ -331,8 +332,10 @@ def encounter_lookup(state: AgentState) -> dict:
 
     Answers only a question every word of which it understands
     (classify.encounter_intents). Anything else — an extra clause, no rows, an
-    admission with no admit time — falls through to retrieval, with
-    `structured_rows` recording that the table did have rows.
+    admission with no admit time — falls through to retrieval.
+    `structured_rows` is set only when the table had rows AND some clause of
+    the question asked exactly what it answers; a refusal about an unrelated
+    question that merely mentions admissions is left alone.
     """
     sid = state.get("subject_id")
     intents, understood = encounter_intents(state["query"])
@@ -343,7 +346,9 @@ def encounter_lookup(state: AgentState) -> dict:
         return {"node_trail": _trail(state, "encounter_lookup")}
     if not rows or not understood or any(admit is None for admit, _ in rows):
         logger.info(f"[encounter_lookup] {len(rows)} row(s), understood={understood} — using retrieval")
-        return {"structured_rows": len(rows), "node_trail": _trail(state, "encounter_lookup")}
+        declined = understood or structured_admission_clause(state["query"])
+        return {"structured_rows": len(rows) if declined else 0,
+                "node_trail": _trail(state, "encounter_lookup")}
 
     def day(t) -> str:
         return str(t)[:10]
@@ -419,6 +424,7 @@ _MODE_FILLER = {
     "trend": frozenset("""
         how did does has have been change changed changes changing over time trend trends trending
         trended available record records course whole entire
+        increase increased increasing decrease decreased decreasing or
     """.split()),
 }
 
@@ -455,7 +461,8 @@ def _disambiguate(series: list[dict], query: str, known_labels: list[str],
       will say it is not documented. A label of one or two letters ("H", "I",
       "CR") names nothing unless the question contains it as a word.
     """
-    q = label_tokens(query)
+    # drop the possessive first: "the patient's hemoglobin" must not name "Hemoglobin S"
+    q = label_tokens(re.sub(r"['\u2019]s\b", "", query))
     keys = {label_tokens(label) for label in known_labels}
     named = {k for k in keys if k and k <= q and not k <= filler}
     named = {k for k in named if not any(o > k for o in named)}
@@ -896,7 +903,8 @@ def route_from_triage(state: AgentState) -> str:
             _decision_of(state), state.get("query") or "", state.get("subject_id")):
         return "encounter_lookup"
     if DETERMINISTIC_LABS and wants_deterministic_lab(
-            _decision_of(state), state.get("temporal_mode") or "all", state.get("subject_id")):
+            _decision_of(state), lab_mode(state.get("query") or "", state.get("temporal_mode") or "all"),
+            state.get("subject_id")):
         return "lab_lookup"
     return "patient_retrieval"
 

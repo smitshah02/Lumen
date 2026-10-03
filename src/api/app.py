@@ -9,7 +9,7 @@ hybrid retrieval -> local qwen synthesis -> verification -> human review), and
     LUMEN_DATA_PLANE=demo uvicorn src.api.app:app --host 127.0.0.1 --port 8000
 
 Data planes: src.storage picks the isolated database from LUMEN_DATA_PLANE
-(demo -> lumen_demo, synthea -> lumen_synthea, research -> lumen). The research
+(demo -> lumen_demo, research -> lumen). The research
 plane holds real MIMIC-derived text, so it only answers loopback clients.
 """
 
@@ -49,7 +49,6 @@ logger = logging.getLogger("lumen.api")
 DATA_PLANE = storage.DATA_PLANE
 _PLANE_DATABASES = {
     "demo": storage.DEMO_DB_NAME,
-    "synthea": storage.SYNTHEA_DB_NAME,
     "research": storage.RESEARCH_DB_NAME,
 }
 EXPECTED_DB = _PLANE_DATABASES[DATA_PLANE]
@@ -247,7 +246,7 @@ def _check_database() -> dict:
                 SELECT EXISTS (SELECT 1 FROM note_index_state
                                WHERE status='completed' AND config_hash = ANY(:legacy))
             """), {"legacy": legacy}).scalar() else "current"
-            if DATA_PLANE in {"synthea", "research"}:
+            if DATA_PLANE == "research":
                 ingestion_status = c.execute(text("""
                     SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
                 """)).scalar()

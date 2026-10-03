@@ -512,7 +512,7 @@ def _resolver(*items):
     return resolver
 
 
-def test_literal_synthea_analyte_label_resolves_without_curated_synonym():
+def test_literal_analyte_label_resolves_without_curated_synonym():
     resolver = _resolver(
         (980001, "weight-for-length per age and sex", ""),
         (980002, "body height", ""),
@@ -714,7 +714,7 @@ def test_a_label_made_only_of_filler_words_names_nothing(graph_mod, monkeypatch,
     assert "101 mg/dL" in out["final_answer"]
 
 
-def test_synthea_latest_template_still_takes_the_shortcut(graph_mod, monkeypatch, spy):
+def test_literal_label_latest_question_still_takes_the_shortcut(graph_mod, monkeypatch, spy):
     resolver = _resolver((980001, "weight-for-length per age and sex", ""))
     resolver.fetch = lambda sid, ids, **kw: [_lab("Weight-for-length Per age and sex",
                                                   ("2020-01-02", 55.0, None), unit="%", fluids=("",))]

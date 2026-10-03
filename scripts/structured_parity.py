@@ -32,7 +32,16 @@ from sqlalchemy import text  # noqa: E402
 
 from src import storage  # noqa: E402
 
-ANALYTE = "creatinine"      # the one analyte every MIMIC inpatient has; blood specimens only
+ANALYTES = ("creatinine", "potassium", "hemoglobin")   # blood specimens, matched by exact label
+TREND_QUESTIONS = {"trend": "How did {a} change over the patient's available record?",
+                   "trend_short": "How did {a} change?", "trend_has": "How has {a} changed?",
+                   "trend_updown": "Did {a} increase or decrease?"}
+# Questions the structured lookups must decline (rows exist, a clause is not understood).
+GUARD_QUESTIONS = (("encounter_lookup", "How many hospital admissions does the patient have, and what was "
+                                        "the patient's favourite colour during each one?"),
+                   ("lab_lookup", "How did creatinine change over time and what was the patient's "
+                                  "favourite colour?"))
+REFUSAL = "the available records do not contain enough information"
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # never through a proxy
 
 
@@ -57,15 +66,18 @@ def sample(conn, n: int, seed: float | None) -> list[int]:
     """), {"n": n}).scalars())
 
 
-def truth(conn, sid: int) -> dict:
-    labs = conn.execute(text("""
-        SELECT l.charttime, l.valuenum FROM labevents l JOIN d_labitems d ON d.itemid = l.itemid
-        WHERE l.subject_id = :s AND lower(d.label) = :a AND lower(d.fluid) = 'blood'
-          AND l.valuenum IS NOT NULL ORDER BY l.charttime
-    """), {"s": sid, "a": ANALYTE}).fetchall()
+def truth(conn, sid: int, analytes) -> dict:
+    labs = {}
+    for a in analytes:
+        rows = conn.execute(text("""
+            SELECT l.charttime, l.valuenum FROM labevents l JOIN d_labitems d ON d.itemid = l.itemid
+            WHERE l.subject_id = :s AND lower(d.label) = :a AND lower(d.fluid) = 'blood'
+              AND l.valuenum IS NOT NULL ORDER BY l.charttime
+        """), {"s": sid, "a": a}).fetchall()
+        labs[a] = [(str(t)[:10], float(v)) for t, v in rows]
     adm = conn.execute(text(
         "SELECT admittime FROM admissions WHERE subject_id = :s ORDER BY admittime"), {"s": sid}).fetchall()
-    return {"labs": [(str(t)[:10], float(v)) for t, v in labs], "admits": [str(t)[:10] for (t,) in adm]}
+    return {"labs": labs, "admits": [str(t)[:10] for (t,) in adm]}
 
 
 def has_number(answer: str, value: float) -> bool:
@@ -74,20 +86,23 @@ def has_number(answer: str, value: float) -> bool:
 
 def checks(t: dict) -> list[tuple[str, str, str, callable]]:
     """(class, question, deterministic node, predicate over the answer text)."""
-    labs, admits = t["labs"], t["admits"]
+    admits = t["admits"]
     out = []
-    if labs:
+    for name, labs in t["labs"].items():
+        if not labs:
+            continue
         (d0, v0), (dn, vn) = labs[0], labs[-1]
         lo, hi = min(v for _, v in labs), max(v for _, v in labs)
-        out += [
-            ("lab_latest", f"What was the most recent {ANALYTE}?", "lab_lookup",
-             lambda a: dn in a and has_number(a, vn)),
-            ("lab_earliest", f"What was the earliest {ANALYTE}?", "lab_lookup",
-             lambda a: d0 in a and has_number(a, v0)),
-            ("lab_trend", f"How did {ANALYTE} change over the patient's available record?", "lab_lookup",
-             lambda a: (len(labs) == 1 or f"measured {len(labs)} times" in a) and d0 in a and dn in a
-             and all(has_number(a, v) for v in (v0, vn, lo, hi))),
-        ]
+
+        def trend_ok(a, labs=labs, d0=d0, dn=dn, nums=(v0, vn, lo, hi)):
+            return ((len(labs) == 1 or f"measured {len(labs)} times" in a) and d0 in a and dn in a
+                    and all(has_number(a, v) for v in nums))
+
+        out += [(f"{name}.latest", f"What was the most recent {name}?", "lab_lookup",
+                 lambda a, dn=dn, vn=vn: dn in a and has_number(a, vn)),
+                (f"{name}.earliest", f"What was the earliest {name}?", "lab_lookup",
+                 lambda a, d0=d0, v0=v0: d0 in a and has_number(a, v0))]
+        out += [(f"{name}.{cls}", q.format(a=name), "lab_lookup", trend_ok) for cls, q in TREND_QUESTIONS.items()]
     if admits:
         out += [
             ("admission_count", "How many hospital admissions does the patient have?", "encounter_lookup",
@@ -98,12 +113,38 @@ def checks(t: dict) -> list[tuple[str, str, str, callable]]:
     return out
 
 
+def refusal_guard(api: str, sids: list[int]) -> int:
+    """Live probe: a refusal after a declined structured lookup must not be auto-approved."""
+    tally = {"GUARDED": 0, "ANSWERED": 0, "NOT_DECLINED": 0, "FAIL": 0, "ERROR": 0}
+    for alias, sid in enumerate(sids, 1):
+        row = []
+        for node, question in GUARD_QUESTIONS:
+            r = ask(api, int(sid), question)
+            trail = r.get("node_trail") or []
+            declined = node in trail and "patient_retrieval" in trail
+            refused = REFUSAL in (r.get("answer") or "").lower()
+            held = r.get("status") == "human_review_required" or bool(r.get("needs_human_review"))
+            verdict = ("ERROR" if "answer" not in r else "NOT_DECLINED" if not declined
+                       else "ANSWERED" if not refused else "GUARDED" if held else "FAIL")
+            tally[verdict] += 1
+            row.append(f"{node}={verdict}(status={r.get('status')},review={r.get('review_status')},"
+                       f"llm={(r.get('timings') or {}).get('llm_calls')})")
+        print(f"P{alias}: " + "  ".join(row))
+    print("\n" + "  ".join(f"{k}={v}" for k, v in tally.items()))
+    print("GUARDED = refusal sent to human review (the guard fired). ANSWERED = the model answered "
+          "from notes, guard not exercised. FAIL = refusal auto-approved.")
+    return 1 if tally["FAIL"] or tally["ERROR"] or tally["NOT_DECLINED"] else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--api", default="http://127.0.0.1:8000")
     p.add_argument("--patients", type=int, default=5)
     p.add_argument("--seed", type=float, help="setseed() value in [-1, 1] for a repeatable sample")
     p.add_argument("--subjects-file", help="local JSON list of subject ids to use instead of sampling")
+    p.add_argument("--analytes", default=",".join(ANALYTES), help="comma-separated blood analyte labels")
+    p.add_argument("--refusal-guard", action="store_true",
+                   help="instead of parity, probe that a refusal after a declined lookup goes to review")
     p.add_argument("--out", help="local JSONL file for full responses (never printed)")
     args = p.parse_args(argv)
 
@@ -117,18 +158,22 @@ def main(argv: list[str] | None = None) -> int:
     with storage.engine.connect() as conn:
         sids = (json.loads(Path(args.subjects_file).expanduser().read_text()) if args.subjects_file
                 else sample(conn, args.patients, args.seed))
-        truths = [truth(conn, int(s)) for s in sids]
+        if args.refusal_guard:
+            return refusal_guard(args.api, sids)
+        truths = [truth(conn, int(s), [a.strip().lower() for a in args.analytes.split(",") if a.strip()])
+                  for s in sids]
 
     sink = Path(args.out).expanduser().open("w") if args.out else None
     tally: dict[str, dict[str, int]] = {}
     llm_calls, slowest = 0, 0.0
     for alias, (sid, t) in enumerate(zip(sids, truths), 1):
-        row = []
+        row, seen = [], {}
         for cls, question, node, ok in checks(t):
             r = ask(args.api, int(sid), question)
             if sink:
                 sink.write(json.dumps({"alias": f"P{alias}", "class": cls, "response": r}) + "\n")
-            deterministic = node in (r.get("node_trail") or [])
+            trail = r.get("node_trail") or []
+            deterministic = node in trail and "patient_retrieval" not in trail
             verdict = ("ERROR" if "answer" not in r else "FELL_THROUGH" if not deterministic
                        else "PASS" if ok(r["answer"]) else "FAIL")
             if verdict in ("PASS", "FAIL"):
@@ -136,14 +181,17 @@ def main(argv: list[str] | None = None) -> int:
                 slowest = max(slowest, float(r.get("latency_ms") or 0))
             tally.setdefault(cls, {}).setdefault(verdict, 0)
             tally[cls][verdict] += 1
-            row.append(f"{cls}={verdict}")
-        print(f"P{alias}: " + "  ".join(row))
+            seen[verdict] = seen.get(verdict, 0) + 1
+            if verdict != "PASS":
+                row.append(f"{cls}={verdict}")
+        print(f"P{alias}: " + "  ".join(f"{k}={v}" for k, v in sorted(seen.items()))
+              + ("   not passing: " + " ".join(row) if row else ""))
     if sink:
         sink.close()
 
     print()
     for cls, counts in tally.items():
-        print(f"{cls:17s} " + "  ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+        print(f"{cls:24s} " + "  ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     total = {k: sum(c.get(k, 0) for c in tally.values()) for k in ("PASS", "FAIL", "FELL_THROUGH", "ERROR")}
     print(f"\npatients={len(sids)}  " + "  ".join(f"{k}={v}" for k, v in total.items())
           + f"  llm_calls_on_deterministic_answers={llm_calls}  slowest_deterministic_ms={slowest:.0f}")

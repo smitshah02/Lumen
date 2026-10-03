@@ -40,9 +40,11 @@ plane=$1 command=$2
 shift 2
 
 if [ "$plane" = "research" ]; then
-  # MIMIC stays on this machine for every research command: no tracing, no
-  # Hugging Face lookups, no remote model endpoint, no proxy for local calls.
-  export LUMEN_DATA_PLANE=research LUMEN_TRACING=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  # MIMIC stays on this machine for every research command: no Hugging Face
+  # lookups, no remote model endpoint, no proxy for local calls. Tracing follows
+  # LUMEN_TRACING; src/obs/tracing.py refuses any non-loopback Langfuse endpoint
+  # (and any proxy) on this plane, so a trace can only go to local Langfuse.
+  export LUMEN_DATA_PLANE=research HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
     LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=0 NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
   # uvicorn reads UVICORN_* from the environment; a socket fd or path would
   # replace the loopback bind below.

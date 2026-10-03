@@ -8,7 +8,8 @@ the answer against the rows the structured table holds.
 import pytest
 
 from src.agents import citations
-from src.agents.classify import classify, encounter_intents, wants_deterministic_lab, wants_encounter_lookup
+from src.agents.classify import (classify, encounter_intents, lab_mode, wants_deterministic_lab,
+                                 wants_encounter_lookup)
 from src.retrieval.hybrid_retriever_v2 import detect_temporal_mode, strip_temporal_intent
 from tests.test_routing import QUALIFIED_ITEMS, REFUSAL, _Rows, _cite, _ev, _lab, _mimic_lookup, _resolver, graph_mod, spy  # noqa: F401
 
@@ -20,7 +21,7 @@ TREND_QUESTIONS = ["How did creatinine change over the patient's available recor
 
 
 def _routes_to_lab(question):
-    mode = detect_temporal_mode(question)
+    mode = lab_mode(question, detect_temporal_mode(question))
     return wants_deterministic_lab(classify(question, mode), mode, 1)
 
 
@@ -200,3 +201,69 @@ def test_trend_question_stays_meaningful_after_stripping(question):
     stripped = strip_temporal_intent(question)
     assert "creatinine" in stripped and " ?" not in stripped
     assert "creatinine the patient" not in stripped               # the verb was not cut out
+
+
+# --- trend phrasing with no temporal phrase --------------------------------
+@pytest.mark.parametrize("question", ["How did creatinine change?", "How has creatinine changed?",
+                                      "Did creatinine increase or decrease?"])
+def test_bare_trend_phrasing_takes_the_structured_trend_path(graph_mod, monkeypatch, spy, question):
+    assert detect_temporal_mode(question) == "all"                # retrieval's mode is untouched
+    assert _routes_to_lab(question)
+    state = {"query": question, "subject_id": 1, "temporal_mode": "all", "query_type": "lab_trend",
+             "classified_by": "rules", "query_complexity": "complex"}
+    assert graph_mod.route_from_triage(state) == "lab_lookup"
+    resolver = _resolver(*QUALIFIED_ITEMS)
+    resolver.fetch = lambda sid, ids, **kw: [_lab("Creatinine", *SERIES)]
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    out = graph_mod.lab_lookup(state)
+    assert spy == [] and "measured 4 times" in out["final_answer"] and "fluctuated" in out["final_answer"]
+
+
+@pytest.mark.parametrize("question", [
+    "How did urine creatinine change?", "How did creatinine clearance change?",
+    "Did creatinine or BUN increase?", "How did creatinine and potassium change?",
+    "Did the creatinine change after the contrast study?", "Why did creatinine increase?",
+    "How has creatinine changed recently?",                       # a window, not the whole record
+])
+def test_bare_trend_phrasing_still_rejects_what_it_does_not_understand(graph_mod, monkeypatch, spy, question):
+    series = [_lab("Creatinine", *SERIES), _lab("Potassium", *SERIES), _lab("Urea Nitrogen", *SERIES)]
+    state = {"query": question, "subject_id": 1, "temporal_mode": detect_temporal_mode(question)}
+    resolver = _resolver(*QUALIFIED_ITEMS)
+    resolver.fetch = lambda sid, ids, **kw: series
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    assert "lab_evidence" not in graph_mod.lab_lookup(state) or not _routes_to_lab(question)
+
+
+def test_lab_mode_only_fills_in_a_missing_temporal_mode():
+    assert lab_mode("What was the most recent creatinine change?", "latest") == "latest"
+    assert lab_mode("What is the creatinine?", "all") == "all"
+
+
+# --- refusal guard scope ---------------------------------------------------
+@pytest.mark.parametrize("question,rows_flagged", [
+    # a clause the admissions table answers was left unresolved -> a refusal must be reviewed
+    ("How many admissions does the patient have, and why was each one needed?", 12),
+    ("When was the most recent admission and what medications were started?", 12),
+    # no clause is a plain admissions question -> an unrelated refusal stays an ordinary refusal
+    ("How many admissions were for heart failure?", 0),
+    ("Why was the patient admitted during the most recent admission?", 0),
+    ("What happened during the first admission?", 0),
+])
+def test_refusal_guard_is_armed_only_by_an_unresolved_structured_clause(graph_mod, monkeypatch, spy,
+                                                                        question, rows_flagged):
+    out = _encounter(graph_mod, monkeypatch, question)
+    assert "encounter_evidence" not in out and out["structured_rows"] == rows_flagged
+    verdict = graph_mod.verification({"patient_evidence": [_ev()], "draft_answer": REFUSAL,
+                                      "citations": [_cite(REFUSAL, [])], **out})
+    assert verdict["needs_human_review"] is bool(rows_flagged)
+
+
+def test_a_possessive_does_not_name_a_one_letter_analyte(graph_mod, monkeypatch, spy):
+    """ "patient's" tokenised to {"patient", "s"}, which named MIMIC's "Hemoglobin S"."""
+    resolver = _resolver(*QUALIFIED_ITEMS, (50855, "hemoglobin s", "blood"))
+    resolver.fetch = lambda sid, ids, **kw: [_lab("Hemoglobin", *SERIES, unit="g/dL")]
+    monkeypatch.setattr(graph_mod, "get_lab_resolver", lambda: resolver)
+    for q in ("How did hemoglobin change over the patient's available record?",
+              "What was the patient\u2019s most recent hemoglobin?"):
+        assert "lab_evidence" in graph_mod.lab_lookup({"query": q, "subject_id": 1}), q
+    assert "lab_evidence" not in graph_mod.lab_lookup({"query": "What was the latest hemoglobin S?", "subject_id": 1})

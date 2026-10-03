@@ -8,7 +8,7 @@ and the API behave identically with tracing on or off.
 Egress policy — traces carry note text in span inputs and LLM prompts:
   * research plane (real MIMIC):  local Langfuse only (localhost / 127.0.0.1 /
     host.docker.internal). Any remote endpoint is refused.
-  * demo/synthea planes (synthetic data): local, or a remote endpoint over
+  * demo plane (synthetic data): local, or a remote endpoint over
     https.
 
 The endpoint is resolved exactly as the Langfuse SDK resolves it —
@@ -64,7 +64,7 @@ def _policy() -> tuple[bool, str]:
         return False, "research tracing refused while a proxy is configured"
     if (url.hostname or "") in _LOCAL_HOSTS:
         return True, "local endpoint"
-    if PLANE not in {"demo", "synthea"}:
+    if PLANE != "demo":
         return False, "remote endpoint refused outside synthetic data planes"
     if url.scheme != "https":
         return False, "remote endpoint must use https"

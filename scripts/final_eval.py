@@ -59,10 +59,7 @@ def _require_provider_plane(provider) -> None:
 
 
 def _provider(args):
-    return providers.get_provider(
-        getattr(args, "case_provider", "demo"),
-        getattr(args, "synthea_profile", None),
-    )
+    return providers.get_provider(getattr(args, "case_provider", "demo"))
 
 
 def _selected(args) -> list:
@@ -73,8 +70,7 @@ def _selected(args) -> list:
 def _provider_for_run(run: man.RunDir):
     manifest = run.read_json("manifest")
     name = (manifest.get("eval_set") or {}).get("provider", "demo")
-    profile = (manifest.get("eval_set") or {}).get("provider_profile")
-    return providers.get_provider(name, profile)
+    return providers.get_provider(name)
 
 
 def _judge_backend(args, required: bool):
@@ -396,8 +392,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     def _provider_args(p):
         p.add_argument("--case-provider", default="demo", choices=providers.provider_names())
-        p.add_argument("--synthea-profile", choices=["dev", "eval"], default="dev",
-                       help="required corpus/gold profile when --case-provider=synthea")
 
     def _cases_args(p):
         _provider_args(p)
