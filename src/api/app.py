@@ -26,7 +26,7 @@ import threading
 from contextlib import asynccontextmanager
 
 import psycopg
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Path as PathParam, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -37,12 +37,13 @@ from src.config import MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
 from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
                                             legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
+from src.agents import review
 from src.llm import local_client
 from src.obs import tracing
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
                              current_timings, Timer)
 from src.api.schemas import (AskRequest, AskResponse, RetrieveRequest, RetrieveResponse, RetrievedChunk,
-                             Citation, Source)
+                             Citation, Source, ReviewDecision)
 
 logger = logging.getLogger("lumen.api")
 
@@ -180,6 +181,18 @@ async def _on_database(request: Request, exc: Exception):
     log_event(logger, "dependency_unavailable", level=logging.ERROR, dependency="database",
               error_type=type(exc).__name__)
     return _err(request, 503, "database_unavailable")
+
+
+@app.exception_handler(review.ReviewNotFound)
+async def _on_review_missing(request: Request, exc: review.ReviewNotFound):
+    return _err(request, 404, "review_not_found")
+
+
+@app.exception_handler(review.ReviewNotPending)
+async def _on_review_not_pending(request: Request, exc: review.ReviewNotPending):
+    # 409: the thread exists but has nothing to decide — it never needed review,
+    # or a decision was already submitted. Nothing is resumed.
+    return _err(request, 409, "review_not_pending", {"review_status": exc.review_status})
 
 
 @app.exception_handler(GenerationFailed)
@@ -492,3 +505,32 @@ async def ask(req: AskRequest, request: Request):
         models={"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL},
         latency_ms=t.ms, timings=timings,
     )
+
+
+# ---------------------------------------------------------------------------
+# Human review: inspect a paused run, then approve or reject its draft
+# ---------------------------------------------------------------------------
+_THREAD = PathParam(pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+@app.get("/review/{thread_id}")
+async def review_pending(thread_id: str = _THREAD):
+    """The draft and flagged claims of a run paused at human review."""
+    return await asyncio.to_thread(lambda: review.pending(_get_graph(), thread_id))
+
+
+@app.post("/review/{thread_id}")
+async def review_submit(body: ReviewDecision, request: Request, thread_id: str = _THREAD):
+    """Resume the paused run from its checkpoint with the reviewer's decision."""
+    st = await asyncio.to_thread(
+        lambda: review.submit(_get_graph(), thread_id, body.decision, body.reviewer_note))
+    status = "rejected" if st.get("review_status") == "rejected" else "completed"
+    request.state.subject_id = st.get("subject_id")
+    request.state.outcome = status
+    log_event(logger, "review_submitted", thread_id=thread_id, decision=body.decision,
+              status=status, review_status=st.get("review_status"))
+    return {"thread_id": thread_id, "status": status, "decision": body.decision,
+            "review_status": st.get("review_status"), "answer": st.get("final_answer") or "",
+            "needs_human_review": bool(st.get("needs_human_review")),
+            "human_decisions": st.get("human_decisions") or [],
+            "node_trail": st.get("node_trail") or []}

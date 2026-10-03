@@ -147,3 +147,27 @@ def test_temporal_candidate_pool_widens_only_for_patient_scoped_queries():
     assert temporal_candidate_limit(60, "trend", 80000017) == 1000
     assert temporal_candidate_limit(60, "all", 80000017) == 60
     assert temporal_candidate_limit(60, "latest", None) == 60
+
+
+def test_reranker_uses_half_precision_only_on_a_gpu_backend(monkeypatch):
+    from src.retrieval.hybrid_retriever_v2 import _reranker_fp16
+    monkeypatch.delenv("LUMEN_RERANKER_FP16", raising=False)
+    assert _reranker_fp16("mps") and _reranker_fp16("cuda") and not _reranker_fp16("cpu")
+    monkeypatch.setenv("LUMEN_RERANKER_FP16", "0")                    # the rollback switch
+    assert not _reranker_fp16("mps")
+
+
+def test_search_stages_are_timed_without_starting_traces(monkeypatch):
+    """Stage timers record wall time and open a span only inside an open trace."""
+    from src.retrieval import hybrid_retriever_v2 as H
+    opened = []
+    monkeypatch.setattr(H.tracing, "child_span", lambda name: opened.append(name) or __import__("contextlib").nullcontext())
+    timings = {}
+    with H._stage(timings, "reranking"):
+        pass
+    with H._stage(timings, "reranking"):
+        pass
+    assert opened == ["reranking", "reranking"] and timings["reranking"] >= 0
+    from src.obs import tracing
+    with tracing.child_span("x") as s:                               # tracing is off in tests
+        assert s is None

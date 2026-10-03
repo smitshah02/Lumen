@@ -1,10 +1,13 @@
 """
 Clinician Review CLI
 ====================
-Resumes a graph paused at human_review, presents each flagged claim
-alongside the source text it was cited against, and collects decisions.
+Presents the flagged claims of a run paused at human_review alongside the
+source text each was cited against, collects decisions, and resumes the run
+from its checkpoint through `src.agents.review` — the same service the API
+uses. Presentation and input live here; nothing about resuming does.
 
-    python -m src.agents.review_cli --thread <thread_id>
+    python -m src.agents.run_graph --query ... --subject ...   # asks, reviews inline, finishes
+    python -m src.agents.review_cli --thread <thread_id>        # review a run paused earlier
     python -m src.agents.review_cli --list
 
 Durability check: start a run in one process, let it pause, exit, then
@@ -16,15 +19,18 @@ from __future__ import annotations
 import logging
 import argparse
 
-from langgraph.types import Command
-
+from src.agents import review
 from src.agents.graph import build_graph
 from src.obs import tracing
 
 BAR = "=" * 72
+_ACTIONS = {"a": "approve", "approve": "approve", "pass": "approve",
+            "r": "reject", "reject": "reject",
+            "s": "strike", "strike": "strike", "e": "escalate", "escalate": "escalate"}
 
 
-def _prompt(flag: dict, n: int, total: int) -> dict:
+def _prompt(flag: dict, n: int, total: int, ask=None) -> dict:
+    ask = ask or input        # looked up at call time, so a caller can supply its own
     print("\n" + BAR)
     print(f"  FLAGGED CLAIM {n}/{total}   cited as [{flag['label'] or '--'}]")
     print(BAR)
@@ -32,17 +38,41 @@ def _prompt(flag: dict, n: int, total: int) -> dict:
     print(f"\n  VERIFIER:\n    {flag['note']}")
     src = (flag.get("source_text") or "").strip()
     print(f"\n  CITED SOURCE:\n    {src if src else '(no source resolved)'}")
-    print("\n  [a] approve   [s] strike   [e] escalate")
+    print("\n  [a] approve this claim   [r] reject the whole draft"
+          "   [s] strike this claim   [e] escalate")
 
     while True:
-        choice = input("  > ").strip().lower()
-        if choice in ("a", "approve"):
-            return {"action": "approve", "note": input("  note (optional): ").strip()}
-        if choice in ("s", "strike"):
-            return {"action": "strike", "note": input("  reason (optional): ").strip()}
-        if choice in ("e", "escalate"):
-            return {"action": "escalate", "note": input("  reason (optional): ").strip()}
-        print("  please enter a, s, or e")
+        action = _ACTIONS.get(ask("  > ").strip().lower())
+        if action:
+            return {"action": action, "note": ask("  note (optional): ").strip()}
+        print("  please enter a, r, s, or e")
+
+
+def collect(payload: dict, ask=None) -> list[dict]:
+    """Show a paused draft and gather one decision per flagged claim. Rejecting
+    rejects the whole draft, so no further claim is asked about."""
+    flagged = payload["flagged"]
+    print("\n" + BAR)
+    print(f"  HUMAN REVIEW REQUIRED\n  QUERY:  {payload['query']}")
+    print(BAR)
+    print(f"\n  DRAFT ANSWER:\n    {payload['draft_answer']}\n")
+    print(f"  {len(flagged)} claim(s) require adjudication.")
+
+    decisions = []
+    for i, flag in enumerate(flagged, 1):
+        decision = _prompt(flag, i, len(flagged), ask)
+        if decision["action"] == "reject":
+            return [decision] * len(flagged)
+        decisions.append(decision)
+    return decisions
+
+
+def review_interactively(graph, thread_id: str, ask=None) -> dict:
+    """Prompt for the paused run's decisions and resume it from its checkpoint.
+    Returns the final state. Raises review.ReviewNotFound / ReviewNotPending."""
+    decisions = collect(review.pending(graph, thread_id), ask)
+    print("\n  Resuming workflow...")
+    return review.resume(graph, thread_id, decisions)
 
 
 def main() -> int:
@@ -72,39 +102,16 @@ def main() -> int:
     if not args.thread:
         ap.error("--thread is required (or use --list)")
 
-    cb = tracing.handler()
-    config = {"configurable": {"thread_id": args.thread}}
-    if cb:
-        config["callbacks"] = [cb]
-        config["metadata"] = {"langfuse_session_id": args.thread,
-                              "langfuse_tags": ["lumen", "human-review"]}
-    snap = graph.get_state(config)
-
-    if not snap.next:
+    try:
+        out = review_interactively(graph, args.thread)
+    except review.ReviewNotFound:
+        print(f"\n  no checkpoint for thread {args.thread}.")
+        return 1
+    except review.ReviewNotPending as e:
         print(f"\n  thread {args.thread} is not paused — nothing to review.")
-        print(f"  status: {snap.values.get('review_status')}")
+        print(f"  status: {e.review_status}")
         tracing.flush()
         return 0
-
-    interrupts = [i for t in snap.tasks for i in (t.interrupts or [])]
-    if not interrupts:
-        print(f"\n  thread {args.thread} is at {snap.next} but has no pending interrupt.")
-        tracing.flush()
-        return 1
-
-    payload = interrupts[0].value
-    flagged = payload["flagged"]
-
-    print("\n" + BAR)
-    print(f"  QUERY:  {payload['query']}")
-    print(BAR)
-    print(f"\n  DRAFT ANSWER:\n    {payload['answer']}\n")
-    print(f"  {len(flagged)} claim(s) require adjudication.")
-
-    decisions = [_prompt(f, i, len(flagged)) for i, f in enumerate(flagged, 1)]
-
-    # Same thread_id, same config — a different one cannot find the frozen state.
-    out = graph.invoke(Command(resume=decisions), config=config)
 
     print("\n" + BAR)
     print(f"  STATUS: {out.get('review_status')}")

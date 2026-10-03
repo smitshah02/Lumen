@@ -35,6 +35,7 @@ from __future__ import annotations
 import re
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime, timedelta
@@ -47,6 +48,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from src.storage import engine
 from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
 from src.obs.logging import obs_extra, add_timing
+from src.obs import tracing
 
 logger = logging.getLogger(__name__)
 
@@ -805,6 +807,16 @@ def _rerank_document(result: RetrievalResult) -> str:
         return focal
     return f"{focal}\n\nSupporting context:\n{supporting}"
 
+def _reranker_fp16(device_type: str) -> bool:
+    """Half precision on a GPU backend, unless LUMEN_RERANKER_FP16=0.
+
+    The cross-encoder is ~99% of patient-scoped retrieval time. Measured on
+    Apple MPS over the same candidate sets: 5.3 s -> 3.3 s median per search,
+    identical top-5 order, sigmoid scores within 0.001. CPU stays fp32: half
+    precision there is slower, not faster."""
+    return device_type in ("mps", "cuda") and _os.environ.get("LUMEN_RERANKER_FP16", "1").strip() != "0"
+
+
 class BGEReranker:
     """
     Cross-encoder reranker using BGE-reranker-v2-m3.
@@ -832,9 +844,13 @@ class BGEReranker:
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
         self.model.to(self.device)
+        self.fp16 = _reranker_fp16(self.device.type)
+        if self.fp16:
+            self.model.half()
         self.model.eval()
         self.max_length = max_length
-        logger.info(f"  Reranker loaded in {time.time() - t0:.1f}s on {self.device}")
+        logger.info(f"  Reranker loaded in {time.time() - t0:.1f}s on {self.device}"
+                    f" ({'fp16' if self.fp16 else 'fp32'})")
 
     @torch.no_grad()
     def rerank(
@@ -864,7 +880,7 @@ class BGEReranker:
                 return_tensors="pt",
             ).to(self.device)
 
-            scores = self.model(**encoded).logits.squeeze(-1)
+            scores = self.model(**encoded).logits.squeeze(-1).float()
             if scores.dim() == 0:
                 scores = scores.unsqueeze(0)
             all_scores.extend(scores.cpu().numpy().tolist())
@@ -884,6 +900,18 @@ class BGEReranker:
 # ===========================================================================
 # Main Hybrid Retriever v2
 # ===========================================================================
+
+@contextmanager
+def _stage(timings: dict, name: str):
+    """Time one retrieval stage: a Langfuse child span when a trace is open, a
+    `retrieval_<name>_ms` request timing, and an entry in `timings`."""
+    t = time.perf_counter()
+    with tracing.child_span(name):
+        yield
+    ms = (time.perf_counter() - t) * 1000
+    timings[name] = round(timings.get(name, 0.0) + ms, 1)
+    add_timing(f"retrieval_{name}_ms", ms)
+
 
 class HybridRetriever:
     """
@@ -952,6 +980,7 @@ class HybridRetriever:
         Run the full hybrid retrieval pipeline.
         """
         t0 = time.perf_counter()   # monotonic: wall clock can jump (e.g. VM time sync)
+        stages: dict = {}          # per-stage wall time (ms) of this call; kept as self.last_stages
 
         # An empty query has no answer. This used to return nothing only because
         # the vector branch was too starved to return anything; with ef_search
@@ -982,59 +1011,67 @@ class HybridRetriever:
                 logger.debug(f"  Expanded: +{len(expansions)} terms")
 
         # Stage 2: BM25 search (with expansions)
-        bm25_results = bm25_search(
-            query=retrieval_query,
-            expansions=expansions,
-            subject_id=subject_id,
-            hadm_id=hadm_id,
-            note_type=note_type,
-            top_n=bm25_top_n,
-            min_tokens=self.min_chunk_tokens,
-        )
+        with _stage(stages, "lexical_search"):
+            bm25_results = bm25_search(
+                query=retrieval_query,
+                expansions=expansions,
+                subject_id=subject_id,
+                hadm_id=hadm_id,
+                note_type=note_type,
+                top_n=bm25_top_n,
+                min_tokens=self.min_chunk_tokens,
+            )
 
         # Stage 3: Vector search
-        query_vec = self.embedder.embed_query(retrieval_query)
-        vec_results = vector_search(
-            query_embedding=query_vec,
-            subject_id=subject_id,
-            hadm_id=hadm_id,
-            note_type=note_type,
-            top_n=vector_top_n,
-            min_tokens=self.min_chunk_tokens,
-        )
+        with _stage(stages, "query_embedding"):
+            query_vec = self.embedder.embed_query(retrieval_query)
+        with _stage(stages, "vector_search"):
+            vec_results = vector_search(
+                query_embedding=query_vec,
+                subject_id=subject_id,
+                hadm_id=hadm_id,
+                note_type=note_type,
+                top_n=vector_top_n,
+                min_tokens=self.min_chunk_tokens,
+            )
 
-        # Stage 4: Reciprocal Rank Fusion with overlap bonus
-        merged = reciprocal_rank_fusion(
-            bm25_results=bm25_results,
-            vector_results=vec_results,
-            bm25_weight=self.bm25_weight,
-            vector_weight=self.vector_weight,
-            overlap_bonus=self.overlap_bonus,
-        )
+        with _stage(stages, "fusion"):
+            # Stage 4: Reciprocal Rank Fusion with overlap bonus
+            merged = reciprocal_rank_fusion(
+                bm25_results=bm25_results,
+                vector_results=vec_results,
+                bm25_weight=self.bm25_weight,
+                vector_weight=self.vector_weight,
+                overlap_bonus=self.overlap_bonus,
+            )
 
-        # Stage 5: Note-level deduplication
-        merged = deduplicate_by_note(merged, max_per_note=self.max_per_note)
+            # Stage 5: Note-level deduplication
+            merged = deduplicate_by_note(merged, max_per_note=self.max_per_note)
 
         # Stage 6: Temporal filter (MIMIC-correct, per-patient anchored)
-        merged = apply_temporal_filter(merged, mode=resolved_temporal)
+        with _stage(stages, "temporal_processing"):
+            merged = apply_temporal_filter(merged, mode=resolved_temporal)
 
         # Stage 7: Context window expansion (on top candidates only)
         candidates = merged[:self.rerank_candidates]
         if self.use_context_window:
-            candidates = expand_context(
-                candidates,
-                window=self.context_window,
-                max_context_tokens=600,
-            )
+            with _stage(stages, "context_expansion"):
+                candidates = expand_context(
+                    candidates,
+                    window=self.context_window,
+                    max_context_tokens=600,
+                )
 
         # Stage 8: Reranking on assembled context.
         # Rerank the FULL candidate set rather than cutting to top_k here: stage 9
         # reorders on temporal signal, and truncating first would throw away the
         # very records that signal is meant to promote.
+        n_reranked = len(candidates) if self.reranker else 0
         if self.reranker and candidates:
-            reranked = self.reranker.rerank(
-                retrieval_query, candidates, top_k=len(candidates)
-            )
+            with _stage(stages, "reranking"):
+                reranked = self.reranker.rerank(
+                    retrieval_query, candidates, top_k=len(candidates)
+                )
             # Fall back to RRF order if reranker confidence is too low — this
             # happens when the query type (lab values, culture results) doesn't
             # match the cross-encoder's training distribution well
@@ -1058,12 +1095,15 @@ class HybridRetriever:
         # records), but the reranker then overwrites final_score and re-sorts on
         # it alone — so before this stage existed, "latest" and "trend" had no
         # effect whatsoever on the returned order.
-        ordered = apply_temporal_filter(
-            ordered, mode=resolved_temporal, score_attr="final_score"
-        )
+        with _stage(stages, "temporal_processing"):
+            ordered = apply_temporal_filter(
+                ordered, mode=resolved_temporal, score_attr="final_score"
+            )
         results = ordered[:top_k]
 
         elapsed = time.perf_counter() - t0
+        self.last_stages = {**stages, "total": round(elapsed * 1000, 1), "reranked": n_reranked,
+                            "bm25": len(bm25_results), "vector": len(vec_results)}
         add_timing("retrieval_ms", elapsed * 1000)
         exp_str = f", +{len(expansions)} expanded" if expansions else ""
         logger.info(

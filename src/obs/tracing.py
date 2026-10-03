@@ -196,6 +196,24 @@ def span(name: str, **attrs):
 
 
 @contextmanager
+def child_span(name: str):
+    """A span only when a trace is already open. Library code (the retriever's
+    stages) uses this so a call made outside a request does not start a trace
+    of its own for every stage."""
+    lf = client()
+    try:
+        from opentelemetry import trace as _otel
+        active = lf is not None and _otel.get_current_span().get_span_context().is_valid
+    except Exception:
+        active = False
+    if not active:
+        yield None
+        return
+    with lf.start_as_current_observation(as_type="span", name=name) as s:
+        yield s
+
+
+@contextmanager
 def generation(name: str, model: str, prompt=None):
     lf = client()
     if lf is None:

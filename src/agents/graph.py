@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import time
 import logging
 from typing import Optional
 
@@ -41,7 +42,7 @@ from src.agents.classify import (classify, encounter_intents, lab_mode, structur
                                  wants_deterministic_lab, wants_encounter_lookup)
 from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
-from src.obs.logging import bump
+from src.obs.logging import add_timing, bump
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
 from src.retrieval.guideline_retriever import GuidelineRetriever
 from langgraph.types import Command, interrupt
@@ -490,7 +491,9 @@ def _disambiguate(series: list[dict], query: str, known_labels: list[str],
 
 
 def patient_retrieval(state: AgentState) -> dict:
+    t0 = time.perf_counter()
     retriever, _ = get_retrievers()
+    add_timing("retriever_load_ms", (time.perf_counter() - t0) * 1000)   # ~0 once loaded
     with tracing.span("patient_retrieval", subject_id=state.get("subject_id"),
                       query=state["query"]) as s:
         results = retriever.search(
@@ -794,6 +797,10 @@ def verification(state: AgentState) -> dict:
         "node_trail": _trail(state, "verification"),
     }
 
+REJECTED_ANSWER = ("A clinician reviewed the draft answer to this question and rejected it. "
+                   "No answer is released.")
+
+
 def human_review(state: AgentState) -> dict:
     """
     Pause for clinician adjudication of unsupported claims.
@@ -845,6 +852,21 @@ def human_review(state: AgentState) -> dict:
     updated = [dict(c) for c in cites]
     struck, escalated, recorded = set(), False, []
 
+    # A reviewer who rejects the draft rejects all of it: nothing the model
+    # wrote is released, whatever was said about the individual claims.
+    if any((d or {}).get("action") == "reject" for d in decisions):
+        note = next(((d or {}).get("note", "") for d in decisions if (d or {}).get("action") == "reject"), "")
+        for idx, _ in flagged:
+            updated[idx]["verification_note"] = f"rejected by reviewer: {note}" if note else "rejected by reviewer"
+        logger.info("[human_review] draft rejected by reviewer")
+        return {
+            "citations": updated,
+            "human_decisions": list(state.get("human_decisions", []))
+                               + [{"index": idx, "action": "reject", "note": note} for idx, _ in flagged],
+            "final_answer": REJECTED_ANSWER, "review_status": "rejected", "needs_human_review": False,
+            "node_trail": _trail(state, "human_review"),
+        }
+
     for (idx, _), d in zip(flagged, decisions):
         action = (d or {}).get("action", "escalate")
         note = (d or {}).get("note", "")
@@ -875,8 +897,10 @@ def human_review(state: AgentState) -> dict:
 
 
 def finalize(state: AgentState) -> dict:
-    """Set final_answer when no review was needed."""
-    if state.get("final_answer"):
+    """Set final_answer when no review was needed. After a human decision the
+    reviewer's result stands even when it is empty: a draft whose every claim
+    was struck must not be released because "" looks like "not set"."""
+    if state.get("final_answer") or state.get("review_status") in ("reviewed", "escalated", "rejected"):
         return {"node_trail": _trail(state, "finalize")}
     return {"final_answer": state.get("draft_answer", ""),
             "node_trail": _trail(state, "finalize")}
@@ -944,32 +968,9 @@ def route_after_guidelines(state: AgentState) -> str:
         return "literature_retrieval"
     return "synthesis"
 
-def build_graph(setup: bool = False, validate_checkpoints: bool = True):
-    """Compile the canonical graph without implicit schema mutation.
-
-    Checkpoint tables are created by ``python -m src.storage.checkpoints``.
-    ``setup=True`` and LUMEN_CHECKPOINT_AUTO_SETUP=1 remain explicit defensive
-    fallbacks for controlled recovery, not the normal request path.
-    """
-    auto_setup = os.environ.get("LUMEN_CHECKPOINT_AUTO_SETUP", "0").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-    if validate_checkpoints and not (setup or auto_setup):
-        status = checkpoint_schema_status()
-        if not status["ready"]:
-            raise RuntimeError(
-                "LangGraph checkpoint schema is missing "
-                f"{status['missing']}; run `python -m src.storage.checkpoints`"
-            )
-    pool = ConnectionPool(
-        conninfo=_dsn(), max_size=5,
-        kwargs={"autocommit": True, "row_factory": dict_row},
-    )
-    checkpointer = PostgresSaver(pool)
-    _pools.append(pool)
-    if setup or auto_setup:
-        checkpointer.setup()
-
+def _builder() -> StateGraph:
+    """The graph's nodes and edges, uncompiled, so a test can compile it
+    against an in-memory checkpointer and exercise interrupt/resume for real."""
     b = StateGraph(AgentState)
     b.add_node("triage", triage)
     b.add_node("patient_retrieval", patient_retrieval)
@@ -1009,8 +1010,36 @@ def build_graph(setup: bool = False, validate_checkpoints: bool = True):
     # final_answer, so callers reading state["final_answer"] got "" on refusal.
     b.add_edge("refuse", "finalize")
     b.add_edge("finalize", END)
+    return b
 
-    return b.compile(checkpointer=checkpointer), checkpointer
+
+def build_graph(setup: bool = False, validate_checkpoints: bool = True):
+    """Compile the canonical graph without implicit schema mutation.
+
+    Checkpoint tables are created by ``python -m src.storage.checkpoints``.
+    ``setup=True`` and LUMEN_CHECKPOINT_AUTO_SETUP=1 remain explicit defensive
+    fallbacks for controlled recovery, not the normal request path.
+    """
+    auto_setup = os.environ.get("LUMEN_CHECKPOINT_AUTO_SETUP", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if validate_checkpoints and not (setup or auto_setup):
+        status = checkpoint_schema_status()
+        if not status["ready"]:
+            raise RuntimeError(
+                "LangGraph checkpoint schema is missing "
+                f"{status['missing']}; run `python -m src.storage.checkpoints`"
+            )
+    pool = ConnectionPool(
+        conninfo=_dsn(), max_size=5,
+        kwargs={"autocommit": True, "row_factory": dict_row},
+    )
+    checkpointer = PostgresSaver(pool)
+    _pools.append(pool)
+    if setup or auto_setup:
+        checkpointer.setup()
+
+    return _builder().compile(checkpointer=checkpointer), checkpointer
 
 import atexit
 

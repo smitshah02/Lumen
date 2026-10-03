@@ -26,6 +26,9 @@ research commands:
   schema      apply additive schema upgrades
   ingest      ingest MIMIC only with --confirm-research-ingest
   parity      compare structured API answers with direct SQL (PASS/FAIL only)
+  retrieval-bench  per-stage retrieval latency over a fixed question set (--out FILE)
+  ask         ask one question (--query ... --subject ...); a human review is
+              prompted for inline and the run resumes from its checkpoint
   adopt       record an index built before provenance tracking
               (--check, or --apply --confirm-legacy-adoption)
   index       index notes (extra args passed through)
@@ -98,6 +101,8 @@ case "$plane:$command" in
     ;;
   research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;
   research:parity) "$PY" scripts/structured_parity.py "$@" ;;
+  research:ask)    "$PY" -m src.agents.run_graph "$@" ;;
+  research:retrieval-bench) "$PY" scripts/retrieval_bench.py "$@" ;;
   research:eval) LUMEN_DATA_PLANE=research "$PY" -m src.evals.retrieve_pool "$@" ;;
   *) usage; exit 2 ;;
 esac
