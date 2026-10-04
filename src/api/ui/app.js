@@ -223,23 +223,21 @@ async function send(event) {
 
 function renderAnswer(container, text, msg) {
   container.textContent = "";
-  let last = 0;
-  for (const hit of text.matchAll(CITE_RE)) {
-    container.append(text.slice(last, hit.index));
-    const label = hit[1];
-    const chip = el("button", "cite cite-" + label[0], label);
+  for (const part of LumenReview.citationRuns(text)) {
+    if (!part.labels) { container.append(part.text); continue; }
+    // Several markers in a row become one chip; the answer text keeps them all.
+    const labels = part.labels, first = labels[0], many = labels.length > 1;
+    const chip = el("button", "cite cite-" + first[0], many ? labels.length + " sources" : first);
     chip.type = "button";
-    chip.title = "Show source " + label;
+    chip.title = many ? "Sources: " + labels.join(", ") : "Show source " + first;
     chip.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      state.focusLabel = label;
+      state.focusLabel = first;
       select(msg);
       showTab("evidence");
     });
     container.append(chip);
-    last = hit.index + hit[0].length;
   }
-  container.append(text.slice(last));
 }
 
 function renderBubble(msg) {

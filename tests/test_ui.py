@@ -149,3 +149,26 @@ def test_the_page_uses_the_review_logic_and_posts_only_through_decide():
     assert "LumenReview.act(msg, spec.action)" in JS and "if (decision) decide(msg, decision)" in JS
     assert JS.count('api("POST", "/review/"') == 1 and "alert(" not in JS and "confirm(" not in JS
     assert client.get("/ui/review.js").status_code == 200
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_consecutive_citation_markers_render_as_one_control():
+    out = _review("""
+      const runs = (t) => R.citationRuns(t).filter((p) => p.labels).map((p) => p.labels);
+      const texts = (t) => R.citationRuns(t).filter((p) => !p.labels).map((p) => p.text);
+      console.log(JSON.stringify({
+        five: runs("The patient was discharged on warfarin [S1] [S2] [S3] [S4] [S5]."),
+        one: runs("Pulmonary embolism [S5]."),
+        apart: runs("Creatinine was 1.2 [L1], and potassium was 4.0 [L2]."),
+        mixed: runs("Guidelines support this [G1] [P1]."),
+        prose: texts("Creatinine was 1.2 [L1], and potassium was 4.0 [L2]."),
+        plain: R.citationRuns("No citations here."),
+      }));""")
+    assert out["five"] == [["S1", "S2", "S3", "S4", "S5"]]                 # one control, every label kept
+    assert out["one"] == [["S5"]]
+    assert out["apart"] == [["L1"], ["L2"]]                                  # different claims stay separate
+    assert out["mixed"] == [["G1", "P1"]]
+    assert out["prose"] == ["Creatinine was 1.2 ", ", and potassium was 4.0 ", "."]
+    assert out["plain"] == [{"text": "No citations here."}]
+    source = APP_JS.read_text() if "APP_JS" in globals() else (UI / "app.js").read_text()
+    assert "LumenReview.citationRuns(text)" in source and "innerHTML" not in source

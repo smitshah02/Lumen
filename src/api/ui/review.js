@@ -65,4 +65,20 @@ const LumenReview = {
   },
 };
 
+/* Split an answer into prose and citation runs, for display only. A run is
+ * one or more markers with nothing but whitespace between them: "[S1] [S2]"
+ * is one run, "[S1], and ... [S2]" is two. The answer text itself is never
+ * changed; every label of a run is kept, in order, without repeats. */
+LumenReview.citationRuns = function (text) {
+  const parts = [];
+  let last = 0;
+  for (const run of String(text).matchAll(/\[[SLGPA]\d+\](?:\s*\[[SLGPA]\d+\])*/g)) {
+    if (run.index > last) parts.push({ text: text.slice(last, run.index) });
+    parts.push({ labels: [...new Set(run[0].match(/[SLGPA]\d+/g))] });
+    last = run.index + run[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+};
+
 if (typeof module !== "undefined") module.exports = LumenReview;
