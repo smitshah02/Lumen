@@ -85,6 +85,18 @@ HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000"))
 RRF_BM25_WEIGHT = float(_os.environ.get("LUMEN_RRF_BM25_WEIGHT", "1.5"))
 RRF_VECTOR_WEIGHT = float(_os.environ.get("LUMEN_RRF_VECTOR_WEIGHT", "0.75"))
 QUERY_EXPANSION = _os.environ.get("LUMEN_QUERY_EXPANSION", "0").strip().lower() in ("1", "true", "yes")
+# Patient-scoped fusion, selected on the development retrieval benchmark (42
+# questions). The patient-scoped lexical arm is a different ranker from the
+# corpus-wide one above (any-term, rarity-weighted, section-aware) and on that
+# benchmark it is the stronger list: Hit@5 0.857 against the vector arm's 0.524.
+# At 1.0 : 0.1 the vector arm adds candidates behind the lexical ones instead of
+# displacing them. The overlap bonus is off: at k=60 it was worth ~25 ranks, so
+# any chunk both arms returned jumped over better lexical matches.
+#     lexical:vector (no bonus)   1:0.1   1:0.25  1:0.5   1:1
+#     Hit@5 before reranking      0.833   0.738   0.714   0.667
+PATIENT_RRF_BM25_WEIGHT = 1.0
+PATIENT_RRF_VECTOR_WEIGHT = 0.1
+PATIENT_RRF_OVERLAP_BONUS = 0.0
 # Explicit temporal questions need a wider patient-local pool: a frequently
 # measured observation can have hundreds of equally relevant chunks, and the
 # newest/oldest one may not be present in the normal top 60. This is applied
@@ -207,6 +219,125 @@ class RetrievalResult:
 # BM25 Search — expanded with OR matching
 # ===========================================================================
 
+# A query term found in the chunk's own "[SECTION]" label counts this many extra
+# matches. The label is what the chunker wrote at index time; nothing is inferred.
+SECTION_MATCH_BOOST = 2.0
+
+
+def _patient_lexical_search(
+    query: str,
+    subject_id: int,
+    hadm_id: Optional[int],
+    note_type: Optional[str],
+    top_n: int,
+    min_tokens: int,
+) -> list[dict]:
+    """Rank one patient's chunks by the query terms they contain.
+
+    A clinical question is a sentence ("What medications was the patient
+    discharged on?"), and requiring every word of it in one chunk returned no
+    rows for 26 of the 42 development questions. Any term may match here. Each
+    term is weighted by how rare it is among this patient's chunks, so "patient"
+    counts for little and "allergies" for a lot, and a term that names the
+    chunk's section counts more than one in the body. The section is the chunk's
+    own "[SECTION]" prefix plus chunk_search_labels (section_labels.py).
+
+    The note-header chunk is searchable here (allergies, chief complaint and the
+    procedure list live in it); the vector arm still excludes it.
+    """
+    with engine.connect() as conn:
+        parsed = conn.execute(
+            sa_text("SELECT plainto_tsquery('english', :query)::text"), {"query": query}
+        ).scalar() or ""
+        terms = list(dict.fromkeys(re.findall(r"'((?:[^']|'')+)'", parsed)))
+        if not terms:
+            return []
+        filters = ""
+        params = {"terms": terms, "subject_id": subject_id, "min_tokens": min_tokens,
+                  "top_n": top_n, "section_boost": SECTION_MATCH_BOOST}
+        if hadm_id:
+            filters += " AND nc.hadm_id = :hadm_id"
+            params["hadm_id"] = hadm_id
+        if note_type:
+            filters += " AND nc.note_type = :note_type"
+            params["note_type"] = note_type
+        sql = f"""
+            WITH base AS (
+                SELECT nc.chunk_id, nc.note_id, nc.subject_id, nc.hadm_id, nc.note_type,
+                       nc.chunk_index, nc.chunk_text, nc.token_count, nc.text_search, cn.charttime,
+                       to_tsvector('english', COALESCE(substring(nc.chunk_text from '^\\[([^\\]]*)\\]'), '')
+                                              || ' ' || COALESCE(sl.labels, '')) AS section_search
+                FROM note_chunks nc
+                JOIN clinical_notes cn ON nc.note_id = cn.note_id
+                LEFT JOIN chunk_search_labels sl ON sl.chunk_id = nc.chunk_id
+                WHERE nc.subject_id = :subject_id
+                  AND nc.token_count >= :min_tokens{filters}
+            ),
+            terms AS (
+                SELECT quote_literal(term)::tsquery AS tq FROM unnest(CAST(:terms AS text[])) AS term
+            ),
+            weighted AS (
+                SELECT t.tq,
+                       ln(1 + (SELECT count(*) FROM base)::float
+                              / GREATEST((SELECT count(*) FROM base b
+                                          WHERE b.text_search @@ t.tq OR b.section_search @@ t.tq), 1)) AS idf
+                FROM terms t
+            )
+            SELECT b.chunk_id, b.note_id, b.subject_id, b.hadm_id, b.note_type,
+                   b.chunk_index, b.chunk_text, b.token_count, b.charttime,
+                   SUM(w.idf * (1 + ts_rank(b.text_search, w.tq, 1)
+                                + :section_boost * (b.section_search @@ w.tq)::int)) AS bm25_score
+            FROM base b JOIN weighted w ON b.text_search @@ w.tq OR b.section_search @@ w.tq
+            GROUP BY b.chunk_id, b.note_id, b.subject_id, b.hadm_id, b.note_type,
+                     b.chunk_index, b.chunk_text, b.token_count, b.charttime
+            ORDER BY bm25_score DESC, b.chunk_id ASC
+            LIMIT :top_n
+        """
+        return [dict(r) for r in conn.execute(sa_text(sql), params).mappings().all()]
+
+
+def _strict_lexical_search(
+    query: str,
+    hadm_id: Optional[int],
+    note_type: Optional[str],
+    top_n: int,
+    min_tokens: int,
+) -> list[dict]:
+    """Corpus-wide search: every query term must be in the chunk.
+
+    ponytail: any-term matching over the whole corpus would rank millions of
+    rows; the runtime path is patient-scoped. Revisit if corpus-wide recall matters.
+    """
+    sql_and = """
+        SELECT
+            nc.chunk_id, nc.note_id, nc.subject_id, nc.hadm_id,
+            nc.note_type, nc.chunk_index, nc.chunk_text, nc.token_count,
+            cn.charttime,
+            ts_rank_cd(nc.text_search, plainto_tsquery('english', :query)) * 1.5 AS bm25_score
+        FROM note_chunks nc
+        JOIN clinical_notes cn ON nc.note_id = cn.note_id
+        WHERE nc.text_search @@ plainto_tsquery('english', :query)
+          AND nc.token_count >= :min_tokens
+          AND nc.chunk_text NOT LIKE '%Unit No:%'
+    """
+    params_and = {"query": query, "min_tokens": min_tokens}
+    if hadm_id:
+        sql_and += " AND nc.hadm_id = :hadm_id"
+        params_and["hadm_id"] = hadm_id
+    if note_type:
+        sql_and += " AND nc.note_type = :note_type"
+        params_and["note_type"] = note_type
+
+    # chunk_id is the tiebreaker, not decoration: ts_rank_cd ties are common and
+    # Postgres returns tied rows in whatever order the heap hands them over, so
+    # without it the same query returns a different ranking run to run.
+    sql_and += " ORDER BY bm25_score DESC, nc.chunk_id ASC LIMIT :top_n"
+    params_and["top_n"] = top_n
+
+    with engine.connect() as conn:
+        return [dict(r) for r in conn.execute(sa_text(sql_and), params_and).mappings().all()]
+
+
 def bm25_search(
     query: str,
     expansions: list[str],
@@ -225,44 +356,16 @@ def bm25_search(
     one identical rank and intra-note order was arbitrary.
 
     Two passes:
-      1. Strict match on the original query, ranked per-chunk, boosted 1.5x
+      1. The original query: any-term, rarity-weighted when patient-scoped;
+         every-term (strict) when corpus-wide
       2. OR match on expansion terms (high recall)
     Merged AND-first, deduped, min-max normalized (display only; RRF uses rank).
     """
-    # ---- Pass 1: original query, per-chunk rank, boosted ----
-    sql_and = """
-        SELECT
-            nc.chunk_id, nc.note_id, nc.subject_id, nc.hadm_id,
-            nc.note_type, nc.chunk_index, nc.chunk_text, nc.token_count,
-            cn.charttime,
-            ts_rank_cd(nc.text_search, plainto_tsquery('english', :query)) * 1.5 AS bm25_score
-        FROM note_chunks nc
-        JOIN clinical_notes cn ON nc.note_id = cn.note_id
-        WHERE nc.text_search @@ plainto_tsquery('english', :query)
-          AND nc.token_count >= :min_tokens
-          AND nc.chunk_text NOT LIKE '%Unit No:%'
-    """
-    params_and = {"query": query, "min_tokens": min_tokens}
-
+    # ---- Pass 1: original query, per-chunk rank ----
     if subject_id:
-        sql_and += " AND nc.subject_id = :subject_id"
-        params_and["subject_id"] = subject_id
-    if hadm_id:
-        sql_and += " AND nc.hadm_id = :hadm_id"
-        params_and["hadm_id"] = hadm_id
-    if note_type:
-        sql_and += " AND nc.note_type = :note_type"
-        params_and["note_type"] = note_type
-
-    # chunk_id is the tiebreaker, not decoration: ts_rank_cd ties are common and
-    # Postgres returns tied rows in whatever order the heap hands them over, so
-    # without it the same query returns a different ranking run to run.
-    sql_and += " ORDER BY bm25_score DESC, nc.chunk_id ASC LIMIT :top_n"
-    params_and["top_n"] = top_n
-
-    with engine.connect() as conn:
-        result = conn.execute(sa_text(sql_and), params_and)
-        and_results = [dict(r) for r in result.mappings().all()]
+        and_results = _patient_lexical_search(query, subject_id, hadm_id, note_type, top_n, min_tokens)
+    else:
+        and_results = _strict_lexical_search(query, hadm_id, note_type, top_n, min_tokens)
 
     # ---- Pass 2: OR match on expansion terms, per-chunk ----
     or_results = []
@@ -428,6 +531,7 @@ def fetch_adjacent_chunks(note_id: int, chunk_index: int, window: int = 1) -> li
         FROM note_chunks
         WHERE note_id = :note_id
           AND chunk_index BETWEEN :start_idx AND :end_idx
+          AND chunk_text NOT LIKE '%Unit No:%'
           AND chunk_text NOT LIKE '%Unit No:%'
         ORDER BY chunk_index
     """
@@ -687,6 +791,49 @@ def temporal_candidate_limit(
 # Temporal Filter
 # ===========================================================================
 
+# How far the timeline counts against relevance for "latest"/"earliest" questions:
+# at 1.0 the whole span of the patient's retrieved dates is worth the whole span
+# of relevance scores. Selected on the 11 temporal development questions, where
+# target Hit@5 was 0.91 at 0.4 and 1.00 across 0.7-2.5.
+TEMPORAL_WEIGHT = 1.0
+
+
+def _prefer_by_time(results: list[RetrievalResult], newest_first: bool, score_attr: str) -> list[RetrievalResult]:
+    """Order by relevance plus a preference for the newest (or oldest) date.
+
+    Sorting on date alone answers "what is in the newest note", not "what is the
+    newest record of the thing asked about": it put unrelated chunks of the last
+    note above the evidence. Here relevance (min-max normalised) and the date's
+    position among the patient's own retrieved dates (0..1) are added, so time
+    decides between comparably relevant chunks and cannot lift an irrelevant one
+    far. Positions are per patient: MIMIC shifts each patient's dates separately.
+    Undated records get no time preference."""
+    by_subject: dict[int, set] = {}
+    for r in results:
+        ct = _parse_charttime(r.charttime)
+        if ct is not None:
+            by_subject.setdefault(r.subject_id, set()).add(ct)
+    position = {}
+    for sid, times in by_subject.items():
+        ordered = sorted(times)
+        span = max(len(ordered) - 1, 1)
+        for i, ct in enumerate(ordered):
+            position[(sid, ct)] = (i / span) if newest_first else (1 - i / span)
+
+    ranked = sorted(results, key=lambda r: getattr(r, score_attr), reverse=True)
+    scores = [getattr(r, score_attr) for r in ranked]
+    lo = min(scores, default=0.0)
+    rng = (max(scores, default=0.0) - lo) or 1.0
+
+    def combined(item):
+        i, r = item
+        ct = _parse_charttime(r.charttime)
+        when = position.get((r.subject_id, ct), 0.0) if ct is not None else 0.0
+        return ((getattr(r, score_attr) - lo) / rng + TEMPORAL_WEIGHT * when, -i)   # -i: relevance order breaks ties
+
+    return [r for _, r in sorted(enumerate(ranked), key=combined, reverse=True)]
+
+
 def apply_temporal_filter(
     results: list[RetrievalResult],
     mode: str = "all",
@@ -710,9 +857,9 @@ def apply_temporal_filter(
       "all"                  -> no temporal effect (relevance order kept)
       "recent"               -> drop records older than recency_days before the
                                 subject's anchor; boost survivors by recency
-      "latest"/"most_recent" -> boost toward newest per subject; keep all
-      "earliest"/"trend"/"oldest_first" -> chronological ascending
-                                             (undated sink last)
+      "latest"/"most_recent" -> relevance plus a preference for the newest date
+      "earliest"             -> relevance plus a preference for the oldest date
+      "trend"/"oldest_first" -> chronological ascending (undated sink last)
 
     Recency is a half-life decay on the real intra-patient interval, applied
     additively to rrf_score (additive avoids the min-maxed "0 stays 0" trap).
@@ -722,12 +869,12 @@ def apply_temporal_filter(
     mode = (mode or "all").lower()
     if mode == "oldest_first":
         mode = "trend"
-    if mode == "earliest":
-        mode = "trend"
     if mode == "most_recent":
         mode = "latest"
     if mode == "all":
         return results
+    if mode in ("latest", "earliest"):
+        return _prefer_by_time(results, mode == "latest", score_attr)
 
     refs: dict[int, datetime] = dict(reference_times) if reference_times else {}
     if not reference_times:
@@ -754,7 +901,7 @@ def apply_temporal_filter(
         if mode == "recent" and days_ago > recency_days:
             continue
 
-        if boost_recent and mode in ("recent", "latest"):
+        if boost_recent and mode == "recent":
             setattr(r, score_attr,
                     getattr(r, score_attr) + boost_weight * (0.5 ** (days_ago / halflife_days)))
 
@@ -762,21 +909,6 @@ def apply_temporal_filter(
 
     if mode == "trend":
         kept.sort(key=lambda x: _parse_charttime(x.charttime) or datetime.max)
-    elif mode == "latest":
-        # "latest" is only reached for phrasings that explicitly ask for recency
-        # ("most recent", "latest", "current", "last recorded"), so recency is
-        # the ranking key and relevance breaks ties.
-        #
-        # The additive boost alone cannot do this: it is capped at boost_weight
-        # (0.20) while the newest record routinely sits a larger distance down
-        # the relevance ranking — measured gap 0.44 on one research-cohort patient for
-        # "most recent creatinine value", so the newest record could never
-        # surface no matter how recent it was.
-        kept.sort(
-            key=lambda x: (_parse_charttime(x.charttime) or datetime.min,
-                           getattr(x, score_attr)),
-            reverse=True,
-        )
     else:
         kept.sort(key=lambda x: getattr(x, score_attr), reverse=True)
 
@@ -1037,12 +1169,13 @@ class HybridRetriever:
 
         with _stage(stages, "fusion"):
             # Stage 4: Reciprocal Rank Fusion with overlap bonus
+            patient_scoped = subject_id is not None
             merged = reciprocal_rank_fusion(
                 bm25_results=bm25_results,
                 vector_results=vec_results,
-                bm25_weight=self.bm25_weight,
-                vector_weight=self.vector_weight,
-                overlap_bonus=self.overlap_bonus,
+                bm25_weight=PATIENT_RRF_BM25_WEIGHT if patient_scoped else self.bm25_weight,
+                vector_weight=PATIENT_RRF_VECTOR_WEIGHT if patient_scoped else self.vector_weight,
+                overlap_bonus=PATIENT_RRF_OVERLAP_BONUS if patient_scoped else self.overlap_bonus,
             )
 
             # Stage 5: Note-level deduplication

@@ -339,7 +339,10 @@ def _retrieval() -> dict:
             "bm25_top_n": 60, "vector_top_n": 60, "min_tokens": 40,
             "hnsw_ef_search": H.HNSW_EF_SEARCH,
             "rrf": {"k": 60, "bm25_weight": H.RRF_BM25_WEIGHT,
-                    "vector_weight": H.RRF_VECTOR_WEIGHT},
+                    "vector_weight": H.RRF_VECTOR_WEIGHT,
+                    "patient_scoped": {"bm25_weight": H.PATIENT_RRF_BM25_WEIGHT,
+                                       "vector_weight": H.PATIENT_RRF_VECTOR_WEIGHT,
+                                       "overlap_bonus": H.PATIENT_RRF_OVERLAP_BONUS}},
             "query_expansion": H.QUERY_EXPANSION,
             "reranker_model_path": Path(H.DEFAULT_RERANKER_MODEL).name,
         })

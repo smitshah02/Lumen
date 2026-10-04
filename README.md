@@ -61,6 +61,42 @@ Never put MIMIC data, derived patient text, credentials, model weights, or
 evaluation evidence containing note text in Git. See the
 [research runbook](docs/runbooks/research.md) before using this plane.
 
+## Evaluation Highlights
+
+Final evaluation, closed 2026-10-04. Full results, method, failures found and
+limitations: [`docs/evaluation-final.md`](docs/evaluation-final.md).
+
+- **Unseen holdout:** 10 MIMIC-IV patients outside the indexed 5,000-patient
+  cohort (fixed seed, zero overlap, frozen before any answer was generated),
+  75 cases.
+- **Safety contract:** 75/75 on the holdout and 24/24 on the development set.
+  No unsupported or uncited claim was released without human review
+  (0 unsafe auto-approvals).
+- **Structured answers vs SQL:** 40/40. **Temporal checks:** 40/40.
+- **Citations:** resolution and context membership 100% (119/119), checked
+  deterministically against the database and the run's checkpoint.
+- **Patient isolation:** 100% (175/175 returned sources).
+- **Stability:** 24 repeated runs of model-sensitive cases, 24/24 safe.
+- **Human adjudication:** a blinded reviewer judged a small, deliberately
+  difficult sample of 13 holdout claims: 8 fully supported, 10 fully or
+  partially supported. This is a check on the verifier, not an accuracy
+  estimate.
+
+- **Development retrieval benchmark** (42 questions, 16 patients, strict
+  section-level relevance; small, section-shaped questions, not external
+  validation): first measured at Hit@5 0.55, nDCG@5 0.27; after the
+  improvement sprint Hit@5 0.95, nDCG@5 0.70, MRR 0.82, temporal target
+  Hit@5 11/11. Not comparable to the corpus-wide judged figures further down.
+- **Verifier diagnostic** (74 labelled and synthetic adversarial claims):
+  unsupported recall 0.67 → 0.98, false-support rate 0.36 → 0.04.
+- **Post-change holdout regression** (one run after the freeze): safety
+  contract 75/75, 0 unsafe auto-approvals, SQL truth 40/40, temporal 40/40,
+  citations and patient isolation 100%, human review 28%. Model-backed p50
+  latency rose from 20.7 s to 26.7 s.
+
+About a third of holdout cases (24/75; 21/75 after the sprint) paused for human review. This is a
+research system; none of the above is evidence of clinical safety.
+
 ## Evaluation
 
 The evaluation surfaces have distinct jobs:

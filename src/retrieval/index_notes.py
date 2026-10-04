@@ -32,6 +32,7 @@ from sqlalchemy import text as sa_text
 from src.storage import engine
 from src.retrieval.chunker import ClinicalNoteChunker
 from src.retrieval.embeddings import MedCPTEmbedder
+from src.retrieval.section_labels import label_chunks
 from src.retrieval.index_provenance import (CHUNKER_CONFIG, configuration_hash,
                                             index_configuration,
                                             legacy_adopted_hashes)
@@ -123,7 +124,8 @@ def fetch_notes_by_ids(note_ids: list[int]) -> list[dict]:
         result = conn.execute(
             sa_text("""
                 SELECT note_id, subject_id, hadm_id, note_type,
-                       COALESCE(text_deid, text_original) as text
+                       COALESCE(text_deid, text_original) as text,
+                       COALESCE(text_original, text_deid) as text_as_written
                 FROM clinical_notes
                 WHERE note_id = ANY(:ids)
                 ORDER BY note_id
@@ -163,6 +165,14 @@ def store_chunks_batch(chunks_data: list[dict], config_hash: str) -> tuple[int, 
                             (:note_id, :subject_id, :hadm_id, :note_type,
                              :chunk_index, :chunk_text, :token_count, :embedding)
                     """), records[i:i + 100])
+                # Search-only section names. The DELETE above cascaded the old ones away.
+                labelled = [r for r in records if r.get("search_labels")]
+                if labelled:
+                    conn.execute(sa_text("""
+                        INSERT INTO chunk_search_labels (chunk_id, labels)
+                        SELECT chunk_id, :search_labels FROM note_chunks
+                        WHERE note_id = :note_id AND chunk_index = :chunk_index
+                    """), labelled)
                 conn.execute(sa_text("""
                     UPDATE note_index_state SET status='completed',
                         chunk_count=:count, completed_at=NOW(), error_message=NULL
@@ -290,8 +300,13 @@ def _run_indexing_steps(
         chunk_records = []
         chunk_texts = []
         for note in notes:
-            for chunk in chunker.chunk_text(note["text"], note_type=note.get("note_type", "discharge")):
+            chunks = chunker.chunk_text(note["text"], note_type=note.get("note_type", "discharge"))
+            # Search-only section names, read from the headers of the note as written.
+            labels = (label_chunks(note.get("text_as_written") or note["text"], [c.text for c in chunks])
+                      if note.get("note_type") == "discharge" else [None] * len(chunks))
+            for chunk, label in zip(chunks, labels):
                 chunk_records.append({
+                    "search_labels": label,
                     "note_id":      note["note_id"],
                     "subject_id":   note["subject_id"],
                     "hadm_id":      note["hadm_id"],

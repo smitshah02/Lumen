@@ -539,6 +539,14 @@ def patient_retrieval(state: AgentState) -> dict:
             temporal_filter=state.get("temporal_mode") or "auto",
             top_k=PATIENT_TOP_K,
         )
+        # The retriever chooses evidence by relevance plus a preference for the
+        # newest (or oldest) date. The chosen few are then shown in time order,
+        # so S1 is the newest record of a "latest" question (oldest for "earliest").
+        mode = state.get("temporal_mode") or detect_temporal_mode(state["query"])
+        if mode in ("latest", "earliest"):
+            dated = sorted((r for r in results if r.charttime), key=lambda r: str(r.charttime),
+                           reverse=(mode == "latest"))
+            results = dated + [r for r in results if not r.charttime]
         ev = _to_evidence(results, "S", "note")
         if s is not None:
             s.update(output={"n": len(ev), "chunk_ids": [e["chunk_id"] for e in ev],

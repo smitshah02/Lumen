@@ -104,7 +104,9 @@ def test_a_self_contradictory_direction_is_unsupported_by_code(graph_mod, spy, c
     ("Potassium decreased from 5.1 on admission to 4.2 at discharge [S1].", "supported"),   # consistent
     ("Potassium fell from 5.1 to 4.2 [S1].", "supported"),
     ("Potassium was 5.1 on admission and 4.2 at discharge [S1].", "supported"),           # no direction asserted
-    ("Potassium rose and then fell from 5.1 to 4.2 [S1].", "supported"),                  # both directions: not decidable
+    # both directions: the direction check cannot decide it. "Potassium rose" has no anchor of
+    # its own, so since the unanchored-clause rule the model decides; it is never refuted in code.
+    ("Potassium rose and then fell from 5.1 to 4.2 [S1].", "unresolved"),
     ("Potassium increased from 5.1 to 6.3 [S1].", "unresolved"),                          # consistent, anchor absent
     ("Potassium increased during the stay [S1].", "unresolved"),                          # no numbers at all
 ])

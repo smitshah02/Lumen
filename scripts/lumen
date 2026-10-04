@@ -29,6 +29,8 @@ research commands:
   adjudicate  blinded human claim-support labelling: sample | label | report
   holdout     unseen-patient cohort in its own database: select | create-db |
               ingest | status | start | scorecard
+  retrieval-eval  development retrieval benchmark: build | run (P@5, R@5, nDCG@5, MRR, reranker lift)
+  verifier-eval   verifier diagnostic on labelled and synthetic adversarial claims
   scorecard   fixed evaluation set: routing, SQL truth, citation integrity, claim
               support, review rate and latency (aggregates only)
   retrieval-bench  per-stage retrieval latency over a fixed question set (--out FILE)
@@ -107,6 +109,8 @@ case "$plane:$command" in
   research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;
   research:parity) "$PY" scripts/structured_parity.py "$@" ;;
   research:scorecard) "$PY" scripts/scorecard.py "$@" ;;
+  research:retrieval-eval) "$PY" scripts/retrieval_eval.py "$@" ;;
+  research:verifier-eval) "$PY" scripts/verifier_eval.py "$@" ;;
   research:adjudicate) "$PY" scripts/adjudicate.py "$@" ;;
   research:holdout) "$PY" scripts/holdout.py "$@" ;;
   research:ask)    "$PY" -m src.agents.run_graph "$@" ;;
