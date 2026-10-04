@@ -24,11 +24,13 @@ import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import psycopg
 from fastapi import FastAPI, Path as PathParam, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -534,3 +536,20 @@ async def review_submit(body: ReviewDecision, request: Request, thread_id: str =
             "needs_human_review": bool(st.get("needs_human_review")),
             "human_decisions": st.get("human_decisions") or [],
             "node_trail": st.get("node_trail") or []}
+
+
+# ---------------------------------------------------------------------------
+# Local UI: three static files that call the endpoints above. Served by this
+# app so it inherits the request middleware — on the research plane that is the
+# loopback-only guard — and needs no second process. Mounted last so it can
+# never shadow an API route.
+# ---------------------------------------------------------------------------
+UI_DIR = Path(__file__).parent / "ui"
+
+
+@app.get("/", include_in_schema=False)
+async def ui_root():
+    return RedirectResponse("/ui/")
+
+
+app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")

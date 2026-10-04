@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Everything this page loads or calls must come from the Lumen API itself. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Lumen</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="name">LUMEN</span>
+      <span class="tag">Longitudinal Clinical RAG</span>
+    </div>
+    <div class="env">
+      <span class="pill"><i class="dot ok"></i>Local inference</span>
+      <span class="pill" id="plane"><i class="dot"></i>Checking environment…</span>
+    </div>
+    <div class="status" id="status" title="Backend status, refreshed every 30 seconds">
+      <span class="chip" id="st-api">API <b>…</b></span>
+      <span class="chip" id="st-db">Database <b>…</b></span>
+      <span class="chip" id="st-models">Models <b>…</b></span>
+      <span class="chip" id="st-tracing">Tracing <b>…</b></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="chat" aria-label="Conversation">
+      <div class="patient">
+        <label for="subject">Patient / Subject ID</label>
+        <input id="subject" type="text" inputmode="numeric" autocomplete="off" placeholder="numeric subject_id" maxlength="10">
+        <span class="hint" id="subject-hint">Required. Each question is an independent request for this patient.</span>
+      </div>
+      <div class="messages" id="messages" aria-live="polite"></div>
+      <form class="composer" id="composer">
+        <textarea id="query" rows="2" maxlength="500" placeholder="Ask about this patient's record…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button type="submit" id="send">Send</button>
+      </form>
+      <p class="disclaimer">Research prototype on de-identified MIMIC-IV data. Not for clinical use.</p>
+    </section>
+
+    <aside class="details" aria-label="Answer details">
+      <nav class="tabs">
+        <button type="button" class="tab active" data-tab="evidence">Evidence</button>
+        <button type="button" class="tab" data-tab="workflow">Workflow</button>
+        <button type="button" class="tab" data-tab="performance">Performance</button>
+      </nav>
+      <div class="pane" id="pane-evidence"></div>
+      <div class="pane hidden" id="pane-workflow"></div>
+      <div class="pane hidden" id="pane-performance"></div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
