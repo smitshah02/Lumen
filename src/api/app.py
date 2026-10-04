@@ -40,6 +40,7 @@ from src.retrieval.index_provenance import (configuration_hash as index_configur
                                             legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
 from src.agents import review
+from src.safety import pubmed
 from src.llm import local_client
 from src.obs import tracing
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
@@ -414,6 +415,8 @@ async def ready(request: Request):
             "retrieval_model_problems": retrieval.get("model_problems", []),
             # informational only: an unreachable observability backend never makes the API unready
             "tracing": tracing.status(),
+            # "none" unless LUMEN_LITERATURE_BACKEND opts in; the only outbound integration
+            "literature_backend": pubmed.backend_name(),
             "request_id": request.state.request_id}
     return JSONResponse(status_code=200 if ok else 503, content=body)
 

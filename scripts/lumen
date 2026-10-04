@@ -26,6 +26,8 @@ research commands:
   schema      apply additive schema upgrades
   ingest      ingest MIMIC only with --confirm-research-ingest
   parity      compare structured API answers with direct SQL (PASS/FAIL only)
+  scorecard   fixed evaluation set: routing, SQL truth, citation integrity, claim
+              support, review rate and latency (aggregates only)
   retrieval-bench  per-stage retrieval latency over a fixed question set (--out FILE)
   ask         ask one question (--query ... --subject ...); a human review is
               prompted for inline and the run resumes from its checkpoint
@@ -101,6 +103,7 @@ case "$plane:$command" in
     ;;
   research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;
   research:parity) "$PY" scripts/structured_parity.py "$@" ;;
+  research:scorecard) "$PY" scripts/scorecard.py "$@" ;;
   research:ask)    "$PY" -m src.agents.run_graph "$@" ;;
   research:retrieval-bench) "$PY" scripts/retrieval_bench.py "$@" ;;
   research:eval) LUMEN_DATA_PLANE=research "$PY" -m src.evals.retrieve_pool "$@" ;;

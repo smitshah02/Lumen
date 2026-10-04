@@ -1358,3 +1358,51 @@ def test_perf_select_rejects_an_unknown_id(performance_eval_mod):
     with pytest.raises(SystemExit) as e:
         performance_eval_mod._select(["demo_q01", "demo_q99"])
     assert "demo_q99" in str(e.value)
+
+
+# ===========================================================================
+# Guideline retrieval stays conditional; the trigger covers management and
+# appropriateness questions, not chart facts
+# ===========================================================================
+@pytest.mark.parametrize("query", [
+    "How should this patient's hypertension be managed?",
+    "How would you treat the patient's heart failure?",
+    "Is the current anticoagulation treatment appropriate?",
+    "Is this dose appropriate given the kidney function?",
+    "What is the best management for the patient's diabetes?",
+    "What is the first-line therapy for this condition?",
+    "What is best practice for monitoring potassium here?",
+])
+def test_management_and_appropriateness_questions_pull_guidelines(graph_mod, query):
+    d = classify(query)
+    assert (d.query_type, d.confident) == ("guideline_check", True), query
+    state = {"query": query, "subject_id": 1, "query_type": d.query_type, "classified_by": "rules",
+             "query_complexity": d.complexity, "temporal_mode": "all"}
+    assert graph_mod.route_from_triage(state) == "patient_retrieval"          # the patient record first...
+    assert graph_mod.route_after_patient(state) == "guideline_retrieval"      # ...then the guidelines
+
+
+@pytest.mark.parametrize("query,route", [
+    ("How was the patient's hypertension managed?", "synthesis"),
+    ("What treatment was given for the heart failure?", "synthesis"),
+    ("What medications was the patient discharged on?", "synthesis"),
+    ("Which therapy did the patient receive during the last admission?", "synthesis"),
+])
+def test_chart_fact_questions_still_skip_guidelines(graph_mod, query, route):
+    d = classify(query)
+    assert d.query_type == "chart_review", query
+    assert graph_mod.route_after_patient({"query_type": d.query_type}) == route
+
+
+@pytest.mark.parametrize("query,node", [
+    ("What was the most recent creatinine?", "lab_lookup"),
+    ("How did creatinine change over time?", "lab_lookup"),
+    ("How many hospital admissions does the patient have?", "encounter_lookup"),
+])
+def test_structured_questions_are_untouched_by_the_wider_guideline_trigger(graph_mod, query, node):
+    from src.retrieval.hybrid_retriever_v2 import detect_temporal_mode
+    mode = detect_temporal_mode(query)
+    d = classify(query, mode)
+    state = {"query": query, "subject_id": 1, "query_type": d.query_type, "classified_by": "rules",
+             "query_complexity": d.complexity, "temporal_mode": mode}
+    assert graph_mod.route_from_triage(state) == node

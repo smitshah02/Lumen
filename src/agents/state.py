@@ -70,6 +70,9 @@ class AgentState(TypedDict, total=False):
     patient_evidence: list[Evidence]
     guideline_evidence: list[Evidence]
     literature_evidence: list[Evidence]
+    # True when the question asked for published literature and this build has
+    # no literature backend. The answer then carries a fixed notice saying so.
+    literature_unavailable: bool
     # Structured values pulled straight from labevents by the deterministic
     # lab path. Same Evidence shape, chunk_id -1 (no note chunk backs a table
     # row), label "L#" — so citations.validate and the API treat it like any

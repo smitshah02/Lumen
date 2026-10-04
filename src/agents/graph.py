@@ -47,7 +47,7 @@ from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_m
 from src.retrieval.guideline_retriever import GuidelineRetriever
 from langgraph.types import Command, interrupt
 from src.safety.egress_gate import EgressGate, call_external
-from src.safety import stub_tools
+from src.safety import pubmed
 from src.obs import tracing
 
 logger = logging.getLogger(__name__)
@@ -135,15 +135,52 @@ def _gate_for(state: AgentState) -> EgressGate:
     return gate
 
 
-def _to_literature_evidence(results: list[dict]) -> list[dict]:
+# The external literature tool, or None when none is enabled — the default.
+# LUMEN_LITERATURE_BACKEND=pubmed turns on src/safety/pubmed.py. The stand-in
+# in src/safety/stub_tools.py exists to exercise the egress gate in its eval
+# and must never be wired in here: its "studies" and ids are invented.
+LITERATURE_TOOL = pubmed.configured_tool()
+LITERATURE_UNAVAILABLE = ("External literature retrieval is not available in this local research build, "
+                          "so no published studies were consulted for this answer.")
+LITERATURE_EMPTY = ("The external literature search returned no usable results for this question, "
+                    "so no published studies were consulted for this answer.")
+
+
+def _is_stub(backend) -> bool:
+    return not backend or str(backend).lower().startswith("stub")
+
+
+def _citable_literature(state: AgentState) -> list[dict]:
+    """Literature evidence that may be cited: only what a real backend returned.
+    A second guard behind literature_retrieval, so an invented result cannot
+    become a valid [P#] label even if one reaches the state some other way."""
+    return [e for e in (state.get("literature_evidence", []) or []) if not _is_stub(e.get("backend"))]
+
+
+def _with_literature_notice(state: AgentState, answer: str) -> str:
+    """Say, in fixed words, that no literature was consulted. Attached to the
+    answer rather than written by the model, and never treated as a claim."""
+    notice = LITERATURE_UNAVAILABLE if LITERATURE_TOOL is None else LITERATURE_EMPTY
+    if not state.get("literature_unavailable") or notice in (answer or ""):
+        return answer
+    return f"{answer}\n\n{notice}".strip()
+
+
+def _to_literature_evidence(tool_output: dict) -> list[dict]:
+    """Tool results as [P#] evidence. A stub backend yields none."""
+    backend = (tool_output or {}).get("source")
+    if _is_stub(backend):
+        return []
     out = []
-    for i, r in enumerate(results, 1):
+    for i, r in enumerate(tool_output.get("results", []), 1):
         out.append({
             "chunk_id": -1,
             "source_type": "literature",
-            "text": f"{r.get('title', '')} ({r.get('pmid') or r.get('nct_id', '')})",
-            "charttime": None,
-            "note_type": "literature",
+            "backend": backend,
+            "text": (f"{r.get('title', '')} {r.get('journal', '')} {r.get('year', '')}. "
+                     f"PMID {r.get('pmid', '')}.\n{r.get('abstract', '')}").strip(),
+            "charttime": r.get("year") or None,
+            "note_type": f"PubMed PMID {r.get('pmid', '')}",
             "score": 0.0,
             "label": f"P{i}",
         })
@@ -528,6 +565,16 @@ def literature_retrieval(state: AgentState) -> dict:
     concept query generated from it, then gate-checked. If the gate blocks,
     we retry once under a stricter instruction rather than failing the run.
     """
+    if LITERATURE_TOOL is None:
+        # Nothing to query, so nothing is sent anywhere and no model call is
+        # spent on a search string. The answer says so only when literature is
+        # what the question asked for; as a fallback for an empty guideline
+        # search there is nothing to announce.
+        logger.info("[literature_retrieval] no literature backend in this build — skipped")
+        return {"literature_evidence": [],
+                "literature_unavailable": state.get("query_type") == "literature",
+                "node_trail": _trail(state, "literature_retrieval")}
+
     gate = _gate_for(state)
     query = state["query"]
     egress = list(state.get("egress_log", []) or [])
@@ -545,14 +592,21 @@ def literature_retrieval(state: AgentState) -> dict:
             logger.warning(f"concept extraction failed: {e}")
             return ""
 
-    results, attempts = [], []
+    tool_output, attempts = {}, []
     for strict in (False, True):
         cq = concept(strict)
         if not cq:
             continue
         attempts.append(cq)
-        out = call_external(gate, "search_literature",
-                            {"query": cq}, stub_tools.search_literature)
+        try:
+            out = call_external(gate, "search_literature",
+                                {"query": cq}, LITERATURE_TOOL)
+        except Exception as e:
+            # Offline, timed out, or an unreadable reply: no literature, and the
+            # answer says so. The approved query is not retried or logged.
+            logger.warning(f"[literature_retrieval] backend failed ({type(e).__name__}); continuing without it")
+            egress.append(gate.log[-1])
+            break
         egress.append(gate.log[-1])
         rec = gate.log[-1]
         # Hash and rule only. The gate's no-retention rule holds inside the
@@ -565,26 +619,29 @@ def literature_retrieval(state: AgentState) -> dict:
             logger.warning(f"[literature_retrieval] egress blocked ({out['rule']}); "
                            f"{'giving up' if strict else 'retrying stricter'}")
             continue
-        results = out.get("results", [])
+        tool_output = out
         break
 
-    ev = _to_literature_evidence(results)
+    ev = _to_literature_evidence(tool_output)
     logger.info(f"[literature_retrieval] {len(ev)} results; "
                 f"{sum(1 for r in egress if not r['allowed'])} blocked so far")
     return {"literature_evidence": ev, "egress_log": egress,
+            "literature_unavailable": not ev and state.get("query_type") == "literature",
             "node_trail": _trail(state, "literature_retrieval")}
 
 
 def synthesis(state: AgentState) -> dict:
     pt = state.get("patient_evidence", []) or []
     gl = state.get("guideline_evidence", []) or []
-    lit = state.get("literature_evidence", []) or []
+    lit = _citable_literature(state)
 
     if not pt and not gl and not lit:
-        return {"draft_answer": "The available records do not contain enough information to answer this.",
+        return {"draft_answer": _with_literature_notice(
+                    state, "The available records do not contain enough information to answer this."),
                 "citations": [], "node_trail": _trail(state, "synthesis")}
 
-    user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit)
+    user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit,
+                                          literature_unavailable=bool(state.get("literature_unavailable")))
     # MAIN earns its cost on longitudinal reasoning, comparisons and anything
     # weighing general recommendations against this patient. A single-fact
     # lookup over a handful of chunks does not need it. Presence of guideline
@@ -632,7 +689,7 @@ def synthesis(state: AgentState) -> dict:
 
     logger.info(f"[synthesis] role={role} {report['n_claims']} claims, "
                 f"cite_rate={report['cite_rate']:.0%}, bad={report['bad_labels']}")
-    return {"draft_answer": answer, "citations": cites,
+    return {"draft_answer": _with_literature_notice(state, answer), "citations": cites,
             "verification": {"citation_report": {k: v for k, v in report.items() if k != "claims"},
                              "synthesis_role": role},
             "node_trail": _trail(state, "synthesis")}
@@ -655,7 +712,7 @@ def verification(state: AgentState) -> dict:
     """
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
-                                  (state.get("literature_evidence", []) or []) +
+                                  _citable_literature(state) +
                                   (state.get("lab_evidence", []) or []) +
                                   (state.get("encounter_evidence", []) or [])}
     cites = state.get("citations", []) or []
@@ -900,10 +957,13 @@ def finalize(state: AgentState) -> dict:
     """Set final_answer when no review was needed. After a human decision the
     reviewer's result stands even when it is empty: a draft whose every claim
     was struck must not be released because "" looks like "not set"."""
-    if state.get("final_answer") or state.get("review_status") in ("reviewed", "escalated", "rejected"):
+    decided = state.get("final_answer") or state.get("review_status") in ("reviewed", "escalated", "rejected")
+    answer = (state.get("final_answer") or "") if decided else state.get("draft_answer", "")
+    if state.get("review_status") != "rejected":       # a rejected draft releases nothing at all
+        answer = _with_literature_notice(state, answer)
+    if decided and answer == (state.get("final_answer") or ""):
         return {"node_trail": _trail(state, "finalize")}
-    return {"final_answer": state.get("draft_answer", ""),
-            "node_trail": _trail(state, "finalize")}
+    return {"final_answer": answer, "node_trail": _trail(state, "finalize")}
 
 
 def refuse(state: AgentState) -> dict:

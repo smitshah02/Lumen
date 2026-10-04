@@ -263,7 +263,10 @@ function renderBubble(msg) {
   const r = msg.resp;
   if (r.answer_is_draft) node.append(el("div", "banner draft", "DRAFT — HUMAN REVIEW REQUIRED"));
   else if (r.review_status === "rejected") node.append(el("div", "banner rejected", "Rejected by reviewer — no answer released"));
-  else if (r.review_status === "reviewed") node.append(el("div", "banner approved", "Approved by reviewer"));
+  else if (r.review_status === "reviewed") {
+    node.append(el("div", "banner approved", "Approved by reviewer" +
+                   (msg.overridden ? " — " + LumenReview.plural(msg.overridden, "verifier flag", "verifier flags") + " overridden" : "")));
+  }
   else if (r.status === "refused") node.append(el("div", "banner neutral", "Out of scope — not answered"));
 
   const body = el("div", "body");
@@ -292,11 +295,10 @@ async function loadPending(msg) {
 function renderReview(msg) {
   const box = el("div", "review");
   box.addEventListener("click", (ev) => ev.stopPropagation());
-  const open = msg.resp.status === "human_review_required" && !msg.closed;
-  if (open) {
-    const flagged = msg.resp.flagged_claims;
-    box.append(el("div", "msgline", (typeof flagged === "number" ? flagged : "Some") +
-                  " claim(s) could not be verified. See the Evidence tab, then decide."));
+  const view = LumenReview.view(msg);
+  if (view.open) {
+    if (view.warning) box.append(el("div", "msgline warn", view.warning));
+    box.append(el("div", "msgline", "The flagged claims and their cited sources are in the Evidence tab."));
     const note = el("textarea");
     note.placeholder = "Reviewer note (optional)";
     note.maxLength = 1000;
@@ -304,18 +306,24 @@ function renderReview(msg) {
     note.disabled = !!msg.deciding;
     note.addEventListener("input", () => { msg.noteDraft = note.value; });
     const actions = el("div", "actions");
-    const approve = el("button", "btn approve", "Approve");
-    const reject = el("button", "btn reject", "Reject");
-    for (const [button, decision] of [[approve, "approve"], [reject, "reject"]]) {
+    if (view.question) actions.append(el("span", "msgline warn", view.question));
+    for (const spec of view.buttons) {
+      const button = el("button", "btn " + spec.kind, spec.label);
       button.type = "button";
       button.disabled = !!msg.deciding;
-      button.addEventListener("click", () => decide(msg, decision));
+      button.addEventListener("click", () => {
+        const decision = LumenReview.act(msg, spec.action);     // null: nothing is sent
+        if (decision) decide(msg, decision); else renderBubble(msg);
+      });
       actions.append(button);
     }
     if (msg.deciding) actions.append(el("span", "msgline", "Resuming from the saved checkpoint…"));
     box.append(note, actions);
   }
   if (msg.reviewNote) box.append(el("div", "msgline" + (msg.reviewBad ? " bad" : ""), msg.reviewNote));
+  if (msg.decision && msg.decision.review_status === "reviewed" && LumenReview.overrideNote(msg)) {
+    box.append(el("div", "msgline warn", LumenReview.overrideNote(msg)));
+  }
   return box;
 }
 

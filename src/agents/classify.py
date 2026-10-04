@@ -38,6 +38,13 @@ _GUIDELINE = [
     r"\bshould (?:we|i|they|the patient|he|she)\b", r"\bis .{0,30}indicated\b",
     r"\brecommend(?:ed|ation|ations)?\b", r"\bguidelines?\b", r"\bstandard of care\b",
     r"\bappropriate (?:to|for)\b", r"\bwhat dose should\b", r"\bcontraindicat",
+    # Management / appropriateness questions: they ask what OUGHT to be done,
+    # which the chart cannot answer by itself. Past-tense chart questions ("how
+    # was it managed", "what treatment was given") deliberately do not match.
+    r"\bhow (?:should|would you|do you) .{0,60}\b(?:manage|managed|treat|treated)\b",
+    r"\b(?:treatment|therapy|regimen|management|medication|dose|dosing)\b.{0,40}\bappropriate\b",
+    r"\b(?:appropriate|optimal|best|preferred) (?:management|treatment|therapy|approach)\b",
+    r"\b(?:first|second)[- ]line\b", r"\bbest practice\b",
 ]
 _LITERATURE = [
     r"\b(?:published|literature|studies|study|trials?|evidence base|pubmed|meta-?analys)",
