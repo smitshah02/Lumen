@@ -21,6 +21,22 @@ _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[])")
 _REFUSAL = "the available records do not contain enough information"
 
 
+def is_refusal_claim(text: str) -> bool:
+    """Is this sentence the fixed decline and nothing else?
+
+    The decline is boilerplate: it asserts nothing about the patient, so it
+    needs no citation. That exemption must not stretch to a sentence that
+    merely contains the phrase, or to other sentences in the same answer:
+    "The available records do not contain enough information, but the last
+    creatinine was 5.8" is a clinical claim. Only the phrase itself, a short
+    tail ("to answer this question") and no number qualifies."""
+    s = " ".join((text or "").lower().split()).strip(" .!?")
+    if not s.startswith(_REFUSAL):
+        return False
+    tail = s[len(_REFUSAL):]
+    return len(tail.split()) <= 6 and not re.search(r"\d|[,;:]| but | however | although ", tail + " ")
+
+
 def extract_labels(text: str) -> list[str]:
     return CITE_RE.findall(text or "")
 

@@ -145,44 +145,69 @@ def create_db() -> int:
 
 
 # ---------------------------------------------------------------- ingest ----
+TABLES = ("patients", "admissions", "labevents", "clinical_notes", "note_chunks")
+REQUIRED = ("patients", "admissions", "clinical_notes", "note_chunks")    # eligibility guarantees these exist
+
+
+def completeness(subject_ids: list[int], loaded: dict[str, set[int]]) -> list[dict]:
+    """One row per frozen manifest subject: where it is present, and why not if it is not."""
+    rows = []
+    for position, sid in enumerate(subject_ids, 1):
+        absent = [t for t in TABLES if sid not in loaded.get(t, set())]
+        blocking = [t for t in REQUIRED if t in absent]
+        reason = ""
+        if "patients" in blocking:
+            reason = "not loaded: no row in patients (the ingest did not include this subject)"
+        elif blocking:
+            reason = "incomplete: missing from " + ", ".join(blocking)
+        elif absent:
+            reason = "loaded; no rows in " + ", ".join(absent)
+        rows.append({"alias": f"H{position}", "loaded": not blocking, "missing_tables": absent, "reason": reason})
+    return rows
+
+
 def ingest(limit: int | None) -> int:
+    """Load the manifest in ONE pass. Every loader in src.storage.ingest replaces
+    the table it fills (TRUNCATE / DELETE), so loading "the remaining subjects"
+    deletes the ones already there. That is how a 3-patient pilot followed by a
+    7-patient run left 7 of 10. There is no incremental mode."""
     if os.environ.get(ACTIVE) != "1":                    # re-run this step bound to the holdout database
         args = [sys.executable, __file__, "ingest"] + (["--limit", str(limit)] if limit else [])
-        _run(args, _holdout_env())
-        return 0
+        return subprocess.run(args, cwd=ROOT, env=_holdout_env()).returncode
     storage, text = _in_holdout()
     from src.storage import ingest as ing
     manifest = _manifest()
-    wanted = manifest["subject_ids"][:limit] if limit else manifest["subject_ids"]
-    with storage.engine.connect() as c:
-        have = {int(s) for s in c.execute(text("SELECT DISTINCT subject_id FROM clinical_notes")).scalars()}
-    todo = set(wanted) - have
-    print(f"holdout ingest: {len(wanted)} requested, {len(have & set(wanted))} already loaded, {len(todo)} to load")
+    wanted = set(manifest["subject_ids"][:limit] if limit else manifest["subject_ids"])
+    if limit:
+        print(f"PILOT: loading only {len(wanted)} of {len(manifest['subject_ids'])} manifest subjects. This REPLACES "
+              "the holdout database; run `holdout ingest` without --limit for the full cohort.")
+    print(f"holdout ingest: loading {len(wanted)} subject(s) in one pass (replaces current holdout contents)")
     t0 = time.time()
-    if todo:
-        run_id = str(uuid.uuid4())
-        ing._start_ingestion_run(run_id, {"operation": "holdout", "seed": manifest["seed"], "patients": len(todo),
-                                          "max_labs_per_patient": 200, "skip_deid": False})
-        try:
-            ing.load_patients(todo)
-            ing.load_admissions(todo)
-            ing.load_diagnoses(todo)
-            ing.load_labevents(todo, max_per_patient=200)
-            ing.load_prescriptions(todo)
-            ing.load_procedures(todo)
-            ing.load_clinical_notes(todo, run_deid=True)
-        except BaseException as exc:
-            ing._finish_ingestion_run(run_id, "failed", type(exc).__name__)
-            raise
-        ing._finish_ingestion_run(run_id, "completed")
+    run_id = str(uuid.uuid4())
+    ing._start_ingestion_run(run_id, {"operation": "holdout", "seed": manifest["seed"], "patients": len(wanted),
+                                      "max_labs_per_patient": 200, "skip_deid": False})
+    try:
+        ing.load_patients(wanted)
+        ing.load_admissions(wanted)
+        ing.load_diagnoses(wanted)
+        ing.load_labevents(wanted, max_per_patient=200)
+        ing.load_prescriptions(wanted)
+        ing.load_procedures(wanted)
+        ing.load_clinical_notes(wanted, run_deid=True)
+    except BaseException as exc:
+        ing._finish_ingestion_run(run_id, "failed", type(exc).__name__)
+        raise
+    ing._finish_ingestion_run(run_id, "completed")
     t1 = time.time()
     _run([sys.executable, "-m", "src.retrieval.index_notes", "--cooldown", "0"], dict(os.environ))
     print(f"ingest {t1 - t0:.0f}s, index {time.time() - t1:.0f}s")
-    return status()
+    return status(expected=len(wanted))
 
 
 # ---------------------------------------------------------------- status ----
-def status() -> int:
+def status(expected: int | None = None) -> int:
+    """Account for every frozen subject. Non-zero unless the whole manifest (or
+    the `expected` pilot subset) is loaded and nothing else is."""
     if os.environ.get(ACTIVE) != "1":
         storage, text = _research()
         with storage.engine.connect() as c:
@@ -190,28 +215,27 @@ def status() -> int:
         ids = set(_manifest()["subject_ids"])
         print(f"manifest: {len(ids)} patients, seed {_manifest()['seed']} | research cohort: {len(current)} | "
               f"overlap: {len(ids & current)}")
-        _run([sys.executable, __file__, "status"], _holdout_env())
-        return 1 if ids & current else 0
+        code = subprocess.run([sys.executable, __file__, "status"], cwd=ROOT, env=_holdout_env()).returncode
+        return 1 if ids & current else code
     storage, text = _in_holdout()
     ids = _manifest()["subject_ids"]
     with storage.engine.connect() as c:
-        def one(sql):
-            return c.execute(text(sql), {"ids": ids}).scalar()
-        rows = {
-            "patients": one("SELECT count(*) FROM patients"),
-            "patients outside the manifest": one("SELECT count(*) FROM patients WHERE NOT (subject_id = ANY(:ids))"),
-            "admissions": one("SELECT count(*) FROM admissions"), "labevents": one("SELECT count(*) FROM labevents"),
-            "notes": one("SELECT count(*) FROM clinical_notes"),
-            "notes de-identified": one("SELECT count(text_deid) FROM clinical_notes"),
-            "chunks": one("SELECT count(*) FROM note_chunks"),
-            "chunks with embedding": one("SELECT count(embedding) FROM note_chunks"),
-            "chunks of patients outside the manifest":
-                one("SELECT count(*) FROM note_chunks WHERE NOT (subject_id = ANY(:ids))"),
-            "patients with notes": one("SELECT count(DISTINCT subject_id) FROM clinical_notes"),
-            "patients with labs": one("SELECT count(DISTINCT subject_id) FROM labevents"),
-        }
-    print(f"database {storage.engine.url.database}: " + " | ".join(f"{k} {v}" for k, v in rows.items()))
-    return 0
+        loaded = {t: {int(s) for s in c.execute(text(f"SELECT DISTINCT subject_id FROM {t}")).scalars()} for t in TABLES}
+        counts = {t: c.execute(text(f"SELECT count(*) FROM {t}")).scalar() for t in TABLES}
+        counts["notes de-identified"] = c.execute(text("SELECT count(text_deid) FROM clinical_notes")).scalar()
+        counts["chunks with embedding"] = c.execute(text("SELECT count(embedding) FROM note_chunks")).scalar()
+    rows = completeness(ids, loaded)
+    outside = len(loaded["patients"] - set(ids))
+    print(f"database {storage.engine.url.database}: " + " | ".join(f"{k} {v}" for k, v in counts.items())
+          + f" | patients outside the manifest {outside}")
+    for row in rows:
+        print(f"  {row['alias']:4s} {'loaded' if row['loaded'] else 'MISSING':8s} {row['reason']}")
+    n_loaded = sum(r["loaded"] for r in rows)
+    need = expected if expected is not None else len(ids)
+    complete = n_loaded == need and outside == 0 and counts["chunks with embedding"] == counts["note_chunks"]
+    print(f"{n_loaded} of {len(ids)} frozen subjects loaded" + ("" if complete else
+          f" — INCOMPLETE (expected {need}). The holdout is not ready to evaluate."))
+    return 0 if complete else 1
 
 
 def main(argv: list[str] | None = None) -> int:

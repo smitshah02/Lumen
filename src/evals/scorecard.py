@@ -38,18 +38,17 @@ import re
 import statistics
 from collections import Counter
 
-from src.agents.citations import CITE_RE, split_claims
+from src.agents.citations import CITE_RE, is_refusal_claim, split_claims
 
 CITABLE_TYPES = {"S": "note", "L": "lab", "A": "admissions", "G": "guideline", "P": "literature"}
 # Sentences the workflow itself writes. They are not clinical claims and need no citation.
 SYSTEM_SENTENCES = (
-    "the available records do not contain enough information",
     "external literature retrieval is not available",
     "the external literature search returned no usable results",
     "a clinician reviewed the draft answer", "no answer is released",
     "outside what the clinical record can support",
 )
-REFUSAL = SYSTEM_SENTENCES[0]
+REFUSAL = "the available records do not contain enough information"
 RAG = ["patient_retrieval", "synthesis", "verification"]
 NO_EXTERNAL = ["guideline_retrieval", "literature_retrieval"]
 STRUCTURED_FORBID = ["patient_retrieval", "synthesis", "verification", "human_review"]
@@ -109,15 +108,16 @@ def rag_plan(subject_ids: list[int], backend: str = "none", profile: str = "fixt
     """Which model-backed case is asked of which patient.
 
     fixture  every case once, patients in rotation (the development set).
-    holdout  every patient gets a chart question and a temporal or longitudinal
-             one; the first three also get the mixed question and the next two
-             the lab refusal-guard question. No guideline or literature cases:
-             the holdout database holds patient data only."""
+    holdout  every patient gets a chart question, the temporal question and
+             the longitudinal one; the first three also get the mixed question
+             and the next two the lab refusal-guard question. No guideline or
+             literature cases: the holdout database holds patient data only."""
     if profile == "holdout":
         plan = []
         for i, sid in enumerate(subject_ids):
             plan.append((sid, BY_ID["factual_rag"]))
-            plan.append((sid, BY_ID["temporal_latest" if i % 2 == 0 else "longitudinal"]))
+            plan.append((sid, BY_ID["temporal_latest"]))
+            plan.append((sid, BY_ID["longitudinal"]))
             if i < 3:
                 plan.append((sid, BY_ID["mixed_supported_unsupported"]))
             elif i < 5:
@@ -128,8 +128,11 @@ def rag_plan(subject_ids: list[int], backend: str = "none", profile: str = "fixt
 
 
 def is_system_sentence(text: str) -> bool:
+    """Fixed workflow text, not a clinical claim. The decline counts only when
+    the sentence is that boilerplate and nothing more (citations.is_refusal_claim):
+    a patient-specific statement inside a declined answer is still a claim."""
     low = (text or "").lower()
-    return any(marker in low for marker in SYSTEM_SENTENCES)
+    return is_refusal_claim(text) or any(marker in low for marker in SYSTEM_SENTENCES)
 
 
 def state_evidence(state: dict) -> list[dict]:

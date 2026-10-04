@@ -19,6 +19,11 @@ Two changes, neither of which weakens grounding:
    patients to human review for the wrong reason. Anything it cannot settle is
    handed to the model, which is what used to see every claim anyway.
 
+   One exception to "never unsupported": a claim that contradicts ITSELF
+   ("increased from 6.0 to 5.8"). Matching both numbers in the source says
+   nothing about the direction the claim asserts, and no source can make such
+   a sentence true, so it is unsupported without consulting anything.
+
    It also refuses to auto-support:
      - claims with no numeric or date anchor at all (pure prose assertions)
      - claims citing [G#]/[P#] — a guideline or paper is a general statement,
@@ -92,6 +97,29 @@ def anchors(claim: str) -> tuple[set[str], set[str], set[str]]:
     return dates, qty, nums
 
 
+_UP_RE = re.compile(r"\b(?:increas\w*|rose|risen|rising|climb\w*|went up|elevat\w*)\b", re.I)
+_DOWN_RE = re.compile(r"\b(?:decreas\w*|fell|fallen|falling|dropp\w*|declin\w*|went down|reduc\w*)\b", re.I)
+# "from <a> ... to <b>" with nothing numeric in between that could be the real endpoint.
+_FROM_TO_RE = re.compile(r"\bfrom\b\D{0,30}?(\d+(?:\.\d+)?)\D{0,60}?\bto\b\D{0,30}?(\d+(?:\.\d+)?)", re.I | re.S)
+
+
+def direction_contradiction(claim: str) -> str | None:
+    """Why the claim contradicts itself, or None. Decided only when the claim
+    has exactly one direction (up or down) and an explicit "from A to B"; any
+    other wording is left to the normal checks."""
+    text = _DATE_RE.sub(" ", CITE_RE.sub(" ", claim or ""))
+    up, down = bool(_UP_RE.search(text)), bool(_DOWN_RE.search(text))
+    pair = _FROM_TO_RE.search(text)
+    if up == down or not pair:
+        return None
+    a, b = float(pair.group(1)), float(pair.group(2))
+    if up and b < a:
+        return f"claim contradicts itself: it says the value went up, but {a:g} to {b:g} is a decrease"
+    if down and b > a:
+        return f"claim contradicts itself: it says the value went down, but {a:g} to {b:g} is an increase"
+    return None
+
+
 def _number_in(value: str, source: str) -> bool:
     """Whole-number match: 1.4 must not be found inside 21.4 or 1.42."""
     return re.search(rf"(?<![\d.]){re.escape(value)}(?![\d])", source) is not None
@@ -105,7 +133,8 @@ def _quantity_in(qty: str, source: str) -> bool:
 
 
 def deterministic_verdict(claim: str, source_text: str, labels) -> tuple[str, str]:
-    """Returns (verdict, note). verdict is "supported" or "unresolved" only.
+    """Returns (verdict, note). verdict is "supported" or "unresolved" — or
+    "unsupported" for the one thing code can refute: a self-contradictory claim.
 
     `labels` is every citation the claim carries; `source_text` must be the
     concatenation of those sources. A claim citing two chunks ("creatinine rose
@@ -115,6 +144,9 @@ def deterministic_verdict(claim: str, source_text: str, labels) -> tuple[str, st
     labels = [labels] if isinstance(labels, str) else list(labels or [])
     if not labels:
         return "unresolved", "no citation to check against"
+    contradiction = direction_contradiction(claim)
+    if contradiction:
+        return "unsupported", contradiction
     if any(l.startswith(("G", "P")) for l in labels):
         return "unresolved", "general-source claim needs judgement"
     dates, qty, nums = anchors(claim)

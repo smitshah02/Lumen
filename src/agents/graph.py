@@ -737,7 +737,12 @@ def verification(state: AgentState) -> dict:
     # so the two routes disagreed about identical output.
     draft_now = (state.get("draft_answer") or "").strip()
     refusal = bool(draft_now) and citations.validate(draft_now, list(ev.values()))["is_refusal"]
-    pure_refusal = refusal and not any(_labels_of(c) for c in out)
+    # "Pure" means every claim IS the decline. It used to mean "contains the
+    # decline and cites nothing", which approved any uncited sentence the model
+    # wrote next to it — a patient-specific statement finalized with no check.
+    # Such an answer now takes the normal pass below, where an uncited claim is
+    # unsupported and goes to a reviewer.
+    pure_refusal = refusal and all(citations.is_refusal_claim(c.get("claim")) for c in out)
     # ...unless a structured lookup found rows for this very question and only
     # declined to phrase the answer. Then "the records do not contain enough
     # information" is a statement about five note chunks, not about the record,
@@ -779,6 +784,12 @@ def verification(state: AgentState) -> dict:
                 out[i] = {**c, "verified": True, "verification_note": note}
                 trace.append({"i": i, "labels": labels, "stage": "deterministic",
                               "verdict": "supported", "reason": note, "final": "supported"})
+            elif verdict == "unsupported":
+                # The claim contradicts itself; no source can support it.
+                out[i] = {**c, "verified": False, "verification_note": note}
+                unsupported += 1
+                trace.append({"i": i, "labels": labels, "stage": "deterministic",
+                              "verdict": "unsupported", "reason": note, "final": "unsupported"})
             else:
                 pending.append({"i": i, "claim": c["claim"], "labels": labels,
                                 "sources": [ev[l]["text"] for l in labels],

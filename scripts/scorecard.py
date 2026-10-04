@@ -33,6 +33,7 @@ from sqlalchemy import text  # noqa: E402
 
 import structured_parity as parity  # noqa: E402
 from src import storage  # noqa: E402
+from src.agents.verify import SOURCE_CHARS  # noqa: E402
 from src.evals import adjudication, scorecard  # noqa: E402
 
 
@@ -91,7 +92,8 @@ def claim_rows(result: dict, state: dict) -> list[dict]:
         out.append({"case": result["case"], "subject_id": result["subject_id"], "thread_id": result["thread_id"],
                     "claim": claim.get("claim"), "labels": labels, "verifier_verdict": bool(claim.get("verified")),
                     "verifier_note": claim.get("verification_note"),
-                    "sources": {l: (evidence.get(l, {}).get("text") or "")[:800] for l in labels}})
+                    # the same window the verifier is given, so a reviewer never judges on less
+                    "sources": {l: (evidence.get(l, {}).get("text") or "")[:SOURCE_CHARS] for l in labels}})
     return out
 
 
@@ -114,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out-dir", default="~/Lumen_local_results/scorecard")
     p.add_argument("--profile", choices=["fixture", "holdout"], default="fixture")
     p.add_argument("--only", default="", help="comma-separated case ids or categories (for a quick run)")
+    p.add_argument("--ask", metavar="CASE_ID", help="ask exactly one case; use with --patient")
+    p.add_argument("--patient", type=int, metavar="N", help="with --ask: position in the subjects file, from 1")
     p.add_argument("--stability-runs", type=int, default=0, metavar="N",
                    help="repeat only the model-sensitive cases N times and report variability (3 is typical)")
     p.add_argument("--with-literature", action="store_true",
@@ -153,11 +157,19 @@ def main(argv: list[str] | None = None) -> int:
 
     results, claims = [], []
     with storage.engine.connect() as conn:
-        present = set(conn.execute(text("SELECT subject_id FROM patients WHERE subject_id = ANY(:ids)"),
+        present = set(conn.execute(text("SELECT DISTINCT subject_id FROM note_chunks WHERE subject_id = ANY(:ids)"),
                                    {"ids": sids}).scalars())
-        sids = [s for s in sids if s in present]
+        missing = [f"P{i}" for i, s in enumerate(sids, 1) if s not in present]
+        if missing:                              # never evaluate part of a cohort and present it as the whole
+            print(f"refusing: {len(missing)} of {len(sids)} subjects in the subjects file are not loaded in "
+                  f"{database}: {', '.join(missing)}. Load the whole cohort first.", file=sys.stderr)
+            close_pools()
+            return 2
         truths = [parity.truth(conn, sid, ["creatinine"]) for sid in sids]
-        cases = build_cases(sids, truths, backend, only, args.profile)
+        if args.ask:
+            cases = [(sids[(args.patient or 1) - 1], scorecard.BY_ID[args.ask])]
+        else:
+            cases = build_cases(sids, truths, backend, only, args.profile)
         repeats = 1
         if args.stability_runs:
             cases = [(sid, c) for sid, c in cases if c["category"] in scorecard.MODEL_SENSITIVE]
