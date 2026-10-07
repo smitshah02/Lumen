@@ -111,6 +111,13 @@ def get_data_profile(value: str | None = None) -> str:
 
 DATA_PROFILE = get_data_profile()
 PROFILE_SETTINGS = PROFILES[DATA_PROFILE]
+# The selected build_id for the v2 note index: the run_id of a completed
+# note_index_runs build, which is also the build_id on its note_chunks_v2 rows.
+# Only the v2 profile reads it; whether that build is usable is checked in
+# src/storage/readiness.py, never assumed.
+CHUNK_BUILD = os.environ.get("LUMEN_CHUNK_BUILD", "").strip() or None
+if PROFILE_SETTINGS["chunk_table"] == "note_chunks_v2" and not CHUNK_BUILD:
+    raise ConfigurationError("LUMEN_DATA_PROFILE=v2 needs LUMEN_CHUNK_BUILD: the id of the note-index build to serve")
 
 
 def _env_true(name: str) -> bool:

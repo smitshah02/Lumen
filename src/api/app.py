@@ -39,6 +39,7 @@ from src.config import DATA_PROFILE, MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pg
 from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
                                             legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
+from src.storage import readiness
 from src.agents import review
 from src.safety import pubmed
 from src.llm import local_client
@@ -98,6 +99,11 @@ async def lifespan(app: FastAPI):
     if DATA_PLANE not in VALID_PLANES:
         raise RuntimeError(f"LUMEN_DATA_PLANE={DATA_PLANE!r}; expected one of {sorted(VALID_PLANES)}")
     log_event(logger, "startup", database=EXPECTED_DB, model=local_client.MAIN_MODEL)
+    try:                                         # say it at startup too; /ready and every read enforce it
+        for p in readiness.problems():
+            log_event(logger, "data_source_not_ready", level=logging.ERROR, data_profile=DATA_PROFILE, **p)
+    except Exception as e:                       # database not up yet: /ready reports it
+        log_event(logger, "data_source_check_failed", level=logging.WARNING, error_type=type(e).__name__)
     ts = tracing.status()
     log_event(logger, "tracing_config", tracing_enabled=ts["enabled"], tracing_host=ts["host"],
               tracing_state=ts["state"], reason=ts.get("policy"))
@@ -182,6 +188,14 @@ async def _on_admission(request: Request, exc: AdmissionNotFound):
     # so the response says nothing about other patients. The value is not echoed.
     return _err(request, 422, "validation_error", [{
         "loc": ["body", "hadm_id"], "msg": "hadm_id is not an admission of this subject", "type": "value_error"}])
+
+
+@app.exception_handler(readiness.DataSourceNotReady)
+async def _on_data_source(request: Request, exc: readiness.DataSourceNotReady):
+    # The profile's data is unusable. Say which part and why; never answer from something else.
+    log_event(logger, "data_source_not_ready", level=logging.ERROR, component=exc.component, reason=exc.reason,
+              data_profile=DATA_PROFILE)
+    return _err(request, 503, "data_source_not_ready", {"component": exc.component, "reason": exc.reason})
 
 
 @app.exception_handler(DependencyUnavailable)
@@ -345,6 +359,12 @@ def _check_ollama() -> dict:
     return {"ollama": "ok", "model": "ok" if h.get("main_ok") and h.get("fast_ok") else "missing"}
 
 
+def _check_data_profile() -> dict:
+    """Is the data the active profile reads usable? control and scoped need nothing more."""
+    found = readiness.problems()
+    return {"data_profile": "ok" if not found else f"{found[0]['component']}_not_ready", "problems": found}
+
+
 def _ensure_subject(subject_id: int) -> None:
     with storage.engine.connect() as c:
         if not c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks WHERE subject_id = :s)"),
@@ -430,11 +450,13 @@ async def ready(request: Request):
         _probe(_check_database, "database"), _probe(_check_ollama, "ollama"),
         _probe(_check_retrieval_models, "retrieval_models"),
     )
+    profile = await _probe(_check_data_profile, "data_profile")
     deps = {"database": db.get("database"), "schema": db.get("schema", "unknown"),
             "extension": db.get("extension", "unknown"), "corpus": db.get("corpus", "unknown"),
             "ingestion": db.get("ingestion", "unknown"), "index": db.get("index", "unknown"),
             "retrieval_models": retrieval.get("retrieval_models", "unknown"),
-            "ollama": llm.get("ollama"), "model": llm.get("model", "unknown")}
+            "ollama": llm.get("ollama"), "model": llm.get("model", "unknown"),
+            "data_profile": profile.get("data_profile")}
     ok = all(v == "ok" for v in deps.values())
     request.state.outcome = "ready" if ok else "not_ready"
     body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "data_profile": DATA_PROFILE, "database": EXPECTED_DB,
@@ -449,6 +471,7 @@ async def ready(request: Request):
                                  "indexed_notes": db.get("indexed_notes"),
                                  "eligible_notes": db.get("eligible_notes")},
             "retrieval_model_problems": retrieval.get("model_problems", []),
+            "data_profile_problems": profile.get("problems", []),
             # informational only: an unreachable observability backend never makes the API unready
             "tracing": tracing.status(),
             # "none" unless LUMEN_LITERATURE_BACKEND opts in; the only outbound integration

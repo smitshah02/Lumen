@@ -46,6 +46,7 @@ from sqlalchemy import text as sa_text
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from src.storage import engine
+from src.storage import readiness
 from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
 from src.obs.logging import obs_extra, add_timing
 from src.obs import tracing
@@ -1132,6 +1133,9 @@ class HybridRetriever:
         `hadm_id` with `stay_window` (start, end) scopes the search to one
         admission: its own notes plus unlinked notes charted inside the stay.
         """
+        # Never search a note index that is missing, still building or failed
+        # (no-op unless the profile selects the v2 index). Raises; no fallback.
+        readiness.require(readiness.CHUNKS)
         t0 = time.perf_counter()   # monotonic: wall clock can jump (e.g. VM time sync)
         stages: dict = {}          # per-stage wall time (ms) of this call; kept as self.last_stages
 

@@ -317,3 +317,151 @@ class ClinicalNoteChunker:
     ) -> list[list[Chunk]]:
         """Chunk a batch of notes."""
         return [self.chunk_text(t, note_type) for t in texts]
+
+
+# ===========================================================================
+# Section-aware chunking for the v2 index (data-foundation plan, E12)
+# ===========================================================================
+# Built on parse_sections (section_labels.py). Everything above this line is the
+# control chunker and is untouched. Differences that matter:
+#   * tokens are counted with the MedCPT article tokenizer, not words x 1.3;
+#   * a chunk is an exact slice of the note as written: offsets, newlines, lists
+#     and result tables survive, and nothing is merged across sections;
+#   * no chunk marked for embedding can exceed the model's limit: asserted here,
+#     not left to the tokenizer's silent truncation.
+# Chunks are produced in memory; storing them is E13.
+
+V2_TARGET_TOKENS = 480        # a section that fits in this stays whole (leaves room under the limit)
+V2_MAX_TOKENS = 512           # MedCPT's input limit, special tokens included
+V2_MIN_EMBED_TOKENS = 40      # smaller chunks are kept and searchable by word, but not embedded
+# The parameters of a chunk build, in the shape a build records as provenance:
+# chunk_note(text, note_type, tokenizer, **config). min_embed_tokens decides only
+# which chunks are embedded; it never moves a boundary. The note header is not
+# embedded at any setting.
+V2_CHUNK_CONFIG = {"target_tokens": V2_TARGET_TOKENS, "max_tokens": V2_MAX_TOKENS,
+                   "min_embed_tokens": V2_MIN_EMBED_TOKENS}
+_SPECIAL_TOKENS = 2           # [CLS] and [SEP]
+
+# A line that starts a unit which should not be cut from its continuation lines:
+# a result row ("___ 07:10AM BLOOD ..."), a numbered list item, or a bullet.
+_UNIT_START_RE = re.compile(r"[ \t]*(?:___[ \t]+\d{1,2}:\d{2}|\d{1,3}[.)][ \t]|[-*#•][ \t])")
+
+
+@dataclass(frozen=True)
+class SectionChunk:
+    section_name: str
+    section_ord: int      # the section's position in the note
+    chunk_ord: int        # the chunk's position within its section
+    start: int            # offsets into the note as written: text == note[start:end]
+    end: int
+    text: str
+    token_count: int      # real tokenizer count of `text`, special tokens included
+    embed: bool
+
+
+def load_article_tokenizer():
+    """The tokenizer of the MedCPT article encoder, from the local model directory."""
+    from transformers import AutoTokenizer
+    from src.retrieval.embeddings import DEFAULT_ARTICLE_MODEL
+    return AutoTokenizer.from_pretrained(DEFAULT_ARTICLE_MODEL, local_files_only=True)
+
+
+def _token_starts(tokenizer, text: str) -> list[int]:
+    """Start offset of every token of `text` (no special tokens)."""
+    return [a for a, _ in tokenizer(text, add_special_tokens=False, return_offsets_mapping=True,
+                                    truncation=False, verbose=False)["offset_mapping"]]
+
+
+def chunk_note(text: str, note_type: str, tokenizer, *, target_tokens: int = V2_TARGET_TOKENS,
+               max_tokens: int = V2_MAX_TOKENS, min_embed_tokens: int = V2_MIN_EMBED_TOKENS) -> list[SectionChunk]:
+    """Cut a note as written into section chunks for the v2 index.
+
+    A section that fits in `target_tokens` is one chunk. A larger one is split,
+    preferring in order: blank-line blocks (date blocks in a results table),
+    then rows / list items with their continuation lines, then single lines,
+    then whitespace, and a hard cut between tokens only when one unbroken run
+    is itself too long. A radiology report that fits is one chunk for the whole
+    report. The note header and chunks under `min_embed_tokens` are returned
+    with embed=False; that threshold changes only the embed flag, never where a
+    chunk starts or ends. Same input, tokenizer and parameters, same output."""
+    import bisect
+    from src.retrieval.section_labels import PREAMBLE, WHOLE_REPORT, Section, parse_sections
+
+    text = text or ""
+    sections = parse_sections(text, note_type)
+    if not sections:
+        return []
+    starts = _token_starts(tokenizer, text)
+    budget = target_tokens - _SPECIAL_TOKENS
+
+    def tokens(a: int, b: int) -> int:
+        return bisect.bisect_left(starts, b) - bisect.bisect_left(starts, a)
+
+    if note_type == "radiology" and tokens(0, len(text)) <= budget:
+        sections = [Section(WHOLE_REPORT, 0, 0, len(text), text)]         # the approved whole-report rule
+
+    def pack(spans: list[tuple[int, int]], level: int) -> list[tuple[int, int]]:
+        """Greedily join neighbouring spans up to the budget; break up any span that is too big alone."""
+        out, cur = [], None
+        for a, b in spans:
+            if tokens(a, b) > budget:
+                if cur:
+                    out.append(cur)
+                    cur = None
+                out.extend(split(a, b, level + 1))
+            elif cur and tokens(cur[0], b) <= budget:
+                cur = (cur[0], b)
+            else:
+                if cur:
+                    out.append(cur)
+                cur = (a, b)
+        if cur:
+            out.append(cur)
+        return out
+
+    def split(a: int, b: int, level: int) -> list[tuple[int, int]]:
+        if tokens(a, b) <= budget:
+            return [(a, b)]
+        if level == 0:        # blocks: runs of lines separated by blank lines
+            pieces = [(a + m.start(), a + m.end()) for m in re.finditer(r"(?:[^\n]*\S[^\n]*\n?)+(?:[ \t]*\n)*|(?:[ \t]*\n)+", text[a:b])]
+        elif level == 1:      # units: a row or list item with its continuation lines; otherwise one line each
+            pieces, grouped = [], False
+            for m in re.finditer(r"[^\n]*\n?", text[a:b]):
+                if m.end() == m.start():
+                    continue
+                starts_unit = bool(_UNIT_START_RE.match(m.group()))
+                if pieces and grouped and not starts_unit and m.group().strip():
+                    pieces[-1] = (pieces[-1][0], a + m.end())             # continuation of the row above
+                else:
+                    pieces.append((a + m.start(), a + m.end()))
+                    grouped = starts_unit
+        elif level == 2:      # single lines
+            pieces = [(a + m.start(), a + m.end()) for m in re.finditer(r"[^\n]*\n?", text[a:b]) if m.end() > m.start()]
+        elif level == 3:      # whitespace-separated runs
+            pieces = [(a + m.start(), a + m.end()) for m in re.finditer(r"\s*\S+\s*", text[a:b])]
+        else:                 # one unbroken run longer than the budget: cut between tokens
+            first, last = bisect.bisect_left(starts, a), bisect.bisect_left(starts, b)
+            cuts = [a] + [starts[i] for i in range(first + budget, last, budget)] + [b]
+            return list(zip(cuts, cuts[1:]))
+        if not pieces or pieces == [(a, b)]:
+            return split(a, b, level + 1)
+        return pack(pieces, level)
+
+    chunks: list[SectionChunk] = []
+    for section in sections:
+        spans = split(section.start, section.end, 0)
+        merged: list[tuple[int, int]] = []
+        for a, b in spans:                                 # whitespace-only spans ride with the chunk before them
+            if merged and not text[a:b].strip():
+                merged[-1] = (merged[-1][0], b)
+            else:
+                merged.append((a, b))
+        for chunk_ord, (a, b) in enumerate(merged):
+            piece = text[a:b]
+            count = len(_token_starts(tokenizer, piece)) + _SPECIAL_TOKENS     # counted on the chunk as it will be embedded
+            embed = section.name != PREAMBLE and count >= min_embed_tokens
+            # The invariant the old path lacked: an over-limit chunk is a build error, never a truncated embedding.
+            assert not embed or count <= max_tokens, (
+                f"chunk {section.name}[{chunk_ord}] has {count} tokens, over the {max_tokens}-token limit")
+            chunks.append(SectionChunk(section.name, section.order, chunk_ord, a, b, piece, count, embed))
+    return chunks

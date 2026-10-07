@@ -7,6 +7,12 @@ import json
 
 from src.config import MODELS_CONFIG
 
+# The chunk tables the retriever's SQL can read. This is the single statement of
+# that fact: readiness refuses a profile whose chunk table is not listed, and a
+# test holds the list to the tables the retriever's queries actually name. It
+# gains "note_chunks_v2" in the same change that teaches the retriever to query it.
+RETRIEVER_CHUNK_TABLES = ("note_chunks",)
+
 CHUNKER_VERSION = "clinical-note-chunker-v2"
 CHUNKER_CONFIG = {"max_tokens": 384, "overlap_tokens": 64, "min_chunk_tokens": 50}
 VECTOR_DIMENSION = 768

@@ -81,7 +81,7 @@ def check_markdown_links() -> None:
 def check_documented_configuration() -> None:
     reference = (ROOT / "docs/configuration.md").read_text()
     supported = {
-        "DATABASE_URL", "LUMEN_DATA_PLANE", "LUMEN_DATA_PROFILE", "LUMEN_DEMO_DATABASE_URL",
+        "DATABASE_URL", "LUMEN_DATA_PLANE", "LUMEN_DATA_PROFILE", "LUMEN_CHUNK_BUILD", "LUMEN_DEMO_DATABASE_URL",
         "LUMEN_DEMO_DB_NAME", "LUMEN_DB_CONNECT_TIMEOUT", "LUMEN_PG_PASSWORD",
         "LUMEN_PG_PORT", "LUMEN_PG_VOLUME", "LUMEN_DEMO_PG_PASSWORD",
         "LUMEN_CHECKPOINT_AUTO_SETUP", "LUMEN_LLM_HOST", "LUMEN_LLM_MAIN",

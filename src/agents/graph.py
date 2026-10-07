@@ -41,6 +41,7 @@ from src.agents.state import AgentState
 from src.agents.admission_scope import (AdmissionResolution, load_admissions, load_stay_window,
                                         resolve_admission)
 from src.config import PROFILE_SETTINGS
+from src.storage.readiness import DataSourceNotReady
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
                                  wants_deterministic_lab, wants_encounter_lookup)
@@ -274,6 +275,8 @@ def lab_lookup(state: AgentState) -> dict:
         resolver = get_lab_resolver()
         itemids, matched = resolver.match(query)
         series = resolver.fetch(sid, itemids, per_lab_cap=LAB_SERIES_CAP) if itemids else []
+    except DataSourceNotReady:
+        raise                # the configured lab source is unusable: an error, not a miss to retrieve around
     except Exception as e:
         logger.warning(f"[lab_lookup] structured lookup failed ({e}); falling back to retrieval")
         return {"node_trail": _trail(state, "lab_lookup")}

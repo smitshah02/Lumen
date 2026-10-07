@@ -30,6 +30,7 @@ from collections import OrderedDict
 import sqlalchemy as sa
 
 from src.config import PROFILE_SETTINGS
+from src.storage import readiness
 from src.storage import engine
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,7 @@ class LabResolver:
               per_lab_cap: int = 80) -> list[dict]:
         if not itemids:
             return []
+        readiness.require(readiness.STRUCTURED)      # no-op unless the profile reads labevents_full
         hadm_clause = "AND l.hadm_id = :hadm" if hadm_id is not None else ""
         stmt = sa.text(f"""
             SELECT d.label, d.itemid, l.charttime, l.valuenum, l.valueuom, l.flag, d.fluid
