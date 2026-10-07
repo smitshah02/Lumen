@@ -50,8 +50,12 @@ def test_no_tracked_python_file_imports_a_hosted_llm_sdk():
 def test_no_hosted_llm_package_is_required():
     pattern = re.compile(r"^(" + "|".join(re.escape(h).replace("_", "[-_]").replace(r"\.", "[-_.]")
                                           for h in HOSTED) + r")\b", re.M | re.I)
-    for name in ("requirements.txt", "requirements-dev.txt"):
-        assert not pattern.search((ROOT / name).read_text()), name
+    # Every requirements file the repository carries; requirements.txt is the one
+    # that must exist. A dev file added later is covered without editing this test.
+    sources = sorted(ROOT.glob("requirements*.txt"))
+    assert ROOT / "requirements.txt" in sources
+    for path in sources:
+        assert not pattern.search(path.read_text()), path.name
 
 
 def test_retrieval_judge_has_no_default_backend(tmp_path):

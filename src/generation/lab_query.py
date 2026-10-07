@@ -29,6 +29,7 @@ from collections import OrderedDict
 
 import sqlalchemy as sa
 
+from src.config import PROFILE_SETTINGS
 from src.storage import engine
 
 logger = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ class LabResolver:
         hadm_clause = "AND l.hadm_id = :hadm" if hadm_id is not None else ""
         stmt = sa.text(f"""
             SELECT d.label, d.itemid, l.charttime, l.valuenum, l.valueuom, l.flag, d.fluid
-            FROM labevents l
+            FROM {PROFILE_SETTINGS['lab_table']} l
             JOIN d_labitems d ON d.itemid = l.itemid
             WHERE l.subject_id = :sid
               AND l.itemid IN :itemids

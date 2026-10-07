@@ -407,7 +407,8 @@ def _dependencies() -> dict:
 
 
 def _data_plane() -> dict:
-    out = {"data_plane": os.environ.get("LUMEN_DATA_PLANE"), "database": None}
+    out = {"data_plane": os.environ.get("LUMEN_DATA_PLANE"),
+           "data_profile": os.environ.get("LUMEN_DATA_PROFILE", "control"), "database": None}
     try:
         from src import storage
         out["data_plane"] = storage.DATA_PLANE

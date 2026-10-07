@@ -50,6 +50,7 @@ class RetrievedChunk(BaseModel):
 class RetrieveResponse(BaseModel):
     request_id: str
     data_plane: str
+    data_profile: str
     subject_id: int
     query: str
     temporal_mode: str
@@ -80,6 +81,7 @@ class AskResponse(BaseModel):
     request_id: str
     thread_id: str
     data_plane: str
+    data_profile: str
     status: Literal["completed", "human_review_required", "refused", "failed"]
     review_status: Optional[str]
     answer: str

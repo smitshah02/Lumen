@@ -136,7 +136,6 @@ across configurations rather than as corpus-wide recall.
 | [`src/evals/`](src/evals/) | Retrieval, safety, temporal, and final-evaluation engines |
 | [`src/mcp_server/`](src/mcp_server/) | Optional MCP adapter over shared services |
 | [`scripts/lumen`](scripts/lumen) | Thin supported lifecycle facade |
-| [`archive/`](archive/) | Retired implementations retained only for provenance |
 
 Further reading:
 

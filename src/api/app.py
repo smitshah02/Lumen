@@ -35,7 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
-from src.config import MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
+from src.config import DATA_PROFILE, MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
 from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
                                             legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
@@ -401,7 +401,7 @@ async def ready(request: Request):
             "ollama": llm.get("ollama"), "model": llm.get("model", "unknown")}
     ok = all(v == "ok" for v in deps.values())
     request.state.outcome = "ready" if ok else "not_ready"
-    body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "database": EXPECTED_DB,
+    body = {"status": "ready" if ok else "not_ready", "data_plane": DATA_PLANE, "data_profile": DATA_PROFILE, "database": EXPECTED_DB,
             "models": {"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL,
                        "roles": local_client.runtime_config()["roles"]}, "dependencies": deps,
             "database_details": {"schema_version": db.get("schema_version"),
@@ -435,7 +435,8 @@ async def retrieve(req: RetrieveRequest, request: Request):
     log_event(logger, "retrieve_completed", subject_id=req.subject_id, result_count=len(results),
               top_k=req.top_k, temporal_mode=mode, duration_ms=t.ms)
     return RetrieveResponse(
-        request_id=request.state.request_id, data_plane=DATA_PLANE, subject_id=req.subject_id, query=req.query,
+        request_id=request.state.request_id, data_plane=DATA_PLANE, data_profile=DATA_PROFILE,
+        subject_id=req.subject_id, query=req.query,
         temporal_mode=mode, latency_ms=t.ms,
         # chunk_text comes from note_chunks (de-identified in research, synthetic in demo);
         # clinical_notes.text_original is never read by the retriever.
@@ -496,7 +497,7 @@ async def ask(req: AskRequest, request: Request):
               llm_verified=timings.get("llm_verified", 0),
               retrieval_ms=timings.get("retrieval_ms"), duration_ms=t.ms)
     return AskResponse(
-        request_id=rid, thread_id=thread_id, data_plane=DATA_PLANE, status=status,
+        request_id=rid, thread_id=thread_id, data_plane=DATA_PLANE, data_profile=DATA_PROFILE, status=status,
         review_status=st.get("review_status"), answer=answer, answer_is_draft=interrupted,
         citations=[Citation(label=c.get("label") or "", chunk_id=int(c.get("chunk_id", -1)), claim=c.get("claim", ""),
                             verified=bool(c.get("verified"))) for c in cites],

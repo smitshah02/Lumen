@@ -97,6 +97,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "event": event or "log",
             "data_plane": os.environ.get("LUMEN_DATA_PLANE", "research").strip().lower(),
+            "data_profile": os.environ.get("LUMEN_DATA_PROFILE", "control").strip().lower(),
         }
         msg = record.getMessage()
         if msg and msg != event:

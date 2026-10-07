@@ -55,3 +55,20 @@ def test_default_paths_are_repository_relative():
 ])
 def test_pgvector_patch_mismatch_is_distinguished_from_incompatibility(installed, expected):
     assert config.pgvector_status(installed, pinned="0.8.6") == expected
+
+
+def test_data_profile_is_strict_and_defaults_to_control(monkeypatch):
+    monkeypatch.delenv("LUMEN_DATA_PROFILE", raising=False)
+    assert config.get_data_profile() == "control"
+    assert config.get_data_profile(" V2 ") == "v2"
+    with pytest.raises(config.ConfigurationError, match="expected one of"):
+        config.get_data_profile("labevents; DROP TABLE patients")
+
+
+def test_profiles_are_the_four_plan_stages_with_fixed_tables():
+    assert list(config.PROFILES) == ["control", "scoped", "structured", "v2"]
+    assert config.PROFILES["control"] == {"admission_scope": False, "lab_table": "labevents",
+                                          "sql_paths": False, "chunk_table": "note_chunks"}
+    tables = {(p["lab_table"], p["chunk_table"]) for p in config.PROFILES.values()}
+    assert tables == {("labevents", "note_chunks"), ("labevents_full", "note_chunks"),
+                      ("labevents_full", "note_chunks_v2")}

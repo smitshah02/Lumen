@@ -9,6 +9,7 @@ processes after changing it. Never commit populated environment files.
 | Variable | Default | Meaning |
 |---|---|---|
 | `LUMEN_DATA_PLANE` | `research` | Exactly `demo` or `research`. |
+| `LUMEN_DATA_PROFILE` | `control` | Exactly `control`, `scoped`, `structured` or `v2`: the data-foundation stage whose tables are read (see `docs/designs/data-foundation-audit.md`). Any other value refuses to start. |
 | `DATABASE_URL` | `postgresql://postgres:lumen@localhost:5434/lumen` | Research SQLAlchemy URL. Set explicitly for real use. |
 | `LUMEN_DEMO_DATABASE_URL` | derived from `DATABASE_URL` with database `lumen_demo` | Full demo URL; must not resolve to the research database. |
 | `LUMEN_DEMO_DB_NAME` | `lumen_demo` | Database name used when deriving the demo URL. |

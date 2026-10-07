@@ -87,6 +87,32 @@ def get_data_plane(value: str | None = None) -> str:
 DATA_PLANE = get_data_plane()
 
 
+# Data-foundation profiles (docs/designs/data-foundation-audit.md, decision R4).
+# Each profile is one stage of that plan. Table names come from this mapping,
+# never from the environment, so no configuration text reaches an SQL string.
+PROFILES: dict[str, dict] = {
+    "control":    {"admission_scope": False, "lab_table": "labevents",      "sql_paths": False, "chunk_table": "note_chunks"},
+    "scoped":     {"admission_scope": True,  "lab_table": "labevents",      "sql_paths": False, "chunk_table": "note_chunks"},
+    "structured": {"admission_scope": True,  "lab_table": "labevents_full", "sql_paths": True,  "chunk_table": "note_chunks"},
+    "v2":         {"admission_scope": True,  "lab_table": "labevents_full", "sql_paths": True,  "chunk_table": "note_chunks_v2"},
+}
+
+
+def get_data_profile(value: str | None = None) -> str:
+    """Return a validated data profile, reading the environment when omitted."""
+    profile = (value if value is not None else os.environ.get("LUMEN_DATA_PROFILE", "control"))
+    profile = profile.strip().lower()
+    if profile not in PROFILES:
+        raise ConfigurationError(
+            f"LUMEN_DATA_PROFILE={profile!r}; expected one of {sorted(PROFILES)}"
+        )
+    return profile
+
+
+DATA_PROFILE = get_data_profile()
+PROFILE_SETTINGS = PROFILES[DATA_PROFILE]
+
+
 def _env_true(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUE
 
