@@ -25,3 +25,29 @@ def configuration_hash(configuration: dict | None = None) -> str:
     payload = json.dumps(configuration or index_configuration(),
                          sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# An index built before provenance was recorded cannot be given the current
+# configuration hash truthfully: nothing proves which chunker produced it. It is
+# adopted under its own hash instead (src/storage/adopt_legacy_index.py), and
+# that hash is accepted alongside the current one wherever "is this note
+# indexed?" is asked — so a usable index reads as ready and is never silently
+# re-embedded, while its provenance still says what it is.
+LEGACY_ADOPTED = "legacy-adopted"
+
+
+def legacy_adopted_hashes(conn) -> list[str]:
+    """Adopted hashes that still match the current embedding pin. When the
+    pinned embedding model changes, an adopted index stops counting as indexed:
+    otherwise new notes would be embedded with one model and the adopted ones
+    queried as if they came from it too."""
+    from sqlalchemy import text
+    embedding = index_configuration()["embedding"]
+    return list(conn.execute(text("""
+        SELECT DISTINCT config_hash FROM note_index_runs
+        WHERE status = 'completed' AND configuration->>'provenance' = :provenance
+          AND configuration->'embedding'->>'repo' = :repo
+          AND configuration->'embedding'->>'revision' = :revision
+    """), {"provenance": LEGACY_ADOPTED, "repo": embedding["repo"],
+           "revision": embedding["revision"]}).scalars())
+

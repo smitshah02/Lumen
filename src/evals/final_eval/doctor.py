@@ -14,8 +14,8 @@ Profiles
 `final` (default) is the pre-benchmark contract: every prerequisite for a real
 final run is REQUIRED, and a missing one exits non-zero.
 
-`local` is for a development box. The environment-dependent checks — the 30B
-main model, the GPU, the database, the reranker weights — are demoted to
+`local` is for a development box. The environment-dependent checks — the MAIN
+model, the GPU, the database, the reranker weights — are demoted to
 advisory, because a Mac not having the cloud configuration is a fact about the
 Mac, not a defect in the evaluator. Everything the repository itself controls
 (dataset hash, case counts, judge independence, output writability) stays
@@ -40,7 +40,7 @@ PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 # Demoted to advisory under --profile local.
 ENVIRONMENT_CHECKS = frozenset({
     "database_connectivity", "demo_data_plane_rows", "llm_host_reachable",
-    "database_matches_provider", "synthea_data_plane_rows",
+    "database_matches_provider",
     "runtime_model_main", "runtime_model_fast", "judge_model_installed",
     "embedding_models", "reranker_model", "gpu", "python_version",
 })
@@ -153,24 +153,6 @@ def check_versions(judge_prompt_version: str) -> list:
 def check_dataset(case_provider=None) -> list:
     from src.evals.final_eval import providers
     provider = case_provider or providers.get_provider("demo")
-    if provider.name == "synthea":
-        try:
-            fp = provider.fingerprint()
-            cases = provider.load_cases()
-            expected_range = (25, 30) if provider.profile == "dev" else (80, 120)
-            return [
-                _c("eval_set_present", True, fp["path"], fp["path"]),
-                _c("eval_set_sha256", bool(fp["sha256"]), fp["sha256"][:16], fp["sha256"]),
-                _c("synthea_manifest_hash_matches", fp["manifest_sha256_matches"] is True,
-                   f"profile={provider.profile} fingerprint={fp['golden_set_fingerprint'][:16]}",
-                   fp["manifest_sha256_matches"]),
-                _c("eval_set_case_count", expected_range[0] <= len(cases) <= expected_range[1],
-                   f"{len(cases)} cases (expected {expected_range[0]}..{expected_range[1]})", len(cases)),
-                _c("eval_set_parses", True,
-                   f"{len(cases)} cases, {len({c.subject_id for c in cases})} unique patients", None),
-            ]
-        except Exception as e:
-            return [_c("eval_set_present", False, f"{type(e).__name__}: {e}", None)]
     out = []
     path = case_mod.GOLDEN_PATH
     if not path.exists():
@@ -225,29 +207,10 @@ def check_data_plane(probe=None, case_provider=None) -> list:
                   f"database={info.get('database')!r}; expected {provider.expected_database!r}",
                   info.get("database")))
     rows = info.get("counts") or {}
-    row_check = "demo_data_plane_rows" if provider.name == "demo" else "synthea_data_plane_rows"
-    out.append(_c(row_check, bool(rows.get("note_chunks")),
+    out.append(_c("demo_data_plane_rows", bool(rows.get("note_chunks")),
                   f"note_chunks={rows.get('note_chunks')} labevents={rows.get('labevents')}"
                   if rows else (info.get("counts_error") or "no row counts available"),
                   rows))
-    if provider.name == "synthea":
-        try:
-            fp = provider.fingerprint()
-        except Exception as e:
-            fp = {"profile": provider.profile, "fingerprint_error": type(e).__name__}
-        corpus = info.get("corpus_identity") or {}
-        expected = {
-            "profile": provider.profile,
-            "source_manifest_sha256": fp.get("source_manifest_sha256"),
-            "mapping_manifest_sha256": fp.get("mapping_manifest_sha256"),
-            "note_corpus_sha256": fp.get("note_corpus_sha256"),
-            "index_configuration_hash": fp.get("index_configuration_hash"),
-        }
-        mismatches = {k: {"expected": v, "actual": corpus.get(k)}
-                      for k, v in expected.items() if not v or corpus.get(k) != v}
-        out.append(_c("synthea_gold_matches_corpus", not mismatches,
-                      "gold/profile fingerprints match loaded corpus and index" if not mismatches
-                      else f"mismatch: {mismatches}", corpus))
     return out
 
 
@@ -266,28 +229,10 @@ def _probe_database() -> dict:
                         sa_text(f"SELECT count(*) FROM {table}")).scalar()
                 except Exception as e:
                     counts[table] = f"unavailable ({type(e).__name__})"
-            corpus_identity = {}
-            if storage.DATA_PLANE == "synthea":
-                cfg = c.execute(sa_text("""
-                    SELECT configuration FROM ingestion_runs
-                    WHERE status='completed' AND configuration->>'operation'='clinical_notes'
-                    ORDER BY completed_at DESC LIMIT 1
-                """)).scalar() or {}
-                index_hash = c.execute(sa_text("""
-                    SELECT config_hash FROM note_index_runs
-                    WHERE status='completed' ORDER BY completed_at DESC LIMIT 1
-                """)).scalar()
-                corpus_identity = {
-                    "profile": cfg.get("profile"),
-                    "source_manifest_sha256": cfg.get("source_manifest_sha256"),
-                    "mapping_manifest_sha256": cfg.get("mapping_manifest_sha256"),
-                    "note_corpus_sha256": cfg.get("corpus_sha256"),
-                    "index_configuration_hash": index_hash,
-                }
         return {"connected": True, "database": storage.engine.url.database,
                 "detail": f"connected to {storage.engine.url.database} "
                           f"(plane {storage.DATA_PLANE})",
-                "counts": counts, "corpus_identity": corpus_identity}
+                "counts": counts}
     except Exception as e:
         return {"connected": False, "detail": f"{type(e).__name__}: {str(e)[:160]}",
                 "database": None, "counts": {}}

@@ -19,7 +19,20 @@ Two changes, neither of which weakens grounding:
    patients to human review for the wrong reason. Anything it cannot settle is
    handed to the model, which is what used to see every claim anyway.
 
+   One exception to "never unsupported": a claim that contradicts ITSELF
+   ("increased from 6.0 to 5.8"). Matching both numbers in the source says
+   nothing about the direction the claim asserts, and no source can make such
+   a sentence true, so it is unsupported without consulting anything.
+
+   A second exception, same reasoning: a claim that names a value "first" or
+   "most recent" when the evidence it cites says otherwise ("First: 1.2. Most
+   recent: 0.8." against "the most recent was 1.2"). Both numbers match
+   verbatim; what is wrong is which one the claim calls the latest.
+
    It also refuses to auto-support:
+     - a claim with a second assertion that carries no anchor of its own
+       ("creatinine was 1.2 mg/dL [L1] and the patient was started on
+       dialysis"): matching the number says nothing about the dialysis
      - claims with no numeric or date anchor at all (pure prose assertions)
      - claims citing [G#]/[P#] — a guideline or paper is a general statement,
        and "does this apply to this patient" is a judgement, not a string match
@@ -92,6 +105,117 @@ def anchors(claim: str) -> tuple[set[str], set[str], set[str]]:
     return dates, qty, nums
 
 
+_UP_RE = re.compile(r"\b(?:increas\w*|rose|risen|rising|climb\w*|went up|elevat\w*)\b", re.I)
+_DOWN_RE = re.compile(r"\b(?:decreas\w*|fell|fallen|falling|dropp\w*|declin\w*|went down|reduc\w*)\b", re.I)
+# "from <a> ... to <b>" with nothing numeric in between that could be the real endpoint.
+_FROM_TO_RE = re.compile(r"\bfrom\b\D{0,30}?(\d+(?:\.\d+)?)\D{0,60}?\bto\b\D{0,30}?(\d+(?:\.\d+)?)", re.I | re.S)
+
+
+def direction_contradiction(claim: str) -> str | None:
+    """Why the claim contradicts itself, or None. Decided only when the claim
+    has exactly one direction (up or down) and an explicit "from A to B"; any
+    other wording is left to the normal checks."""
+    text = _DATE_RE.sub(" ", CITE_RE.sub(" ", claim or ""))
+    up, down = bool(_UP_RE.search(text)), bool(_DOWN_RE.search(text))
+    pair = _FROM_TO_RE.search(text)
+    if up == down or not pair:
+        return None
+    a, b = float(pair.group(1)), float(pair.group(2))
+    if up and b < a:
+        return f"claim contradicts itself: it says the value went up, but {a:g} to {b:g} is a decrease"
+    if down and b > a:
+        return f"claim contradicts itself: it says the value went down, but {a:g} to {b:g} is an increase"
+    return None
+
+
+# Words that say WHICH record in a series a value is. "last" is a role only when
+# it is not counting backwards ("the last 5 values", "over the last year").
+_EARLIEST_WORDS = r"first|earliest|initial|oldest"
+_LATEST_WORDS = (r"most recent|latest|newest|"
+                 r"last(?!\s+(?:\d|few|several|one|two|three|four|five|six|year|month|week|day|time|night|admission of))")
+_ROLE_RE = re.compile(rf"\b(?:(?P<earliest>{_EARLIEST_WORDS})|(?P<latest>{_LATEST_WORDS}))\b", re.I)
+# Evidence that labels a role outright: "First: 1.2 mg/dL on 2150-01-04."
+_ROLE_LABEL_RE = re.compile(
+    rf"\b(?:(?P<earliest>{_EARLIEST_WORDS})|(?P<latest>most recent|latest|newest|last))\s*:\s*"
+    r"(?P<body>.+?)(?=\.\s+[A-Z]|\.\s*$|\n|$)", re.I)
+# Evidence built from one table: every date in it belongs to the series the claim is about.
+_STRUCTURED_LABELS = ("L", "A")
+
+
+def _first_value(text: str) -> str | None:
+    """The first number in `text` that is not part of a date."""
+    m = _NUM_RE.search(_DATE_RE.sub(" ", text))
+    return m.group(0) if m else None
+
+
+def temporal_contradiction(claim: str, source_text: str, labels) -> str | None:
+    """Why the claim's "first"/"most recent" disagrees with its evidence, or None.
+
+    Decided only where the evidence itself says which record is which:
+      * it labels the role ("First: ...", "Most recent: ...") and the value the
+        claim gives for that role is not the one under that label; or
+      * it is a structured series (lab or admissions rows) and holds a date
+        later than the one the claim calls most recent, or earlier than the one
+        it calls first.
+    Anything else is undecidable here and returns None: a claim with no role
+    word, a role with no value or date after it, free-text notes with no labels.
+    """
+    text = CITE_RE.sub(" ", claim or "")
+    roles = [(m.lastgroup, m.start(), m.end()) for m in _ROLE_RE.finditer(text)]
+    if not roles:
+        return None
+    src = source_text or ""
+    labelled: dict[str, list[str]] = {}
+    for m in _ROLE_LABEL_RE.finditer(src):
+        labelled.setdefault("earliest" if m.group("earliest") else "latest", []).append(m.group("body"))
+    structured = bool(labels) and all(str(l).startswith(_STRUCTURED_LABELS) for l in labels)
+    source_dates = sorted(set(_DATE_RE.findall(src))) if structured else []
+
+    for n, (role, _, end) in enumerate(roles):
+        segment = text[end:roles[n + 1][1]] if n + 1 < len(roles) else text[end:]
+        word = "most recent" if role == "latest" else "first"
+        value = _first_value(segment)
+        if value and labelled.get(role) and not any(_number_in(value, body) for body in labelled[role]):
+            return f"temporal attribution: the source's {word} value is not {value}"
+        dates = _DATE_RE.findall(segment)
+        if dates and source_dates:
+            if role == "latest" and source_dates[-1] > max(dates):
+                return f"temporal attribution: the source has a later record ({source_dates[-1]}) than the one called {word}"
+            if role == "earliest" and source_dates[0] < min(dates):
+                return f"temporal attribution: the source has an earlier record ({source_dates[0]}) than the one called {word}"
+    return None
+
+
+# Where one sentence starts asserting a second thing.
+_CLAUSE_SPLIT_RE = re.compile(r";|,?\s+(?:and|but|while|whereas|then)\s+|,\s+(?:which|with|after|before|so)\s+", re.I)
+_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+_FILLER = frozenset("""the and was were has had have been being that this these those with for from into onto than then
+    also its their his her patient patients value values not are can could would should may might per about over""".split())
+
+
+def unanchored_clause(claim: str) -> str | None:
+    """A clause of the claim that asserts something but has no number or date
+    of its own, or None. Verbatim anchor matching cannot speak for such a
+    clause, so the claim must go to the model. A one-word fragment
+    ("and stable") is not an assertion and is ignored.
+
+    ponytail: splits on conjunctions, not grammar, so "reports nausea and
+    vomiting for 3 days" also goes to the model. That costs a model call, never
+    an approval. Use a real clause parser if that call volume matters."""
+    text = CITE_RE.sub(" ", claim or "")
+    clauses = [c for c in _CLAUSE_SPLIT_RE.split(text) if c and c.strip()]
+    if len(clauses) < 2:
+        return None
+    for clause in clauses:
+        dates, qty, nums = anchors(clause)
+        if dates or qty or nums:
+            continue
+        words = [w for w in _WORD_RE.findall(clause.lower()) if w not in _FILLER]
+        if len(words) >= 2:
+            return clause.strip()
+    return None
+
+
 def _number_in(value: str, source: str) -> bool:
     """Whole-number match: 1.4 must not be found inside 21.4 or 1.42."""
     return re.search(rf"(?<![\d.]){re.escape(value)}(?![\d])", source) is not None
@@ -105,7 +229,9 @@ def _quantity_in(qty: str, source: str) -> bool:
 
 
 def deterministic_verdict(claim: str, source_text: str, labels) -> tuple[str, str]:
-    """Returns (verdict, note). verdict is "supported" or "unresolved" only.
+    """Returns (verdict, note). verdict is "supported" or "unresolved" — or
+    "unsupported" for the two things code can refute: a self-contradictory
+    claim, and a "first"/"most recent" that disagrees with the cited evidence.
 
     `labels` is every citation the claim carries; `source_text` must be the
     concatenation of those sources. A claim citing two chunks ("creatinine rose
@@ -115,6 +241,12 @@ def deterministic_verdict(claim: str, source_text: str, labels) -> tuple[str, st
     labels = [labels] if isinstance(labels, str) else list(labels or [])
     if not labels:
         return "unresolved", "no citation to check against"
+    contradiction = direction_contradiction(claim)
+    if contradiction:
+        return "unsupported", contradiction
+    contradiction = temporal_contradiction(claim, source_text, labels)
+    if contradiction:
+        return "unsupported", contradiction
     if any(l.startswith(("G", "P")) for l in labels):
         return "unresolved", "general-source claim needs judgement"
     dates, qty, nums = anchors(claim)
@@ -126,6 +258,8 @@ def deterministic_verdict(claim: str, source_text: str, labels) -> tuple[str, st
                + [n for n in nums if not _number_in(n, src)])
     if missing:
         return "unresolved", "anchor not found verbatim in source"
+    if unanchored_clause(claim):
+        return "unresolved", "a clause of the claim has no numeric or date anchor to check"
     n = len(dates) + len(qty) + len(nums)
     return "supported", f"deterministic: {n} anchor(s) matched verbatim in {'+'.join(labels)}"
 

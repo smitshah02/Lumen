@@ -81,20 +81,20 @@ def test_ready_ok(monkeypatch):
     assert r.json()["data_plane"] == "demo" and r.json()["database"] == "lumen_demo"
 
 
-def test_ready_accepts_synthea_plane_and_reports_isolated_database(monkeypatch):
-    monkeypatch.setattr(api, "DATA_PLANE", "synthea")
-    monkeypatch.setattr(api, "EXPECTED_DB", "lumen_synthea")
-    monkeypatch.setattr(api, "_check_database", _ok_db)
+def test_ready_reports_a_legacy_adopted_index_as_usable(monkeypatch):
+    monkeypatch.setattr(api, "_check_database", lambda: {
+        **_ok_db(), "index_provenance": "legacy_adopted", "pgvector_version": "0.8.2",
+        "pgvector_patch_mismatch": True})
     monkeypatch.setattr(api, "_check_ollama", _ok_llm)
     monkeypatch.setattr(api, "_check_retrieval_models", _ok_retrieval_models)
-
     r = client.get("/ready")
+    assert r.status_code == 200 and r.json()["status"] == "ready"
+    details = r.json()["database_details"]
+    assert details["index_provenance"] == "legacy_adopted"
+    assert details["pgvector_patch_mismatch"] is True
 
-    assert r.status_code == 200
-    assert r.json()["status"] == "ready"
-    assert r.json()["data_plane"] == "synthea"
-    assert r.json()["database"] == "lumen_synthea"
-    assert api._PLANE_DATABASES["synthea"] != api.storage.RESEARCH_DB_NAME
+
+
 
 
 def test_ready_database_failure_is_503_and_leaks_nothing(monkeypatch):
@@ -201,7 +201,7 @@ def test_retrieve_maps_results(monkeypatch):
     assert body["temporal_mode"] == "latest" and body["data_plane"] == "demo"
 
 
-def test_synthea_retrieve_preserves_patient_scope_and_encounter_summary(monkeypatch):
+def test_retrieve_preserves_patient_scope_and_note_type(monkeypatch):
     _no_subject_check(monkeypatch)
     seen = {}
 
@@ -214,14 +214,12 @@ def test_synthea_retrieve_preserves_patient_scope_and_encounter_summary(monkeypa
             sources=["bm25"], chunk_text="synthetic patient evidence",
         )]
 
-    monkeypatch.setattr(api, "DATA_PLANE", "synthea")
     monkeypatch.setattr(api, "_run_retrieve", retrieve)
     body = client.post("/retrieve", json={
         "subject_id": 80000018, "query": "SARS-CoV-2 RNA panel", "top_k": 5,
     }).json()
 
     assert seen == {"subject_id": 80000018, "temporal_filter": "auto", "top_k": 5}
-    assert body["data_plane"] == "synthea"
     assert body["subject_id"] == 80000018
     assert body["results"][0]["note_id"] == 850003022
     assert body["results"][0]["subject_id"] == 80000018
@@ -235,3 +233,10 @@ def test_research_plane_refuses_non_loopback_clients(monkeypatch):
     monkeypatch.setattr(api, "DATA_PLANE", "research")
     r = client.get("/health")                      # TestClient's client host is "testclient"
     assert r.status_code == 403 and r.json()["error"] == "forbidden"
+
+
+@pytest.mark.parametrize("installed,status,mismatch", [
+    ("0.8.6", "ok", False), ("0.8.2", "ok", True), ("0.7.4", "missing_or_wrong_version", False),
+    (None, "missing_or_wrong_version", False)])
+def test_readiness_maps_pgvector_versions(installed, status, mismatch):
+    assert api._extension_status(installed) == (status, mismatch)

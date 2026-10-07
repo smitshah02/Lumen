@@ -48,18 +48,30 @@ def test_recent_window_uses_the_patients_own_latest_record():
     assert [r.chunk_id for r in apply_temporal_filter(records, mode="recent", recency_days=180)] == [1]
 
 
-def test_per_patient_anchors_are_independent_of_date_shift():
+def test_latest_prefers_the_newest_date_within_each_patient_whatever_the_date_shift():
     records = [
-        _result(10, 100, "2150-12-01", 0.50),
         _result(11, 100, "2150-11-01", 0.50),
-        _result(20, 200, "2185-06-01", 0.50),
+        _result(10, 100, "2150-12-01", 0.50),
         _result(21, 200, "2185-05-01", 0.50),
+        _result(20, 200, "2185-06-01", 0.50),
     ]
-    scores = {r.chunk_id: r.rrf_score for r in apply_temporal_filter(records, mode="latest")}
-    assert scores[10] > scores[11]
-    assert scores[20] > scores[21]
-    assert scores[11] == pytest.approx(scores[21], abs=0.01)
-    assert scores[10] > 0.50
+    order = [r.chunk_id for r in apply_temporal_filter(records, mode="latest")]
+    assert order.index(10) < order.index(11) and order.index(20) < order.index(21)
+    assert {r.rrf_score for r in records} == {0.50}                    # ordering only: scores are not rewritten
+
+
+def test_latest_and_earliest_weigh_time_against_relevance_instead_of_sorting_by_date():
+    def records():
+        return [
+            _result(1, 100, "2150-01-01", 0.95),      # relevant, oldest
+            _result(2, 100, "2150-06-01", 0.90),      # relevant, middle
+            _result(3, 100, "2150-11-01", 0.92),      # relevant, newest relevant
+            _result(4, 100, "2150-12-01", 0.05),      # newest note, unrelated to the question
+        ]
+    assert [r.chunk_id for r in apply_temporal_filter(records(), mode="latest")][0] == 3     # not 4
+    assert [r.chunk_id for r in apply_temporal_filter(records(), mode="earliest")][0] == 1
+    undated = records() + [_result(5, 100, None, 0.99)]
+    assert [r.chunk_id for r in apply_temporal_filter(undated, mode="latest")][0] == 3       # undated gets no time credit
 
 
 def test_trend_mode_is_chronological_and_places_undated_records_last():
@@ -70,16 +82,6 @@ def test_trend_mode_is_chronological_and_places_undated_records_last():
         _result(34, 100, None, 0.7),
     ]
     assert [r.chunk_id for r in apply_temporal_filter(records, mode="trend")] == [32, 31, 33, 34]
-
-
-def test_earliest_mode_is_chronological_and_places_undated_records_last():
-    records = [
-        _result(31, 100, "2150-09-15", 0.7),
-        _result(32, 100, "2150-03-15", 0.7),
-        _result(33, 100, "2150-12-20", 0.7),
-        _result(34, 100, None, 0.7),
-    ]
-    assert [r.chunk_id for r in apply_temporal_filter(records, mode="earliest")] == [32, 31, 33, 34]
 
 
 def test_recent_mode_keeps_undated_records():
@@ -119,6 +121,11 @@ def test_temporal_intent_detection(query, expected):
         ("earliest HbA1c value", "HbA1c value"),
         ("first recorded creatinine", "creatinine"),
         ("creatinine trend over time", "creatinine"),
+        # the verb is content: stripping "change over" left "How did creatinine the patient's..."
+        ("How did creatinine change over the patient's available record?",
+         "How did creatinine change over the patient's available record?"),
+        ("How has potassium changed over time?", "How has potassium changed?"),
+        ("What was the creatinine trend?", "What was the creatinine?"),
         ("abnormal potassium lab results", "abnormal potassium lab results"),
     ],
 )
@@ -142,3 +149,49 @@ def test_temporal_candidate_pool_widens_only_for_patient_scoped_queries():
     assert temporal_candidate_limit(60, "trend", 80000017) == 1000
     assert temporal_candidate_limit(60, "all", 80000017) == 60
     assert temporal_candidate_limit(60, "latest", None) == 60
+
+
+def test_reranker_uses_half_precision_only_on_a_gpu_backend(monkeypatch):
+    from src.retrieval.hybrid_retriever_v2 import _reranker_fp16
+    monkeypatch.delenv("LUMEN_RERANKER_FP16", raising=False)
+    assert _reranker_fp16("mps") and _reranker_fp16("cuda") and not _reranker_fp16("cpu")
+    monkeypatch.setenv("LUMEN_RERANKER_FP16", "0")                    # the rollback switch
+    assert not _reranker_fp16("mps")
+
+
+def test_search_stages_are_timed_without_starting_traces(monkeypatch):
+    """Stage timers record wall time and open a span only inside an open trace."""
+    from src.retrieval import hybrid_retriever_v2 as H
+    opened = []
+    monkeypatch.setattr(H.tracing, "child_span", lambda name: opened.append(name) or __import__("contextlib").nullcontext())
+    timings = {}
+    with H._stage(timings, "reranking"):
+        pass
+    with H._stage(timings, "reranking"):
+        pass
+    assert opened == ["reranking", "reranking"] and timings["reranking"] >= 0
+    from src.obs import tracing
+    with tracing.child_span("x") as s:                               # tracing is off in tests
+        assert s is None
+
+
+def test_graph_presents_latest_evidence_newest_first(monkeypatch):
+    """The retriever ranks by relevance plus time; the graph shows the chosen chunks in time order."""
+    import src.agents.graph as graph_mod
+
+    chosen = [_result(1, 100, "2150-06-01", 0.9), _result(2, 100, "2150-11-01", 0.8),
+              _result(3, 100, None, 0.7), _result(4, 100, "2150-01-01", 0.6)]
+
+    class Retriever:
+        def search(self, **kwargs):
+            return list(chosen)
+
+    monkeypatch.setattr(graph_mod, "get_retrievers", lambda: (Retriever(), None))
+
+    def order(query, mode):
+        out = graph_mod.patient_retrieval({"query": query, "subject_id": 100, "temporal_mode": mode})
+        return [e["chunk_id"] for e in out["patient_evidence"]]
+
+    assert order("most recent chest imaging", "latest") == [2, 1, 4, 3]       # newest first, undated last
+    assert order("earliest chest imaging", "earliest") == [4, 1, 2, 3]
+    assert order("chest imaging", "all") == [1, 2, 3, 4]                      # relevance order untouched

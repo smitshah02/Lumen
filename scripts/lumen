@@ -25,6 +25,19 @@ research commands:
   db          start the explicitly selected external Postgres volume
   schema      apply additive schema upgrades
   ingest      ingest MIMIC only with --confirm-research-ingest
+  parity      compare structured API answers with direct SQL (PASS/FAIL only)
+  adjudicate  blinded human claim-support labelling: sample | label | report
+  holdout     unseen-patient cohort in its own database: select | create-db |
+              ingest | status | start | scorecard
+  retrieval-eval  development retrieval benchmark: build | run (P@5, R@5, nDCG@5, MRR, reranker lift)
+  verifier-eval   verifier diagnostic on labelled and synthetic adversarial claims
+  scorecard   fixed evaluation set: routing, SQL truth, citation integrity, claim
+              support, review rate and latency (aggregates only)
+  retrieval-bench  per-stage retrieval latency over a fixed question set (--out FILE)
+  ask         ask one question (--query ... --subject ...); a human review is
+              prompted for inline and the run resumes from its checkpoint
+  adopt       record an index built before provenance tracking
+              (--check, or --apply --confirm-legacy-adoption)
   index       index notes (extra args passed through)
   start       start the local API; never ingests
   test        run offline regression tests
@@ -35,6 +48,18 @@ EOF
 [ "$#" -ge 2 ] || { usage; exit 2; }
 plane=$1 command=$2
 shift 2
+
+if [ "$plane" = "research" ]; then
+  # MIMIC stays on this machine for every research command: no Hugging Face
+  # lookups, no remote model endpoint, no proxy for local calls. Tracing follows
+  # LUMEN_TRACING; src/obs/tracing.py refuses any non-loopback Langfuse endpoint
+  # (and any proxy) on this plane, so a trace can only go to local Langfuse.
+  export LUMEN_DATA_PLANE=research HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=0 NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+  # uvicorn reads UVICORN_* from the environment; a socket fd or path would
+  # replace the loopback bind below.
+  unset UVICORN_FD UVICORN_UDS UVICORN_HOST
+fi
 
 if [ "$plane" = "demo" ]; then
   export LUMEN_LLM_MAIN="${LUMEN_LLM_MAIN:-$($PY -c 'from src.config import MAIN_MODEL_DEFAULT; print(MAIN_MODEL_DEFAULT)')}"
@@ -69,11 +94,27 @@ case "$plane:$command" in
     LUMEN_DATA_PLANE=research "$PY" -m src.storage.ingest "$@"
     ;;
   research:index) LUMEN_DATA_PLANE=research "$PY" -m src.retrieval.index_notes "$@" ;;
+  research:adopt) "$PY" -m src.storage.adopt_legacy_index "$@" ;;
   research:start)
-    exec env LUMEN_DATA_PLANE=research "$PY" -m uvicorn src.api.app:app \
+    for arg in "$@"; do
+      case "$arg" in
+        --host|--host=*|--uds|--uds=*|--fd|--fd=*)
+          echo "refusing: the research API binds loopback only ($arg is not allowed)" >&2
+          exit 2 ;;
+      esac
+    done
+    exec "$PY" -m uvicorn src.api.app:app \
       --host 127.0.0.1 --port "${LUMEN_API_PORT:-8000}" --workers 1 "$@"
     ;;
   research:test) "$PY" -m pytest -q -p no:rerunfailures "$@" ;;
+  research:parity) "$PY" scripts/structured_parity.py "$@" ;;
+  research:scorecard) "$PY" scripts/scorecard.py "$@" ;;
+  research:retrieval-eval) "$PY" scripts/retrieval_eval.py "$@" ;;
+  research:verifier-eval) "$PY" scripts/verifier_eval.py "$@" ;;
+  research:adjudicate) "$PY" scripts/adjudicate.py "$@" ;;
+  research:holdout) "$PY" scripts/holdout.py "$@" ;;
+  research:ask)    "$PY" -m src.agents.run_graph "$@" ;;
+  research:retrieval-bench) "$PY" scripts/retrieval_bench.py "$@" ;;
   research:eval) LUMEN_DATA_PLANE=research "$PY" -m src.evals.retrieve_pool "$@" ;;
   *) usage; exit 2 ;;
 esac

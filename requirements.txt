@@ -60,7 +60,6 @@ typing-extensions==4.15.0
 
 # --- Ingestion / utilities -------------------------------------------------
 pandas==3.0.2
-tqdm==4.67.3
 python-dotenv==1.2.2
 
 # --- Optional: tracing (src/obs/tracing.py) --------------------------------

@@ -8,7 +8,7 @@ and the API behave identically with tracing on or off.
 Egress policy — traces carry note text in span inputs and LLM prompts:
   * research plane (real MIMIC):  local Langfuse only (localhost / 127.0.0.1 /
     host.docker.internal). Any remote endpoint is refused.
-  * demo/synthea planes (synthetic data): local, or a remote endpoint over
+  * demo plane (synthetic data): local, or a remote endpoint over
     https.
 
 The endpoint is resolved exactly as the Langfuse SDK resolves it —
@@ -53,11 +53,18 @@ def _hostname() -> str:
     return urlparse(_effective_url()).hostname or ""
 
 
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
 def _policy() -> tuple[bool, str]:
     url = urlparse(_effective_url())
+    if PLANE == "research" and any(os.environ.get(v) for v in _PROXY_VARS):
+        # The Langfuse SDK honours proxy settings, so a "local" endpoint is not
+        # local once a proxy is set, and research traces carry note text.
+        return False, "research tracing refused while a proxy is configured"
     if (url.hostname or "") in _LOCAL_HOSTS:
         return True, "local endpoint"
-    if PLANE not in {"demo", "synthea"}:
+    if PLANE != "demo":
         return False, "remote endpoint refused outside synthetic data planes"
     if url.scheme != "https":
         return False, "remote endpoint must use https"
@@ -185,6 +192,24 @@ def span(name: str, **attrs):
     with lf.start_as_current_observation(as_type="span", name=name) as s:
         if attrs:
             s.update(input=attrs)
+        yield s
+
+
+@contextmanager
+def child_span(name: str):
+    """A span only when a trace is already open. Library code (the retriever's
+    stages) uses this so a call made outside a request does not start a trace
+    of its own for every stage."""
+    lf = client()
+    try:
+        from opentelemetry import trace as _otel
+        active = lf is not None and _otel.get_current_span().get_span_context().is_valid
+    except Exception:
+        active = False
+    if not active:
+        yield None
+        return
+    with lf.start_as_current_observation(as_type="span", name=name) as s:
         yield s
 
 

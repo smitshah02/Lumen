@@ -100,3 +100,10 @@ class ErrorResponse(BaseModel):
     error: str
     request_id: Optional[str] = None
     detail: Optional[object] = None
+
+
+class ReviewDecision(BaseModel):
+    """A reviewer's decision on a whole paused draft."""
+    model_config = {"extra": "forbid"}
+    decision: Literal["approve", "reject"]
+    reviewer_note: str = Field(default="", max_length=1000)

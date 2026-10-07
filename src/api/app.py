@@ -9,7 +9,7 @@ hybrid retrieval -> local qwen synthesis -> verification -> human review), and
     LUMEN_DATA_PLANE=demo uvicorn src.api.app:app --host 127.0.0.1 --port 8000
 
 Data planes: src.storage picks the isolated database from LUMEN_DATA_PLANE
-(demo -> lumen_demo, synthea -> lumen_synthea, research -> lumen). The research
+(demo -> lumen_demo, research -> lumen). The research
 plane holds real MIMIC-derived text, so it only answers loopback clients.
 """
 
@@ -24,31 +24,35 @@ import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Path as PathParam, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
-from src.config import MODELS_CONFIG, MODELS_DIR, PGVECTOR_VERSION, VALID_PLANES
-from src.retrieval.index_provenance import configuration_hash as index_configuration_hash
+from src.config import MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
+from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
+                                            legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
+from src.agents import review
+from src.safety import pubmed
 from src.llm import local_client
 from src.obs import tracing
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
                              current_timings, Timer)
 from src.api.schemas import (AskRequest, AskResponse, RetrieveRequest, RetrieveResponse, RetrievedChunk,
-                             Citation, Source)
+                             Citation, Source, ReviewDecision)
 
 logger = logging.getLogger("lumen.api")
 
 DATA_PLANE = storage.DATA_PLANE
 _PLANE_DATABASES = {
     "demo": storage.DEMO_DB_NAME,
-    "synthea": storage.SYNTHEA_DB_NAME,
     "research": storage.RESEARCH_DB_NAME,
 }
 EXPECTED_DB = _PLANE_DATABASES[DATA_PLANE]
@@ -182,6 +186,18 @@ async def _on_database(request: Request, exc: Exception):
     return _err(request, 503, "database_unavailable")
 
 
+@app.exception_handler(review.ReviewNotFound)
+async def _on_review_missing(request: Request, exc: review.ReviewNotFound):
+    return _err(request, 404, "review_not_found")
+
+
+@app.exception_handler(review.ReviewNotPending)
+async def _on_review_not_pending(request: Request, exc: review.ReviewNotPending):
+    # 409: the thread exists but has nothing to decide — it never needed review,
+    # or a decision was already submitted. Nothing is resumed.
+    return _err(request, 409, "review_not_pending", {"review_status": exc.review_status})
+
+
 @app.exception_handler(GenerationFailed)
 async def _on_generation(request: Request, exc: GenerationFailed):
     return _err(request, 500, "generation_failed")
@@ -190,6 +206,13 @@ async def _on_generation(request: Request, exc: GenerationFailed):
 # ---------------------------------------------------------------------------
 # Dependencies (module-level so tests can replace them)
 # ---------------------------------------------------------------------------
+def _extension_status(installed) -> tuple[str, bool]:
+    """(readiness status, patch mismatch) for an installed pgvector version."""
+    status = pgvector_status(installed)
+    return ("ok" if status in ("ok", "patch_mismatch") else "missing_or_wrong_version",
+            status == "patch_mismatch")
+
+
 def _check_database() -> dict:
     with storage.engine.connect() as c:
         db = c.execute(text("SELECT current_database()")).scalar()
@@ -209,6 +232,7 @@ def _check_database() -> dict:
         eligible_notes = None
         indexed_notes = None
         ingestion_status = None
+        index_provenance = None
         if not missing_tables:
             schema_version = c.execute(text(
                 "SELECT COALESCE(MAX(version), 0) FROM lumen_schema_version"
@@ -222,14 +246,23 @@ def _check_database() -> dict:
                 WHERE COALESCE(text_deid, text_original) IS NOT NULL
                   AND COALESCE(text_deid, text_original) != ''
             """)).scalar()
+            # The current configuration, or an index adopted as-is from before
+            # provenance was recorded (reported below, never hidden).
+            legacy = legacy_adopted_hashes(c)
             indexed_notes = c.execute(text("""
                 SELECT COUNT(*) FROM note_index_state nis
-                WHERE nis.status='completed' AND nis.config_hash=:config_hash
+                WHERE nis.status='completed' AND nis.config_hash = ANY(:config_hashes)
                   AND nis.chunk_count=(
                       SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id=nis.note_id
                   )
-            """), {"config_hash": index_configuration_hash()}).scalar()
-            if DATA_PLANE in {"synthea", "research"}:
+            """), {"config_hashes": [index_configuration_hash(), *legacy]}).scalar()
+            # From the state rows, not the run log: after a full --reindex the
+            # adopted run row remains but no note carries its hash any more.
+            index_provenance = "legacy_adopted" if legacy and c.execute(text("""
+                SELECT EXISTS (SELECT 1 FROM note_index_state
+                               WHERE status='completed' AND config_hash = ANY(:legacy))
+            """), {"legacy": legacy}).scalar() else "current"
+            if DATA_PLANE == "research":
                 ingestion_status = c.execute(text("""
                     SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
                 """)).scalar()
@@ -251,7 +284,7 @@ def _check_database() -> dict:
     return {
         "database": "ok" if plane_ok else "wrong_database",
         "schema": "ok" if schema_ok else "missing_or_outdated",
-        "extension": "ok" if extension == PGVECTOR_VERSION else "missing_or_wrong_version",
+        "extension": _extension_status(extension)[0],
         "corpus": "ok" if chunks else "empty" if chunks == 0 else "unknown",
         "ingestion": ("ok" if DATA_PLANE == "demo" else
                       "ok" if ingestion_status in ("completed", "legacy_completed") else
@@ -260,6 +293,8 @@ def _check_database() -> dict:
                   "incomplete_or_stale" if eligible_notes is not None else "unknown"),
         "schema_version": schema_version,
         "pgvector_version": extension,
+        "pgvector_patch_mismatch": _extension_status(extension)[1],
+        "index_provenance": index_provenance,
         "missing_tables": missing_tables,
         "missing_indexes": sorted(required_indexes - indexes),
         "indexed_notes": indexed_notes,
@@ -371,6 +406,8 @@ async def ready(request: Request):
                        "roles": local_client.runtime_config()["roles"]}, "dependencies": deps,
             "database_details": {"schema_version": db.get("schema_version"),
                                  "pgvector_version": db.get("pgvector_version"),
+                                 "pgvector_patch_mismatch": db.get("pgvector_patch_mismatch", False),
+                                 "index_provenance": db.get("index_provenance"),
                                  "missing_tables": db.get("missing_tables", []),
                                  "missing_indexes": db.get("missing_indexes", []),
                                  "indexed_notes": db.get("indexed_notes"),
@@ -378,6 +415,8 @@ async def ready(request: Request):
             "retrieval_model_problems": retrieval.get("model_problems", []),
             # informational only: an unreachable observability backend never makes the API unready
             "tracing": tracing.status(),
+            # "none" unless LUMEN_LITERATURE_BACKEND opts in; the only outbound integration
+            "literature_backend": pubmed.backend_name(),
             "request_id": request.state.request_id}
     return JSONResponse(status_code=200 if ok else 503, content=body)
 
@@ -439,7 +478,8 @@ async def ask(req: AskRequest, request: Request):
         answer = st.get("final_answer") or st.get("draft_answer") or ""
         flagged = sum(1 for c in cites if not c.get("verified"))
     evidence = ((st.get("patient_evidence") or []) + (st.get("guideline_evidence") or [])
-                + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or []))
+                + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or [])
+                + (st.get("encounter_evidence") or []))
     timings = {"llm_calls": 0, "llm_main_calls": 0, "llm_fast_calls": 0,
                "deterministic_answer": 0, "deterministic_verified": 0, "llm_verified": 0,
                **current_timings(), "total_ms": t.ms,
@@ -470,3 +510,49 @@ async def ask(req: AskRequest, request: Request):
         models={"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL},
         latency_ms=t.ms, timings=timings,
     )
+
+
+# ---------------------------------------------------------------------------
+# Human review: inspect a paused run, then approve or reject its draft
+# ---------------------------------------------------------------------------
+_THREAD = PathParam(pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+@app.get("/review/{thread_id}")
+async def review_pending(thread_id: str = _THREAD):
+    """The draft and flagged claims of a run paused at human review."""
+    return await asyncio.to_thread(lambda: review.pending(_get_graph(), thread_id))
+
+
+@app.post("/review/{thread_id}")
+async def review_submit(body: ReviewDecision, request: Request, thread_id: str = _THREAD):
+    """Resume the paused run from its checkpoint with the reviewer's decision."""
+    st = await asyncio.to_thread(
+        lambda: review.submit(_get_graph(), thread_id, body.decision, body.reviewer_note))
+    status = "rejected" if st.get("review_status") == "rejected" else "completed"
+    request.state.subject_id = st.get("subject_id")
+    request.state.outcome = status
+    log_event(logger, "review_submitted", thread_id=thread_id, decision=body.decision,
+              status=status, review_status=st.get("review_status"))
+    return {"thread_id": thread_id, "status": status, "decision": body.decision,
+            "review_status": st.get("review_status"), "answer": st.get("final_answer") or "",
+            "needs_human_review": bool(st.get("needs_human_review")),
+            "human_decisions": st.get("human_decisions") or [],
+            "node_trail": st.get("node_trail") or []}
+
+
+# ---------------------------------------------------------------------------
+# Local UI: three static files that call the endpoints above. Served by this
+# app so it inherits the request middleware — on the research plane that is the
+# loopback-only guard — and needs no second process. Mounted last so it can
+# never shadow an API route.
+# ---------------------------------------------------------------------------
+UI_DIR = Path(__file__).parent / "ui"
+
+
+@app.get("/", include_in_schema=False)
+async def ui_root():
+    return RedirectResponse("/ui/")
+
+
+app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")

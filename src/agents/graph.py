@@ -6,8 +6,8 @@ Day 2: real node bodies and conditional routing.
     triage ──> patient_retrieval ──> guideline_retrieval ──> synthesis ──> verification
        │  │           │                       ▲
        │  │           └───────────────────────┘ (skipped unless needed)
-       │  └──> lab_lookup ──> finalize            (structured hit: no LLM at all)
-       │              └──────> patient_retrieval  (miss: normal path)
+       │  └──> lab_lookup / encounter_lookup ──> finalize   (structured hit: no LLM at all)
+       │              └──────> patient_retrieval            (miss: normal path)
        └──> refuse ──> END
 
 Latency shape: triage classifies in code and only calls the FAST model on an
@@ -22,7 +22,9 @@ and must be loaded exactly once per process.
 from __future__ import annotations
 
 import os
+import re
 import json
+import time
 import logging
 from typing import Optional
 
@@ -30,19 +32,22 @@ from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
+import sqlalchemy as sa
 
 from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
 from src.agents import prompts, citations, verify as verify_util
-from src.agents.classify import classify, wants_deterministic_lab
+from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
+                                 wants_deterministic_lab, wants_encounter_lookup)
+from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
-from src.obs.logging import bump
+from src.obs.logging import add_timing, bump
 from src.retrieval.hybrid_retriever_v2 import HybridRetriever, detect_temporal_mode
 from src.retrieval.guideline_retriever import GuidelineRetriever
 from langgraph.types import Command, interrupt
 from src.safety.egress_gate import EgressGate, call_external
-from src.safety import stub_tools
+from src.safety import pubmed
 from src.obs import tracing
 
 logger = logging.getLogger(__name__)
@@ -50,11 +55,12 @@ logger = logging.getLogger(__name__)
 PATIENT_TOP_K = 5      # keep the synthesis prompt inside num_ctx on 16GB
 GUIDELINE_TOP_K = 3
 
-# The structured-lab shortcut answers "what was the most recent <analyte>"
-# straight from labevents. Set LUMEN_DETERMINISTIC_LABS=0 to force every
+# The structured shortcuts answer "most recent / earliest / trend of <analyte>"
+# straight from labevents, and admission counts and dates from admissions. Set LUMEN_DETERMINISTIC_LABS=0 to force every
 # question back through retrieval + synthesis (used for A/B latency runs).
 DETERMINISTIC_LABS = os.environ.get("LUMEN_DETERMINISTIC_LABS", "1").strip() not in ("0", "false", "no")
 LAB_RECENT_POINTS = 4   # values rendered per analyte as citable evidence
+LAB_SERIES_CAP = 100_000  # a trend's first/min/max need the whole series, not the newest 80
 
 _retriever: Optional[HybridRetriever] = None
 _guidelines: Optional[GuidelineRetriever] = None
@@ -125,18 +131,56 @@ def _gate_for(state: AgentState) -> EgressGate:
     gate.load_evidence(state.get("patient_evidence", []) or [])
     gate.load_evidence(state.get("guideline_evidence", []) or [])
     gate.load_evidence(state.get("lab_evidence", []) or [])
+    gate.load_evidence(state.get("encounter_evidence", []) or [])
     return gate
 
 
-def _to_literature_evidence(results: list[dict]) -> list[dict]:
+# The external literature tool, or None when none is enabled — the default.
+# LUMEN_LITERATURE_BACKEND=pubmed turns on src/safety/pubmed.py. The stand-in
+# in src/safety/stub_tools.py exists to exercise the egress gate in its eval
+# and must never be wired in here: its "studies" and ids are invented.
+LITERATURE_TOOL = pubmed.configured_tool()
+LITERATURE_UNAVAILABLE = ("External literature retrieval is not available in this local research build, "
+                          "so no published studies were consulted for this answer.")
+LITERATURE_EMPTY = ("The external literature search returned no usable results for this question, "
+                    "so no published studies were consulted for this answer.")
+
+
+def _is_stub(backend) -> bool:
+    return not backend or str(backend).lower().startswith("stub")
+
+
+def _citable_literature(state: AgentState) -> list[dict]:
+    """Literature evidence that may be cited: only what a real backend returned.
+    A second guard behind literature_retrieval, so an invented result cannot
+    become a valid [P#] label even if one reaches the state some other way."""
+    return [e for e in (state.get("literature_evidence", []) or []) if not _is_stub(e.get("backend"))]
+
+
+def _with_literature_notice(state: AgentState, answer: str) -> str:
+    """Say, in fixed words, that no literature was consulted. Attached to the
+    answer rather than written by the model, and never treated as a claim."""
+    notice = LITERATURE_UNAVAILABLE if LITERATURE_TOOL is None else LITERATURE_EMPTY
+    if not state.get("literature_unavailable") or notice in (answer or ""):
+        return answer
+    return f"{answer}\n\n{notice}".strip()
+
+
+def _to_literature_evidence(tool_output: dict) -> list[dict]:
+    """Tool results as [P#] evidence. A stub backend yields none."""
+    backend = (tool_output or {}).get("source")
+    if _is_stub(backend):
+        return []
     out = []
-    for i, r in enumerate(results, 1):
+    for i, r in enumerate(tool_output.get("results", []), 1):
         out.append({
             "chunk_id": -1,
             "source_type": "literature",
-            "text": f"{r.get('title', '')} ({r.get('pmid') or r.get('nct_id', '')})",
-            "charttime": None,
-            "note_type": "literature",
+            "backend": backend,
+            "text": (f"{r.get('title', '')} {r.get('journal', '')} {r.get('year', '')}. "
+                     f"PMID {r.get('pmid', '')}.\n{r.get('abstract', '')}").strip(),
+            "charttime": r.get("year") or None,
+            "note_type": f"PubMed PMID {r.get('pmid', '')}",
             "score": 0.0,
             "label": f"P{i}",
         })
@@ -185,63 +229,200 @@ def triage(state: AgentState) -> dict:
 
 
 def lab_lookup(state: AgentState) -> dict:
-    """Answer a latest-value lab question straight from `labevents`.
+    """Answer a latest / earliest / trend lab question straight from `labevents`.
 
-    This is not a shortcut around grounding: the value, its unit and its date
-    are read from the structured table the notes are generated from, rendered
-    as citable [L#] evidence, and the claim is marked verified because the
-    number in the answer IS the number in the row. It is a shortcut around
-    asking a language model to re-read a number a query can select.
+    This is not a shortcut around grounding: the values, units and dates are
+    read from the structured table the notes are generated from, rendered as
+    citable [L#] evidence, and the claims are marked verified because the
+    numbers in the answer ARE the numbers in the rows. It is a shortcut around
+    asking a language model to re-read numbers a query can select — and, for a
+    trend, around guessing a series from the five note chunks retrieval kept.
 
-    A miss — no matching analyte, no rows for this patient, or a question that
-    does not resolve to exactly one analyte — returns nothing, and the router
-    sends the question down the normal retrieval path with nothing lost.
+    A miss — no matching analyte, no rows for this patient, a question that
+    does not resolve to exactly one analyte or carries words beyond it, a
+    non-numeric or conflicting result at the end of the series the question
+    asks about, mixed units in a trend, or a series drawn from more than one
+    specimen — answers nothing, and the router sends the question down the
+    normal retrieval path. `structured_rows` records that rows existed, so
+    verification will not auto-approve an "insufficient information" answer.
     """
     query, sid = state["query"], state.get("subject_id")
+    mode = lab_mode(query, state.get("temporal_mode") or detect_temporal_mode(query))
+    if mode not in _MODE_FILLER:
+        mode = "latest"
     try:
         resolver = get_lab_resolver()
         itemids, matched = resolver.match(query)
-        series = resolver.fetch(sid, itemids) if itemids else []
+        series = resolver.fetch(sid, itemids, per_lab_cap=LAB_SERIES_CAP) if itemids else []
     except Exception as e:
         logger.warning(f"[lab_lookup] structured lookup failed ({e}); falling back to retrieval")
         return {"node_trail": _trail(state, "lab_lookup")}
 
     series = [g for g in series if g.get("values")]
-    series = _disambiguate(series, query, resolver.labels)
+    miss = {"structured_rows": sum(len(g["values"]) for g in series),
+            "node_trail": _trail(state, "lab_lookup")}
+    series = _disambiguate(series, query, resolver.labels, matched, resolver.labels_for(itemids),
+                           filler=_QUESTION_FILLER | _MODE_FILLER[mode])
+    if any(_endpoint_unclear(g, mode) for g in series):
+        logger.info(f"[lab_lookup] no single {mode} numeric result — using retrieval")
+        return miss
     if len(series) != 1:
         logger.info(f"[lab_lookup] {len(series)} analyte(s) for {matched or 'no match'} — using retrieval")
-        return {"node_trail": _trail(state, "lab_lookup")}
+        return miss
 
-    ev, claims = [], []
-    for i, grp in enumerate(series, 1):
-        label = f"L{i}"
-        recent = grp["values"][-LAB_RECENT_POINTS:]
-        uom = _uom(grp["uom"])
-        latest = recent[-1]
-        history = "; ".join(f"{v['date']} {_num(v['valuenum'])}{uom}" for v in recent)
-        ev.append({
-            "chunk_id": -1, "source_type": "lab", "note_type": "lab",
-            "charttime": latest["charttime"], "score": 1.0, "label": label,
-            "text": (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
-                     f"{history}. Source: labevents table, subject {sid}."),
-        })
-        claims.append({
-            "claim": (f"The most recent {grp['label'].lower()} was {_num(latest['valuenum'])}{uom} "
-                      f"on {latest['date']} [{label}]."),
-            "label": label, "chunk_id": -1, "verified": True,
-            "verification_note": "deterministic: value read directly from labevents",
-        })
+    grp, label = series[0], "L1"
+    vals, name = grp["values"], grp["label"].lower()
+
+    def point(v: dict) -> str:
+        return f"{_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])} on {v['date']}"
+
+    def history(points: list[dict]) -> str:
+        return "; ".join(f"{v['date']} {_num(v['valuenum'])}{_uom(v.get('uom') or grp['uom'])}"
+                         for v in points)
+
+    source = f"Source: labevents table, subject {sid}."
+    if mode == "latest":
+        anchor = vals[-1]
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
+                f"{history(vals[-LAB_RECENT_POINTS:])}. {source}")
+        sentences = [f"The most recent {name} was {point(anchor)}"]
+    elif mode == "earliest":
+        anchor = vals[0]
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), earliest shown first: "
+                f"{history(vals[:LAB_RECENT_POINTS])}. {source}")
+        sentences = [f"The earliest {name} was {point(anchor)}"]
+    else:
+        anchor = vals[-1]
+        low, high = min(vals, key=lambda v: v["valuenum"]), max(vals, key=lambda v: v["valuenum"])
+        skipped = grp.get("n_non_numeric") or 0
+        text = (f"{grp['label']} — {len(vals)} numeric value(s) in time order, {vals[0]['date']} to "
+                f"{anchor['date']}. First: {point(vals[0])}. Most recent: {point(anchor)}. "
+                f"Lowest: {point(low)}. Highest: {point(high)}. "
+                f"Last {min(len(vals), LAB_RECENT_POINTS)} value(s): {history(vals[-LAB_RECENT_POINTS:])}. "
+                f"{source}")
+        if len(vals) == 1:
+            sentences = [f"Only one {name} value is recorded ({point(anchor)}), so no trend can be described"]
+        else:
+            sentences = [
+                f"{grp['label']} was measured {len(vals)} times between {vals[0]['date']} and {anchor['date']}"
+                + (f" ({skipped} non-numeric result(s) are not included)" if skipped else ""),
+                f"The first value was {point(vals[0])} and the most recent was {point(anchor)}",
+                f"The lowest value was {point(low)} and the highest was {point(high)}",
+                f"Overall, the values {_direction([v['valuenum'] for v in vals])}",
+            ]
+
+    ev = [{"chunk_id": -1, "source_type": "lab", "note_type": "lab",
+           "charttime": anchor["charttime"], "score": 1.0, "label": label, "text": text}]
+    claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
+               "verification_note": "deterministic: value read directly from labevents"}
+              for sentence in sentences]
 
     answer = " ".join(c["claim"] for c in claims)
     bump("deterministic_answer")
     bump("deterministic_verified", len(claims))
-    logger.info(f"[lab_lookup] answered deterministically from {len(series)} analyte(s), 0 LLM calls")
+    logger.info(f"[lab_lookup] answered {mode} deterministically, 0 LLM calls")
     return {
         "lab_evidence": ev, "draft_answer": answer, "final_answer": answer, "citations": claims,
         "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
                          "deterministic": len(claims), "llm_checked": 0},
-        "needs_human_review": False, "review_status": "auto_approved",
+        "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
         "node_trail": _trail(state, "lab_lookup"),
+    }
+
+
+def _endpoint_unclear(g: dict, mode: str) -> bool:
+    """Is the end of the series this question asks about not one plain number?"""
+    first = g.get("older_non_numeric") or g.get("conflicting_earliest")
+    last = g.get("newer_non_numeric") or g.get("conflicting_latest")
+    return bool(len(g.get("fluids") or ()) > 1
+                or len(g["values"]) < g.get("n_total", 0)          # capped: not the whole series
+                or (mode != "earliest" and last) or (mode != "latest" and first)
+                or (mode == "trend" and len({v.get("uom") for v in g["values"] if v.get("uom")}) > 1))
+
+
+def _direction(nums: list) -> str:
+    """Name a direction only when every consecutive step agrees with it. A
+    series that went up and came back down "fluctuated", whatever its ends say."""
+    steps = [b - a for a, b in zip(nums, nums[1:])]
+    if all(s == 0 for s in steps):
+        return "were unchanged across all measurements"
+    if all(s >= 0 for s in steps):
+        return "rose, with no decrease between consecutive measurements"
+    if all(s <= 0 for s in steps):
+        return "fell, with no increase between consecutive measurements"
+    end = ("higher than" if nums[-1] > nums[0] else "lower than" if nums[-1] < nums[0] else "the same as")
+    return (f"fluctuated, with both rises and falls between measurements; "
+            f"the most recent value is {end} the first")
+
+
+def _admissions(subject_id) -> list[tuple]:
+    """Every admission for one patient as (admittime, dischtime), oldest first."""
+    with engine.connect() as c:
+        return [tuple(r) for r in c.execute(sa.text(
+            "SELECT admittime, dischtime FROM admissions "
+            "WHERE subject_id = :sid ORDER BY admittime, hadm_id"), {"sid": subject_id})]
+
+
+def encounter_lookup(state: AgentState) -> dict:
+    """Answer "how many admissions / when was the first / most recent one" from
+    the `admissions` table. Retrieval sees five note chunks; the count of a
+    patient's admissions is a row count, and no number of chunks contains it.
+
+    Answers only a question every word of which it understands
+    (classify.encounter_intents). Anything else — an extra clause, no rows, an
+    admission with no admit time — falls through to retrieval.
+    `structured_rows` is set only when the table had rows AND some clause of
+    the question asked exactly what it answers; a refusal about an unrelated
+    question that merely mentions admissions is left alone.
+    """
+    sid = state.get("subject_id")
+    intents, understood = encounter_intents(state["query"])
+    try:
+        rows = _admissions(sid)
+    except Exception as e:
+        logger.warning(f"[encounter_lookup] structured lookup failed ({e}); falling back to retrieval")
+        return {"node_trail": _trail(state, "encounter_lookup")}
+    if not rows or not understood or any(admit is None for admit, _ in rows):
+        logger.info(f"[encounter_lookup] {len(rows)} row(s), understood={understood} — using retrieval")
+        declined = understood or structured_admission_clause(state["query"])
+        return {"structured_rows": len(rows) if declined else 0,
+                "node_trail": _trail(state, "encounter_lookup")}
+
+    def day(t) -> str:
+        return str(t)[:10]
+
+    def stay(which: str, row: tuple) -> str:
+        admit, disch = row
+        return (f"The {which} admission began on {day(admit)}; that stay's discharge date was "
+                f"{day(disch) if disch else 'not recorded'}")
+
+    n, label = len(rows), "A1"
+    sentences = []
+    if "count" in intents:
+        sentences.append(f"The patient has {n} recorded hospital admission{'' if n == 1 else 's'}")
+    if "earliest" in intents:
+        sentences.append(stay("earliest", rows[0]))
+    if "latest" in intents:
+        sentences.append(stay("most recent", rows[-1]))
+
+    ev = [{"chunk_id": -1, "source_type": "admissions", "note_type": "admissions",
+           "charttime": str(rows[-1][0]), "score": 1.0, "label": label,
+           "text": (f"{n} admission(s), admitted -> discharged, oldest first: "
+                    + "; ".join(f"{day(a)} -> {day(d) if d else 'not recorded'}" for a, d in rows)
+                    + f". Source: admissions table, subject {sid}.")}]
+    claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
+               "verification_note": "deterministic: read directly from the admissions table"}
+              for sentence in sentences]
+    answer = " ".join(c["claim"] for c in claims)
+    bump("deterministic_answer")
+    bump("deterministic_verified", len(claims))
+    logger.info(f"[encounter_lookup] answered {sorted(intents)} deterministically, 0 LLM calls")
+    return {
+        "encounter_evidence": ev, "draft_answer": answer, "final_answer": answer, "citations": claims,
+        "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
+                         "deterministic": len(claims), "llm_checked": 0},
+        "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
+        "node_trail": _trail(state, "encounter_lookup"),
     }
 
 
@@ -262,44 +443,94 @@ def _uom(unit: str) -> str:
     return unit if unit == "%" else f" {unit}"
 
 
-def _disambiguate(series: list[dict], query: str, known_labels: list[str]) -> list[dict]:
-    """Narrow a resolver match down to the ONE analyte the question asked about.
+# Words a plain "latest <analyte>" question may contain besides the analyte.
+# Anything else ("urine", "clearance", "ionized", "and", "supplements") means
+# the question asks something narrower or different, and the verified shortcut
+# must not answer it. Unknown words fail toward retrieval, never toward a value.
+_QUESTION_FILLER = frozenset("""
+    what what's whats was were is are the a an his her their this that patient patient's patients s
+    most recent recently latest last current currently newest value values level levels result results
+    reading readings lab labs measured recorded documented measurement for of on in at me tell show give
+    blood serum plasma
+""".split())
+
+# What each kind of question may say on top of that. Keyed by temporal mode, so
+# a word that asks for something else ("latest creatinine trend") is not filler.
+_MODE_FILLER = {
+    "latest": frozenset(),
+    "earliest": frozenset("earliest oldest first initial known".split()),
+    "trend": frozenset("""
+        how did does has have been change changed changes changing over time trend trends trending
+        trended available record records course whole entire
+        increase increased increasing decrease decreased decreasing or
+    """.split()),
+}
+
+
+def _disambiguate(series: list[dict], query: str, known_labels: list[str],
+                  concepts=(), resolved_labels=None, filler=_QUESTION_FILLER) -> list[dict]:
+    """Narrow a resolver match down to the ONE analyte the question asked about,
+    or to nothing when the question is not a plain request for one analyte.
 
     LabResolver.match is a substring matcher built for retrieval, where pulling
     in a neighbouring analyte only adds harmless context. As an *answer* path
-    that over-match is wrong in two different ways:
+    — one whose result is marked verified with no model in the loop — an
+    over-match is a wrong answer. So the shortcut answers only a question it
+    fully accounts for:
 
-      "most recent hemoglobin A1c"  -> resolves to Hemoglobin AND Hemoglobin A1c;
-                                       answering with plain hemoglobin answers a
-                                       question nobody asked.
-      same question, patient has no A1c at all
-                                    -> resolves to Hemoglobin alone, and a
-                                       confident "hemoglobin was 13.1 g/dL"
-                                       replaces the correct answer, which is that
-                                       no A1c is documented.
+      every word is filler, a time word, or part of the analyte it named or a
+      synonym the resolver matched ("blood sugar", "bun"). "urine creatinine",
+      "creatinine clearance", "creatinine and BUN", "potassium supplements"
+      all leave a word over and go to retrieval.
 
-    The second case is why a single result is not automatically safe. So: work
-    out which known analyte names the question actually contains, let the most
-    specific one win (A1c beats hemoglobin), and if this patient has no rows for
-    the analyte that was named, return nothing — retrieval and synthesis will
-    say it is not documented. Only the deterministic path is narrowed here; the
-    resolver and retrieval are untouched.
+      every synonym the resolver matched must be in the answer: "INR, PTT"
+      and "BUN/creatinine" ask for two analytes and get none, not one.
+
+      a question that names no label is ambiguous when its synonym resolves
+      to several dictionary analytes ("cholesterol": total, HDL, LDL), even if
+      this patient only has rows for one of them.
+
+      a dictionary label counts as named when all its words appear in the
+      question, in any order ("urine creatinine" names "Creatinine, Urine").
+      Labels made only of filler words (MIMIC's urine dipstick "Blood") name
+      nothing.
+      The most specific named label wins (A1c beats hemoglobin), and if this
+      patient has no rows for it, return nothing — retrieval and synthesis
+      will say it is not documented. A label of one or two letters ("H", "I",
+      "CR") names nothing unless the question contains it as a word.
     """
-    q = (query or "").lower()
-    named = {lab.lower() for lab in known_labels if lab and lab.lower() in q}
-    named = {l for l in named if not any(o != l and l in o for o in named)}
+    # drop the possessive first: "the patient's hemoglobin" must not name "Hemoglobin S"
+    q = label_tokens(re.sub(r"['\u2019]s\b", "", query))
+    keys = {label_tokens(label) for label in known_labels}
+    named = {k for k in keys if k and k <= q and not k <= filler}
+    named = {k for k in named if not any(o > k for o in named)}
+    concepts = list(concepts or ())
+    explained = set(filler).union(*named, *(label_tokens(c) for c in concepts))
+    if not q <= explained:
+        return []                      # a word the shortcut does not understand
     if not named:
-        # The question used a synonym ("blood sugar"), not a label. Trust the
-        # resolver only when it came back with exactly one analyte.
-        return series if len(series) == 1 else []
-    have = {g["label"].lower() for g in series}
-    if not named <= have:
-        return []                      # asked for something this patient has no rows for
-    return [g for g in series if g["label"].lower() in named]
+        # The question used a synonym ("blood sugar"), not a label. Trust it
+        # only when it resolves to exactly one analyte in the dictionary.
+        if resolved_labels is not None and len({label_tokens(l) for l in resolved_labels}) != 1:
+            return []
+        chosen = series if len(series) == 1 else []
+    else:
+        have = {label_tokens(g["label"]) for g in series}
+        if not named <= have:
+            return []                  # asked for something this patient has no rows for
+        chosen = [g for g in series if label_tokens(g["label"]) in named]
+    for concept in concepts:           # every analyte asked for must be in the answer
+        words = SYNONYMS.get(concept)
+        if not all(any(kw in g["label"].lower() for kw in words) if words
+                   else label_tokens(concept) <= label_tokens(g["label"]) for g in chosen):
+            return []
+    return chosen
 
 
 def patient_retrieval(state: AgentState) -> dict:
+    t0 = time.perf_counter()
     retriever, _ = get_retrievers()
+    add_timing("retriever_load_ms", (time.perf_counter() - t0) * 1000)   # ~0 once loaded
     with tracing.span("patient_retrieval", subject_id=state.get("subject_id"),
                       query=state["query"]) as s:
         results = retriever.search(
@@ -308,6 +539,14 @@ def patient_retrieval(state: AgentState) -> dict:
             temporal_filter=state.get("temporal_mode") or "auto",
             top_k=PATIENT_TOP_K,
         )
+        # The retriever chooses evidence by relevance plus a preference for the
+        # newest (or oldest) date. The chosen few are then shown in time order,
+        # so S1 is the newest record of a "latest" question (oldest for "earliest").
+        mode = state.get("temporal_mode") or detect_temporal_mode(state["query"])
+        if mode in ("latest", "earliest"):
+            dated = sorted((r for r in results if r.charttime), key=lambda r: str(r.charttime),
+                           reverse=(mode == "latest"))
+            results = dated + [r for r in results if not r.charttime]
         ev = _to_evidence(results, "S", "note")
         if s is not None:
             s.update(output={"n": len(ev), "chunk_ids": [e["chunk_id"] for e in ev],
@@ -334,6 +573,16 @@ def literature_retrieval(state: AgentState) -> dict:
     concept query generated from it, then gate-checked. If the gate blocks,
     we retry once under a stricter instruction rather than failing the run.
     """
+    if LITERATURE_TOOL is None:
+        # Nothing to query, so nothing is sent anywhere and no model call is
+        # spent on a search string. The answer says so only when literature is
+        # what the question asked for; as a fallback for an empty guideline
+        # search there is nothing to announce.
+        logger.info("[literature_retrieval] no literature backend in this build — skipped")
+        return {"literature_evidence": [],
+                "literature_unavailable": state.get("query_type") == "literature",
+                "node_trail": _trail(state, "literature_retrieval")}
+
     gate = _gate_for(state)
     query = state["query"]
     egress = list(state.get("egress_log", []) or [])
@@ -351,14 +600,21 @@ def literature_retrieval(state: AgentState) -> dict:
             logger.warning(f"concept extraction failed: {e}")
             return ""
 
-    results, attempts = [], []
+    tool_output, attempts = {}, []
     for strict in (False, True):
         cq = concept(strict)
         if not cq:
             continue
         attempts.append(cq)
-        out = call_external(gate, "search_literature",
-                            {"query": cq}, stub_tools.search_literature)
+        try:
+            out = call_external(gate, "search_literature",
+                                {"query": cq}, LITERATURE_TOOL)
+        except Exception as e:
+            # Offline, timed out, or an unreadable reply: no literature, and the
+            # answer says so. The approved query is not retried or logged.
+            logger.warning(f"[literature_retrieval] backend failed ({type(e).__name__}); continuing without it")
+            egress.append(gate.log[-1])
+            break
         egress.append(gate.log[-1])
         rec = gate.log[-1]
         # Hash and rule only. The gate's no-retention rule holds inside the
@@ -371,26 +627,29 @@ def literature_retrieval(state: AgentState) -> dict:
             logger.warning(f"[literature_retrieval] egress blocked ({out['rule']}); "
                            f"{'giving up' if strict else 'retrying stricter'}")
             continue
-        results = out.get("results", [])
+        tool_output = out
         break
 
-    ev = _to_literature_evidence(results)
+    ev = _to_literature_evidence(tool_output)
     logger.info(f"[literature_retrieval] {len(ev)} results; "
                 f"{sum(1 for r in egress if not r['allowed'])} blocked so far")
     return {"literature_evidence": ev, "egress_log": egress,
+            "literature_unavailable": not ev and state.get("query_type") == "literature",
             "node_trail": _trail(state, "literature_retrieval")}
 
 
 def synthesis(state: AgentState) -> dict:
     pt = state.get("patient_evidence", []) or []
     gl = state.get("guideline_evidence", []) or []
-    lit = state.get("literature_evidence", []) or []
+    lit = _citable_literature(state)
 
     if not pt and not gl and not lit:
-        return {"draft_answer": "The available records do not contain enough information to answer this.",
+        return {"draft_answer": _with_literature_notice(
+                    state, "The available records do not contain enough information to answer this."),
                 "citations": [], "node_trail": _trail(state, "synthesis")}
 
-    user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit)
+    user = prompts.build_synthesis_prompt(state["query"], pt, gl, lit,
+                                          literature_unavailable=bool(state.get("literature_unavailable")))
     # MAIN earns its cost on longitudinal reasoning, comparisons and anything
     # weighing general recommendations against this patient. A single-fact
     # lookup over a handful of chunks does not need it. Presence of guideline
@@ -438,7 +697,7 @@ def synthesis(state: AgentState) -> dict:
 
     logger.info(f"[synthesis] role={role} {report['n_claims']} claims, "
                 f"cite_rate={report['cite_rate']:.0%}, bad={report['bad_labels']}")
-    return {"draft_answer": answer, "citations": cites,
+    return {"draft_answer": _with_literature_notice(state, answer), "citations": cites,
             "verification": {"citation_report": {k: v for k, v in report.items() if k != "claims"},
                              "synthesis_role": role},
             "node_trail": _trail(state, "synthesis")}
@@ -461,8 +720,9 @@ def verification(state: AgentState) -> dict:
     """
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
-                                  (state.get("literature_evidence", []) or []) +
-                                  (state.get("lab_evidence", []) or [])}
+                                  _citable_literature(state) +
+                                  (state.get("lab_evidence", []) or []) +
+                                  (state.get("encounter_evidence", []) or [])}
     cites = state.get("citations", []) or []
     out: list[dict] = [dict(c) for c in cites]
     unsupported = 0
@@ -485,9 +745,28 @@ def verification(state: AgentState) -> dict:
     # so the two routes disagreed about identical output.
     draft_now = (state.get("draft_answer") or "").strip()
     refusal = bool(draft_now) and citations.validate(draft_now, list(ev.values()))["is_refusal"]
-    pure_refusal = refusal and not any(_labels_of(c) for c in out)
+    # "Pure" means every claim IS the decline. It used to mean "contains the
+    # decline and cites nothing", which approved any uncited sentence the model
+    # wrote next to it — a patient-specific statement finalized with no check.
+    # Such an answer now takes the normal pass below, where an uncited claim is
+    # unsupported and goes to a reviewer.
+    pure_refusal = refusal and all(citations.is_refusal_claim(c.get("claim")) for c in out)
+    # ...unless a structured lookup found rows for this very question and only
+    # declined to phrase the answer. Then "the records do not contain enough
+    # information" is a statement about five note chunks, not about the record,
+    # and a clinician has to see it.
+    contradicted = pure_refusal and bool(state.get("structured_rows"))
 
-    if pure_refusal:
+    if contradicted:
+        note = (f"declined, but a structured lookup found {state['structured_rows']} row(s) "
+                "for this question")
+        out = out or [{"claim": draft_now, "label": "", "chunk_id": -1}]
+        for i, c in enumerate(out):
+            out[i] = {**c, "verified": False, "verification_note": note}
+            trace.append({"i": i, "labels": [], "stage": "refusal", "verdict": "unsupported",
+                          "reason": note, "final": "unsupported"})
+        unsupported, deterministic, checked, pure_refusal = len(out), 0, 0, False
+    elif pure_refusal:
         for i, c in enumerate(out):
             out[i] = {**c, "verified": True,
                       "verification_note": "declined: evidence does not answer the question"}
@@ -513,6 +792,12 @@ def verification(state: AgentState) -> dict:
                 out[i] = {**c, "verified": True, "verification_note": note}
                 trace.append({"i": i, "labels": labels, "stage": "deterministic",
                               "verdict": "supported", "reason": note, "final": "supported"})
+            elif verdict == "unsupported":
+                # The claim contradicts itself; no source can support it.
+                out[i] = {**c, "verified": False, "verification_note": note}
+                unsupported += 1
+                trace.append({"i": i, "labels": labels, "stage": "deterministic",
+                              "verdict": "unsupported", "reason": note, "final": "unsupported"})
             else:
                 pending.append({"i": i, "claim": c["claim"], "labels": labels,
                                 "sources": [ev[l]["text"] for l in labels],
@@ -588,6 +873,10 @@ def verification(state: AgentState) -> dict:
         "node_trail": _trail(state, "verification"),
     }
 
+REJECTED_ANSWER = ("A clinician reviewed the draft answer to this question and rejected it. "
+                   "No answer is released.")
+
+
 def human_review(state: AgentState) -> dict:
     """
     Pause for clinician adjudication of unsupported claims.
@@ -612,7 +901,8 @@ def human_review(state: AgentState) -> dict:
     ev = {e["label"]: e for e in (state.get("patient_evidence", []) or []) +
                                   (state.get("guideline_evidence", []) or []) +
                                   (state.get("literature_evidence", []) or []) +
-                                  (state.get("lab_evidence", []) or [])}
+                                  (state.get("lab_evidence", []) or []) +
+                                  (state.get("encounter_evidence", []) or [])}
 
     payload = {
         "query": state.get("query", ""),
@@ -637,6 +927,21 @@ def human_review(state: AgentState) -> dict:
 
     updated = [dict(c) for c in cites]
     struck, escalated, recorded = set(), False, []
+
+    # A reviewer who rejects the draft rejects all of it: nothing the model
+    # wrote is released, whatever was said about the individual claims.
+    if any((d or {}).get("action") == "reject" for d in decisions):
+        note = next(((d or {}).get("note", "") for d in decisions if (d or {}).get("action") == "reject"), "")
+        for idx, _ in flagged:
+            updated[idx]["verification_note"] = f"rejected by reviewer: {note}" if note else "rejected by reviewer"
+        logger.info("[human_review] draft rejected by reviewer")
+        return {
+            "citations": updated,
+            "human_decisions": list(state.get("human_decisions", []))
+                               + [{"index": idx, "action": "reject", "note": note} for idx, _ in flagged],
+            "final_answer": REJECTED_ANSWER, "review_status": "rejected", "needs_human_review": False,
+            "node_trail": _trail(state, "human_review"),
+        }
 
     for (idx, _), d in zip(flagged, decisions):
         action = (d or {}).get("action", "escalate")
@@ -668,11 +973,16 @@ def human_review(state: AgentState) -> dict:
 
 
 def finalize(state: AgentState) -> dict:
-    """Set final_answer when no review was needed."""
-    if state.get("final_answer"):
+    """Set final_answer when no review was needed. After a human decision the
+    reviewer's result stands even when it is empty: a draft whose every claim
+    was struck must not be released because "" looks like "not set"."""
+    decided = state.get("final_answer") or state.get("review_status") in ("reviewed", "escalated", "rejected")
+    answer = (state.get("final_answer") or "") if decided else state.get("draft_answer", "")
+    if state.get("review_status") != "rejected":       # a rejected draft releases nothing at all
+        answer = _with_literature_notice(state, answer)
+    if decided and answer == (state.get("final_answer") or ""):
         return {"node_trail": _trail(state, "finalize")}
-    return {"final_answer": state.get("draft_answer", ""),
-            "node_trail": _trail(state, "finalize")}
+    return {"final_answer": answer, "node_trail": _trail(state, "finalize")}
 
 
 def refuse(state: AgentState) -> dict:
@@ -692,8 +1002,12 @@ def route_from_triage(state: AgentState) -> str:
         return "refuse"
     if qt in ("guideline_check", "literature"):
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
+    if DETERMINISTIC_LABS and wants_encounter_lookup(
+            _decision_of(state), state.get("query") or "", state.get("subject_id")):
+        return "encounter_lookup"
     if DETERMINISTIC_LABS and wants_deterministic_lab(
-            _decision_of(state), state.get("temporal_mode") or "all", state.get("subject_id")):
+            _decision_of(state), lab_mode(state.get("query") or "", state.get("temporal_mode") or "all"),
+            state.get("subject_id")):
         return "lab_lookup"
     return "patient_retrieval"
 
@@ -714,6 +1028,10 @@ def route_after_lab_lookup(state: AgentState) -> str:
     return "finalize" if state.get("lab_evidence") else "patient_retrieval"
 
 
+def route_after_encounter_lookup(state: AgentState) -> str:
+    return "finalize" if state.get("encounter_evidence") else "patient_retrieval"
+
+
 def route_after_patient(state: AgentState) -> str:
     # Only fetch guidelines when the question is actually asking what
     # should be done. A plain chart lookup does not need them.
@@ -728,6 +1046,51 @@ def route_after_guidelines(state: AgentState) -> str:
     if state.get("query_type") == "literature" or not state.get("guideline_evidence"):
         return "literature_retrieval"
     return "synthesis"
+
+def _builder() -> StateGraph:
+    """The graph's nodes and edges, uncompiled, so a test can compile it
+    against an in-memory checkpointer and exercise interrupt/resume for real."""
+    b = StateGraph(AgentState)
+    b.add_node("triage", triage)
+    b.add_node("patient_retrieval", patient_retrieval)
+    b.add_node("guideline_retrieval", guideline_retrieval)
+    b.add_node("synthesis", synthesis)
+    b.add_node("verification", verification)
+    b.add_node("refuse", refuse)
+    b.add_node("literature_retrieval", literature_retrieval)
+    b.add_node("lab_lookup", lab_lookup)
+    b.add_node("encounter_lookup", encounter_lookup)
+
+    b.add_edge(START, "triage")
+    b.add_conditional_edges("triage", route_from_triage,
+                            ["patient_retrieval", "guideline_retrieval", "lab_lookup",
+                             "encounter_lookup", "refuse"])
+    b.add_conditional_edges("encounter_lookup", route_after_encounter_lookup,
+                            ["finalize", "patient_retrieval"])
+    b.add_conditional_edges("lab_lookup", route_after_lab_lookup,
+                            ["finalize", "patient_retrieval"])
+    b.add_conditional_edges("patient_retrieval", route_after_patient,
+                            ["guideline_retrieval", "synthesis"])
+    b.add_conditional_edges("guideline_retrieval", route_after_guidelines,
+                            ["literature_retrieval", "synthesis"])
+    b.add_edge("literature_retrieval", "synthesis")
+    b.add_edge("synthesis", "verification")
+    b.add_node("human_review", human_review)
+    b.add_node("finalize", finalize)
+    # verification routes ONLY through the conditional edge. A static
+    # `add_edge("verification", END)` used to sit alongside this, left over from
+    # the pre-human-review topology, which made verification fan out to END and
+    # to the branch at the same time — parallelism this state schema has no
+    # reducers to survive.
+    b.add_conditional_edges("verification", route_after_verification,
+                            ["human_review", "finalize"])
+    b.add_edge("human_review", "finalize")
+    # refuse had no outgoing edge at all: it terminated implicitly and never set
+    # final_answer, so callers reading state["final_answer"] got "" on refusal.
+    b.add_edge("refuse", "finalize")
+    b.add_edge("finalize", END)
+    return b
+
 
 def build_graph(setup: bool = False, validate_checkpoints: bool = True):
     """Compile the canonical graph without implicit schema mutation.
@@ -755,43 +1118,7 @@ def build_graph(setup: bool = False, validate_checkpoints: bool = True):
     if setup or auto_setup:
         checkpointer.setup()
 
-    b = StateGraph(AgentState)
-    b.add_node("triage", triage)
-    b.add_node("patient_retrieval", patient_retrieval)
-    b.add_node("guideline_retrieval", guideline_retrieval)
-    b.add_node("synthesis", synthesis)
-    b.add_node("verification", verification)
-    b.add_node("refuse", refuse)
-    b.add_node("literature_retrieval", literature_retrieval)
-    b.add_node("lab_lookup", lab_lookup)
-
-    b.add_edge(START, "triage")
-    b.add_conditional_edges("triage", route_from_triage,
-                            ["patient_retrieval", "guideline_retrieval", "lab_lookup", "refuse"])
-    b.add_conditional_edges("lab_lookup", route_after_lab_lookup,
-                            ["finalize", "patient_retrieval"])
-    b.add_conditional_edges("patient_retrieval", route_after_patient,
-                            ["guideline_retrieval", "synthesis"])
-    b.add_conditional_edges("guideline_retrieval", route_after_guidelines,
-                            ["literature_retrieval", "synthesis"])
-    b.add_edge("literature_retrieval", "synthesis")
-    b.add_edge("synthesis", "verification")
-    b.add_node("human_review", human_review)
-    b.add_node("finalize", finalize)
-    # verification routes ONLY through the conditional edge. A static
-    # `add_edge("verification", END)` used to sit alongside this, left over from
-    # the pre-human-review topology, which made verification fan out to END and
-    # to the branch at the same time — parallelism this state schema has no
-    # reducers to survive.
-    b.add_conditional_edges("verification", route_after_verification,
-                            ["human_review", "finalize"])
-    b.add_edge("human_review", "finalize")
-    # refuse had no outgoing edge at all: it terminated implicitly and never set
-    # final_answer, so callers reading state["final_answer"] got "" on refusal.
-    b.add_edge("refuse", "finalize")
-    b.add_edge("finalize", END)
-
-    return b.compile(checkpointer=checkpointer), checkpointer
+    return _builder().compile(checkpointer=checkpointer), checkpointer
 
 import atexit
 

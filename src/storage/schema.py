@@ -25,7 +25,7 @@ from src.config import PGVECTOR_VERSION
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 D_LABITEMS_SQL = """
 CREATE TABLE IF NOT EXISTS d_labitems (
@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS note_index_state (
     error_message   TEXT
 );
 """
+
+# Section names used by lexical ranking only (src/retrieval/section_labels.py).
+# A side table, not a column: updating note_chunks rows rewrites their HNSW and
+# GIN index entries, which made labelling 325k chunks an 80-minute job.
+CHUNK_SEARCH_LABELS_SQL = """CREATE TABLE IF NOT EXISTS chunk_search_labels (
+    chunk_id        INTEGER PRIMARY KEY REFERENCES note_chunks(chunk_id) ON DELETE CASCADE,
+    labels          TEXT NOT NULL
+)"""
+
 
 SCHEMA_SQL = f"""
 -- ============================================================
@@ -294,6 +303,7 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
     2: tuple(s.strip() for s in D_LABITEMS_SQL.split(";") if s.strip()),
     3: (f"ALTER EXTENSION vector UPDATE TO '{PGVECTOR_VERSION}'",),
     4: tuple(s.strip() for s in RELIABILITY_SQL.split(";") if s.strip()),
+    5: (CHUNK_SEARCH_LABELS_SQL,),
 }
 
 

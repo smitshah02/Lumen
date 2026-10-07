@@ -90,7 +90,7 @@ def check_database(checks: list[Check]) -> None:
         from sqlalchemy import text
         from src import storage
         from src.storage.schema import SCHEMA_VERSION
-        from src.retrieval.index_provenance import configuration_hash
+        from src.retrieval.index_provenance import configuration_hash, legacy_adopted_hashes
         with storage.engine.connect() as conn:
             database = conn.execute(text("SELECT current_database()" )).scalar()
             expected_database = (storage.DEMO_DB_NAME if storage.DATA_PLANE == "demo"
@@ -120,7 +120,7 @@ def check_database(checks: list[Check]) -> None:
             for table in ("clinical_notes", "note_chunks", "labevents", "d_labitems"):
                 counts[table] = (conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
                                  if table in tables else None)
-            eligible_notes = indexed_notes = None
+            eligible_notes = indexed_notes = index_provenance = None
             ingestion_status = None
             if not missing_tables:
                 eligible_notes = conn.execute(text("""
@@ -128,13 +128,18 @@ def check_database(checks: list[Check]) -> None:
                     WHERE COALESCE(text_deid, text_original) IS NOT NULL
                       AND COALESCE(text_deid, text_original) != ''
                 """)).scalar()
+                legacy = legacy_adopted_hashes(conn)
                 indexed_notes = conn.execute(text("""
                     SELECT COUNT(*) FROM note_index_state nis
-                    WHERE nis.status='completed' AND nis.config_hash=:config_hash
+                    WHERE nis.status='completed' AND nis.config_hash = ANY(:config_hashes)
                       AND nis.chunk_count=(
                           SELECT COUNT(*) FROM note_chunks nc WHERE nc.note_id=nis.note_id
                       )
-                """), {"config_hash": configuration_hash()}).scalar()
+                """), {"config_hashes": [configuration_hash(), *legacy]}).scalar()
+                index_provenance = "legacy_adopted" if legacy and conn.execute(text("""
+                    SELECT EXISTS (SELECT 1 FROM note_index_state
+                                   WHERE status='completed' AND config_hash = ANY(:legacy))
+                """), {"legacy": legacy}).scalar() else "current"
                 if storage.DATA_PLANE == "research":
                     ingestion_status = conn.execute(text("""
                         SELECT status FROM ingestion_runs ORDER BY started_at DESC LIMIT 1
@@ -153,8 +158,10 @@ def check_database(checks: list[Check]) -> None:
         add(checks, "database", "connectivity", True, f"connected database={database}")
         add(checks, "database", "plane_database", database == expected_database,
             f"plane={storage.DATA_PLANE} actual={database} expected={expected_database}")
-        add(checks, "database", "pgvector", extension == config.PGVECTOR_VERSION,
-            f"installed={extension or 'missing'} expected={config.PGVECTOR_VERSION}")
+        pgvector = config.pgvector_status(extension)
+        add(checks, "database", "pgvector", pgvector in ("ok", "patch_mismatch"),
+            f"installed={extension or 'missing'} expected={config.PGVECTOR_VERSION}"
+            + (" (patch differs; same index format)" if pgvector == "patch_mismatch" else ""))
         add(checks, "schema", "version", version == SCHEMA_VERSION,
             f"installed={version} expected={SCHEMA_VERSION}")
         add(checks, "schema", "tables", not missing_tables,
@@ -171,7 +178,7 @@ def check_database(checks: list[Check]) -> None:
             f"latest={ingestion_status or 'untracked'}")
         index_ok = bool(eligible_notes) and indexed_notes == eligible_notes
         add(checks, "data", "index_provenance", index_ok,
-            f"current={indexed_notes} eligible={eligible_notes}")
+            f"indexed={indexed_notes} eligible={eligible_notes} provenance={index_provenance}")
     except Exception as exc:
         add(checks, "database", "connectivity", False,
             f"{type(exc).__name__}: database unavailable (credentials are not shown)")

@@ -339,7 +339,10 @@ def _retrieval() -> dict:
             "bm25_top_n": 60, "vector_top_n": 60, "min_tokens": 40,
             "hnsw_ef_search": H.HNSW_EF_SEARCH,
             "rrf": {"k": 60, "bm25_weight": H.RRF_BM25_WEIGHT,
-                    "vector_weight": H.RRF_VECTOR_WEIGHT},
+                    "vector_weight": H.RRF_VECTOR_WEIGHT,
+                    "patient_scoped": {"bm25_weight": H.PATIENT_RRF_BM25_WEIGHT,
+                                       "vector_weight": H.PATIENT_RRF_VECTOR_WEIGHT,
+                                       "overlap_bonus": H.PATIENT_RRF_OVERLAP_BONUS}},
             "query_expansion": H.QUERY_EXPANSION,
             "reranker_model_path": Path(H.DEFAULT_RERANKER_MODEL).name,
         })
@@ -434,12 +437,7 @@ def build_manifest(*, run_id: str, case_ids: list[str], subset: str,
                      "n_evaluated": len(case_ids), "evaluated_ids": case_ids},
         "demo_corpus": (case_mod.demo_data_fingerprint()
                         if (eval_set or {}).get("provider", "demo") == "demo" else None),
-        "evaluation_corpus": ({k: (eval_set or {}).get(k) for k in (
-            "provider", "provider_profile", "source_dataset_fingerprint",
-            "source_manifest_sha256", "mapping_manifest_sha256",
-            "note_corpus_sha256", "index_configuration_hash",
-            "golden_set_fingerprint",
-        )} if (eval_set or {}).get("provider") == "synthea" else None),
+        "evaluation_corpus": None,     # kept so the results schema is unchanged
         "retrieval": _retrieval(),
         "models": _models(),
         "prompt_versions": _prompts(),

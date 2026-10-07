@@ -6,4 +6,5 @@ from pathlib import Path
 # Postgres, Ollama or the models — every dependency is replaced per test.
 os.environ["LUMEN_DATA_PLANE"] = "demo"
 os.environ["LUMEN_TRACING"] = "0"
+os.environ["LUMEN_LITERATURE_BACKEND"] = "none"   # no test may reach the internet
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

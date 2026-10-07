@@ -50,6 +50,11 @@ Load authorized source files only after confirming the target database:
 ./scripts/lumen research index
 ```
 
+A database indexed before provenance tracking existed must be adopted first,
+with `./scripts/lumen research adopt` (see
+[database-lifecycle.md](../database-lifecycle.md)); the indexer refuses to
+re-embed it otherwise.
+
 Ingestion records running/completed/failed state. Indexing transactionally
 replaces each note's chunks and records completion plus configuration
 provenance. Neither doctor nor normal API startup performs ingestion.
@@ -64,11 +69,17 @@ Start Ollama separately, confirm all configured tags are installed, then:
 curl http://127.0.0.1:8000/ready
 ```
 
-The research API binds to `127.0.0.1` through the facade and rejects
-non-loopback clients. Remote LLM and judge endpoints fail closed. Do not enable
-the remote-model override unless the endpoint and network are explicitly
-approved for the data involved. Research tracing is always restricted to a
-local Langfuse endpoint because spans can contain note text.
+The research API binds to `127.0.0.1` through the facade, refuses `--host`, and
+rejects non-loopback clients. Every `scripts/lumen research` command runs with
+tracing off, Hugging Face offline, the remote-model override forced off, and
+proxies bypassed for local calls, so patient text has no path off the machine
+through the facade. Local model calls also ignore proxy settings in code.
+Running modules directly (`python -m src...`) skips the facade pins; the code
+still refuses remote model endpoints and remote tracing on this plane.
+
+The runtime keeps one model loaded for two hours. Stop the API (or
+`ollama stop <tag>`) before an offline judge run with the 14B model; both will
+not fit in 16 GB.
 
 ## Test and evaluate
 

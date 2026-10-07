@@ -128,7 +128,7 @@ def _fence(text: str) -> str:
 
 
 def build_synthesis_prompt(query: str, patient_ev: list, guideline_ev: list,
-                           literature_ev: list | None = None) -> str:
+                           literature_ev: list | None = None, literature_unavailable: bool = False) -> str:
     """Assemble the EVIDENCE block. Labels here are the ONLY valid citations."""
     # This normalisation used to sit indented inside `if guideline_ev:`, so an
     # empty guideline list left literature_ev as None and the `valid` line below
@@ -159,6 +159,10 @@ def build_synthesis_prompt(query: str, patient_ev: list, guideline_ev: list,
 
     valid = ([e["label"] for e in patient_ev] + [e["label"] for e in guideline_ev] + [e["label"] for e in literature_ev])
     parts.append(f"\nVALID CITATION LABELS: {', '.join(valid) if valid else '(none)'}")
+    if literature_unavailable:
+        parts.append("NOTE: no published literature was retrieved for this question. Do not describe, summarise or "
+                     "cite any study, trial or paper, and do not present a guideline or a note as research. Answer "
+                     "only the part of the question the evidence above supports.")
     parts.append("Answer the question using only the evidence above.")
     return "\n".join(parts)
 

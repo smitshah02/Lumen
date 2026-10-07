@@ -8,6 +8,7 @@ Graph smoke runner
 
 from __future__ import annotations
 
+import sys
 import uuid
 import logging
 import argparse
@@ -57,6 +58,8 @@ def main() -> int:
     ap.add_argument("--thread", default=None)
     ap.add_argument("--history", action="store_true",
                     help="print checkpoint history for the thread instead of running")
+    ap.add_argument("--no-review", action="store_true",
+                    help="if the run pauses for human review, exit instead of prompting")
     ap.add_argument("--show-evidence", action="store_true",
                     help="dump the evidence block that synthesis actually received")
     args = ap.parse_args()
@@ -85,11 +88,19 @@ def main() -> int:
         eg = out.get("egress_log", []) or []
         if eg:
             print(f"  egress: {len(eg)} calls, {sum(1 for r in eg if not r['allowed'])} blocked")
-        print(f"  state is checkpointed; this process can exit safely.\n")
-        print(f"  resume with:")
-        print(f"    python -m src.agents.review_cli --thread {thread_id}\n")
-        tracing.flush()
-        return 0
+        if args.no_review or not sys.stdin.isatty():
+            print(f"  state is checkpointed; this process can exit safely.\n")
+            print(f"  resume with:")
+            print(f"    python -m src.agents.review_cli --thread {thread_id}\n")
+            tracing.flush()
+            return 0
+        # Same thread, same checkpoint: the decision resumes the paused graph,
+        # which runs human_review -> finalize. Nothing upstream is re-run.
+        from src.agents.review_cli import review_interactively
+        out = review_interactively(graph, thread_id)
+        for d in out.get("human_decisions", []):
+            print(f"  decision     #{d['index']}  {d['action']}  {d['note']}")
+        print(f"  review       {out.get('review_status')}")
 
     print(f"\n  query        {out['query']}")
     print(f"  query_type   {out.get('query_type')}   temporal={out.get('temporal_mode')}")
@@ -108,7 +119,9 @@ def main() -> int:
                 print(f"      {e['text'][:280].strip()}...")
 
     print("\n" + "-" * 70)
-    print(out.get("final_answer") or out.get("draft_answer", "(no answer)"))
+    reviewed = out.get("review_status") in ("reviewed", "escalated", "rejected")
+    print(out.get("final_answer") or ("(all claims struck — no answer released)" if reviewed
+                                      else out.get("draft_answer", "(no answer)")))
     print("-" * 70)
 
     v = out.get("verification", {}) or {}
@@ -121,7 +134,11 @@ def main() -> int:
         print(f"  egress       {len(eg)} calls, {len(blocked)} blocked")
         for r in blocked:
             print(f"    BLOCKED {r['tool']} rule={r['rule']} sha={r['payload_sha256'][:12]}")
-    print(f"  verified     {v.get('checked', 0) - v.get('unsupported', 0)}/{v.get('checked', 0)}")
+    # Counted from the claims themselves. `checked` is only the number sent to
+    # the verifier model, so `checked - unsupported` went negative whenever a
+    # claim was ruled unsupported without a model call.
+    claims = out.get("citations", []) or []
+    print(f"  verified     {sum(1 for c in claims if c.get('verified'))}/{len(claims)}")
     print(f"  review?      {out.get('needs_human_review')}")
 
     for c in out.get("citations", []):

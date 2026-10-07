@@ -4,8 +4,8 @@ Local Ollama backend for the Lumen LLM judge
 Wires a local Ollama model (default Qwen2.5-14B-Instruct) into LLMJudge through
 its `call_fn` hook, so no clinical text ever leaves the machine — which keeps
 you inside the PhysioNet MIMIC Data Use Agreement (no third-party API, no
-retention). When `call_fn` is set, LLMJudge never imports the Groq SDK or reads
-GROQ_API_KEY.
+retention). LLMJudge has no other backend: it only calls the `call_fn` built
+here, and the host is checked against the plane's local-endpoint policy.
 
 Requires a running Ollama server (`ollama serve`) with the model pulled:
     ollama pull qwen2.5:14b
@@ -17,9 +17,9 @@ Usage:
 from __future__ import annotations
 
 import os
-import requests
 
 from src.config import JUDGE_MODEL_DEFAULT, LLM_HOST_DEFAULT, validate_model_endpoint
+from src.llm.local_client import HTTP
 from typing import Callable
 
 from src.evals.llm_judge import LLMJudge
@@ -53,10 +53,10 @@ def make_ollama_call_fn(
     num_predict: int = 512,       # see below
 ) -> Callable[[list], str]:
     """Return a call_fn(messages) -> str that talks to a local Ollama server."""
-    url = f"{host.rstrip('/')}/api/chat"
+    url = f"{validate_model_endpoint(host).rstrip('/')}/api/chat"
 
     def _call(messages: list) -> str:
-        resp = requests.post(url, timeout=timeout, json={
+        resp = HTTP.post(url, timeout=timeout, json={
             "model": model,
             "messages": messages,
             "stream": False,
@@ -104,8 +104,8 @@ def make_ollama_judge(
     Build an LLMJudge backed by local Ollama.
 
     `model` is also passed to LLMJudge so the disk cache keys stay honest — the
-    cache is keyed on (prompt_version, model, query, chunk), so a Qwen run and a
-    (hypothetical) Groq run won't collide.
+    cache is keyed on (prompt_version, model, query, chunk), so two local judge
+    models never share cache entries.
     """
     call_fn = make_ollama_call_fn(model=model, host=host, num_ctx=num_ctx)
     return LLMJudge(

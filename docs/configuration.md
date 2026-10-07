@@ -14,7 +14,7 @@ processes after changing it. Never commit populated environment files.
 | `LUMEN_DEMO_DB_NAME` | `lumen_demo` | Database name used when deriving the demo URL. |
 | `LUMEN_DB_CONNECT_TIMEOUT` | `10` | Postgres connection timeout in seconds. |
 | `LUMEN_PG_PASSWORD` | required by research Compose | Container password; must match `DATABASE_URL`. |
-| `LUMEN_PG_PORT` | `5434` | Research Compose host port. |
+| `LUMEN_PG_PORT` | `5434` | Research Compose host port, published on `127.0.0.1` only. |
 | `LUMEN_PG_VOLUME` | required by research Compose | Exact external volume name. No implicit volume is selected. |
 | `LUMEN_DEMO_PG_PASSWORD` | `lumen-demo-local-only` in local demo Compose; generated on RunPod | Synthetic database password. |
 | `LUMEN_CHECKPOINT_AUTO_SETUP` | `0` | Defensive checkpoint-schema creation during graph build. Normal setup is explicit. |
@@ -33,8 +33,9 @@ Canonical tags and pinned Hugging Face revisions live in
 | `LUMEN_LLM_HOST` | `http://localhost:11434` | Ollama base URL. Research permits only local hosts unless explicitly overridden. |
 | `LUMEN_LLM_MAIN` | registry `runtime_main` | Complex/longitudinal synthesis tag. |
 | `LUMEN_LLM_FAST` | registry `runtime_fast` | Triage fallback, concepts, simple synthesis, and verification tag. |
-| `LUMEN_LLM_KEEPALIVE` | `10m` | Ollama model residency duration. |
-| `LUMEN_LLM_WARMUP` | `0` | `1` loads both tiers in a background startup thread. |
+| `LUMEN_LLM_KEEPALIVE` | `10m` | Ollama model residency duration. The local runtime sets `2h`. |
+| `LUMEN_LLM_NUM_CTX` | `8192` | Context window used by every role; one value so Ollama never reloads between calls. |
+| `LUMEN_LLM_WARMUP` | `0` | `1` loads the configured model(s) in a background startup thread, at the runtime context window. |
 | `LUMEN_DETERMINISTIC_LABS` | `1` | Answer supported latest-lab questions directly from `labevents`. |
 | `LUMEN_RESEARCH_ALLOW_REMOTE_MODELS` | `0` | Conspicuous override for remote research LLM/judge endpoints. Does not relax tracing policy. |
 | `LUMEN_JUDGE_MODEL` | registry `independent_judge` | Final/retrieval evaluation judge; must differ from runtime tiers. |
@@ -84,7 +85,7 @@ should be evaluated rather than silently made per deployment.
 | `LUMEN_API_BIND` | `127.0.0.1` | Demo Compose published address and RunPod bind address. |
 | `LUMEN_API_ALLOW_NONLOCAL` | `0` | RunPod-only explicit override for an unauthenticated non-loopback bind. |
 | `LUMEN_LOG_LEVEL` | `INFO` | Structured application log level. |
-| `LUMEN_TRACING` | `0` | Enable Langfuse tracing when set to exactly `1`. |
+| `LUMEN_TRACING` | `0` | Enable Langfuse tracing when set to exactly `1`. Every `scripts/lumen research` command forces `0`. |
 | `LANGFUSE_BASE_URL` | SDK default if unset | Preferred Langfuse endpoint. |
 | `LANGFUSE_HOST` | unset | Deprecated endpoint alias used only when `LANGFUSE_BASE_URL` is absent. |
 | `LANGFUSE_PUBLIC_KEY` | unset | Langfuse credential; never reported by readiness. |

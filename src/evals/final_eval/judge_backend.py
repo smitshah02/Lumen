@@ -100,8 +100,8 @@ class OllamaJudgeBackend:
 
     def digest(self) -> dict:
         try:
-            import requests
-            tags = requests.get(f"{self.host}/api/tags", timeout=10).json().get("models", [])
+            from src.llm.local_client import HTTP
+            tags = HTTP.get(f"{self.host}/api/tags", timeout=10).json().get("models", [])
             m = next((m for m in tags if _norm_tag(m.get("name")) == _norm_tag(self.model)), {})
             return {"digest": (m.get("digest") or "")[:12] or None,
                     "parameter_size": (m.get("details") or {}).get("parameter_size"),
@@ -111,7 +111,7 @@ class OllamaJudgeBackend:
             return {"digest": None, "installed": None, "error": type(e).__name__}
 
     def complete(self, system: str, user: str, schema: dict | None = None) -> str:
-        import requests
+        from src.llm.local_client import HTTP     # ignores proxy settings: evidence text stays local
         payload = {
             "model": self.model, "stream": False,
             "messages": [{"role": "system", "content": system},
@@ -124,7 +124,7 @@ class OllamaJudgeBackend:
         last = None
         for attempt in range(1, self.retries + 1):
             try:
-                r = requests.post(f"{self.host}/api/chat", json=payload, timeout=self.timeout)
+                r = HTTP.post(f"{self.host}/api/chat", json=payload, timeout=self.timeout)
                 r.raise_for_status()
                 return (r.json().get("message") or {}).get("content") or ""
             except Exception as e:

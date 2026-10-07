@@ -13,8 +13,7 @@ the grounding chain.
 from __future__ import annotations
 
 import operator
-from typing import Optional, Literal, Annotated
-from typing_extensions import TypedDict
+from typing import Optional, Literal, Annotated, TypedDict
 
 
 QueryType = Literal[
@@ -70,11 +69,20 @@ class AgentState(TypedDict, total=False):
     patient_evidence: list[Evidence]
     guideline_evidence: list[Evidence]
     literature_evidence: list[Evidence]
+    # True when the question asked for published literature and this build has
+    # no literature backend. The answer then carries a fixed notice saying so.
+    literature_unavailable: bool
     # Structured values pulled straight from labevents by the deterministic
     # lab path. Same Evidence shape, chunk_id -1 (no note chunk backs a table
     # row), label "L#" — so citations.validate and the API treat it like any
     # other source.
     lab_evidence: list[Evidence]
+    # Rows read from the admissions table by encounter_lookup, label "A#".
+    encounter_evidence: list[Evidence]
+    # Set by a structured lookup that FOUND rows for the question but declined
+    # to answer it (a word it did not understand). Verification will not
+    # auto-approve "the records do not contain enough information" while set.
+    structured_rows: int
 
     # --- generation ---
     draft_answer: str
@@ -84,7 +92,7 @@ class AgentState(TypedDict, total=False):
     verification: dict
     needs_human_review: bool
     human_decisions: list[dict]
-    review_status: str        # pending | auto_approved | reviewed | escalated
+    review_status: str        # pending | auto_approved | reviewed | escalated | rejected
     final_answer: str
 
     # --- observability / safety ---

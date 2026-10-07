@@ -43,3 +43,15 @@ def test_default_paths_are_repository_relative():
     assert config.REPO_ROOT == Path(__file__).resolve().parents[1]
     assert config.DATA_DIR == config.REPO_ROOT / "data"
     assert config.MODELS_DIR == config.REPO_ROOT / "models"
+
+
+@pytest.mark.parametrize("installed,expected", [
+    ("0.8.6", "ok"),
+    ("0.8.2", "patch_mismatch"),     # same on-disk index format: usable, reported
+    ("0.7.4", "incompatible"),
+    ("1.0.0", "incompatible"),
+    (None, "incompatible"),
+    ("garbage", "incompatible"),
+])
+def test_pgvector_patch_mismatch_is_distinguished_from_incompatibility(installed, expected):
+    assert config.pgvector_status(installed, pinned="0.8.6") == expected
