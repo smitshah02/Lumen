@@ -15,6 +15,16 @@ from __future__ import annotations
 import re
 
 CITE_RE = re.compile(r"\[([SLGPA]\d+)\]")   # P = published literature, A = admissions table
+
+
+def cite_re(evidence) -> "re.Pattern":
+    """CITE_RE, plus the structured-record labels ("R1") that are actually in
+    `evidence`. "[R1]" in an answer is a citation only when an R1 source exists;
+    with no such source it is ordinary text, exactly as before R labels existed."""
+    structured = sorted({e["label"] for e in evidence or () if re.fullmatch(r"R\d+", str(e.get("label", "")))})
+    if not structured:
+        return CITE_RE
+    return re.compile(r"\[([SLGPA]\d+|" + "|".join(structured) + r")\]")
 # Sentence split that tolerates clinical abbreviations (mg., q.d., Dr.)
 _SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[])")
 
@@ -37,8 +47,8 @@ def is_refusal_claim(text: str) -> bool:
     return len(tail.split()) <= 6 and not re.search(r"\d|[,;:]| but | however | although ", tail + " ")
 
 
-def extract_labels(text: str) -> list[str]:
-    return CITE_RE.findall(text or "")
+def extract_labels(text: str, evidence=None) -> list[str]:
+    return cite_re(evidence).findall(text or "")
 
 
 def split_claims(answer: str) -> list[str]:
@@ -143,7 +153,7 @@ def validate(answer: str, evidence: list[dict]) -> dict:
     claims, all_bad = [], set()
 
     for sentence in split_claims(answer or ""):
-        labels = extract_labels(sentence)
+        labels = extract_labels(sentence, evidence)
         good = [l for l in labels if l in valid]
         bad = [l for l in labels if l not in valid]
         all_bad.update(bad)
@@ -169,7 +179,7 @@ def validate(answer: str, evidence: list[dict]) -> dict:
 def strip_bad_labels(answer: str, evidence: list[dict]) -> str:
     """Remove hallucinated markers so they never reach a reader."""
     valid = {e["label"] for e in evidence}
-    return CITE_RE.sub(lambda m: m.group(0) if m.group(1) in valid else "", answer or "")
+    return cite_re(evidence).sub(lambda m: m.group(0) if m.group(1) in valid else "", answer or "")
 
 def rebuild_answer(claims: list[dict], keep: set[int]) -> str:
     """Reassemble an answer from the claims that survived review."""

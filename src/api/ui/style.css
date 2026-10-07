@@ -82,7 +82,7 @@ button, input, textarea { font: inherit; color: inherit; }
   border-radius: 6px; padding: 0 5px; margin: 0 1px; font-size: 12px; font-weight: 600; line-height: 1.5;
 }
 .cite:hover { border-color: var(--accent); }
-.cite-L, .cite-A { background: var(--ok-soft); color: var(--ok); }
+.cite-L, .cite-A, .cite-R { background: var(--ok-soft); color: var(--ok); }
 .cite-G, .cite-P { background: var(--warn-soft); color: var(--warn); }
 
 /* ---- loader: three dots, left to right ---- */

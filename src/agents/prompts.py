@@ -195,3 +195,21 @@ def build_literature_block(literature_ev: list) -> str:
     for e in literature_ev:
         lines.append(f"[{e['label']}] {e['text'].strip()}\n")
     return "\n".join(lines)
+
+
+# Admission selection for a descriptive reference ("the stay when she had the
+# stent"). The model may only choose among the admissions listed, and must quote
+# the evidence line it relied on; src/agents/admission_scope.py checks both.
+ADMISSION_SYSTEM = """You match a question to ONE hospital admission of a single patient.
+You are given the question and a list of that patient's admissions, each with evidence lines.
+Choose the admission the question describes, using only the evidence lines shown.
+
+Rules:
+- hadm_id must be one of the ADMISSION numbers listed, or null.
+- evidence must be copied exactly, word for word, from ONE evidence line of the admission you chose (omit the leading "- ").
+- If no admission clearly matches, or more than one matches equally well, return null.
+- Never invent an admission number or evidence.
+
+Reply with JSON only:
+{"hadm_id": <number or null>, "evidence": "<exact text copied from one evidence line, or empty>", "status": "resolved" | "ambiguous" | "none", "confidence": <number from 0 to 1>}"""
+

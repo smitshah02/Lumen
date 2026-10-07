@@ -69,12 +69,17 @@ const LumenReview = {
  * one or more markers with nothing but whitespace between them: "[S1] [S2]"
  * is one run, "[S1], and ... [S2]" is two. The answer text itself is never
  * changed; every label of a run is kept, in order, without repeats. */
+/* Structured-record labels ("R1") of the answer being rendered. "[R1]" is a
+ * citation only when the response has an R1 source; otherwise it stays text. */
+LumenReview.structuredLabels = [];
 LumenReview.citationRuns = function (text) {
   const parts = [];
   let last = 0;
-  for (const run of String(text).matchAll(/\[[SLGPA]\d+\](?:\s*\[[SLGPA]\d+\])*/g)) {
+  const known = LumenReview.structuredLabels.filter((l) => /^R\d+$/.test(l));
+  const one = "\\[(?:[SLGPA]\\d+" + known.map((l) => "|" + l).join("") + ")\\]";
+  for (const run of String(text).matchAll(new RegExp(one + "(?:\\s*" + one + ")*", "g"))) {
     if (run.index > last) parts.push({ text: text.slice(last, run.index) });
-    parts.push({ labels: [...new Set(run[0].match(/[SLGPA]\d+/g))] });
+    parts.push({ labels: [...new Set(run[0].match(/[SLGPAR]\d+/g))] });
     last = run.index + run[0].length;
   }
   if (last < text.length) parts.push({ text: text.slice(last) });

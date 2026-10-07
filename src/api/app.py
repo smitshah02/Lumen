@@ -35,7 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src import storage
-from src.config import DATA_PROFILE, MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
+from src.config import CHUNK_BUILD, DATA_PROFILE, PROFILE_SETTINGS, MODELS_CONFIG, MODELS_DIR, VALID_PLANES, pgvector_status
 from src.retrieval.index_provenance import (configuration_hash as index_configuration_hash,
                                             legacy_adopted_hashes)
 from src.storage.schema import SCHEMA_VERSION
@@ -367,6 +367,12 @@ def _check_data_profile() -> dict:
 
 def _ensure_subject(subject_id: int) -> None:
     with storage.engine.connect() as c:
+        if PROFILE_SETTINGS["chunk_table"] == "note_chunks_v2":        # a patient outside the selected build is not searchable
+            found = c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks_v2 WHERE build_id = :b AND subject_id = :s)"),
+                              {"b": CHUNK_BUILD, "s": subject_id}).scalar()
+            if not found:
+                raise SubjectNotFound(subject_id)
+            return
         if not c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks WHERE subject_id = :s)"),
                          {"s": subject_id}).scalar():
             raise SubjectNotFound(subject_id)
@@ -497,13 +503,14 @@ async def retrieve(req: RetrieveRequest, request: Request):
         request_id=request.state.request_id, data_plane=DATA_PLANE, data_profile=DATA_PROFILE,
         subject_id=req.subject_id, query=req.query,
         temporal_mode=mode, latency_ms=t.ms,
-        # chunk_text comes from note_chunks (de-identified in research, synthetic in demo);
-        # clinical_notes.text_original is never read by the retriever.
+        # chunk_text comes from the profile's chunk table: synthetic in demo; in research it is
+        # MIMIC text, DUA-restricted and local-only (loopback clients only, enforced above).
         results=[RetrievedChunk(rank=i, chunk_id=r.chunk_id, note_id=r.note_id,
                                 subject_id=r.subject_id, hadm_id=r.hadm_id,
                                 chunk_index=r.chunk_index, note_type=r.note_type,
                                 charttime=r.charttime, score=round(float(r.final_score), 4),
-                                sources=[s for s in r.sources if s != "both"], text=r.chunk_text)
+                                sources=[s for s in r.sources if s != "both"], text=r.chunk_text,
+                                provenance=getattr(r, "provenance", None))
                  for i, r in enumerate(results, 1)],
     )
 
@@ -542,7 +549,7 @@ async def ask(req: AskRequest, request: Request):
         flagged = sum(1 for c in cites if not c.get("verified"))
     evidence = ((st.get("patient_evidence") or []) + (st.get("guideline_evidence") or [])
                 + (st.get("literature_evidence") or []) + (st.get("lab_evidence") or [])
-                + (st.get("encounter_evidence") or []))
+                + (st.get("encounter_evidence") or []) + (st.get("structured_evidence") or []))
     timings = {"llm_calls": 0, "llm_main_calls": 0, "llm_fast_calls": 0,
                "deterministic_answer": 0, "deterministic_verified": 0, "llm_verified": 0,
                **current_timings(), "total_ms": t.ms,
@@ -569,7 +576,8 @@ async def ask(req: AskRequest, request: Request):
         sources=[Source(label=e["label"], chunk_id=int(e["chunk_id"]), source_type=e.get("source_type", ""),
                         note_id=e.get("note_id"), subject_id=e.get("subject_id"),
                         hadm_id=e.get("hadm_id"), chunk_index=e.get("chunk_index"),
-                        note_type=e.get("note_type"), charttime=e.get("charttime")) for e in evidence],
+                        note_type=e.get("note_type"), charttime=e.get("charttime"),
+                        provenance=e.get("provenance")) for e in evidence],
         flagged_claims=flagged, needs_human_review=interrupted or bool(st.get("needs_human_review")),
         query_type=st.get("query_type"), temporal_mode=st.get("temporal_mode"),
         node_trail=st.get("node_trail") or [], admission_scope=scope,

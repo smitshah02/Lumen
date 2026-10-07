@@ -331,6 +331,7 @@ class ClinicalNoteChunker:
 #     not left to the tokenizer's silent truncation.
 # Chunks are produced in memory; storing them is E13.
 
+V2_CHUNKER_VERSION = "section-chunker-v1"   # recorded with every v2 build; bump when chunk_note changes its output
 V2_TARGET_TOKENS = 480        # a section that fits in this stays whole (leaves room under the limit)
 V2_MAX_TOKENS = 512           # MedCPT's input limit, special tokens included
 V2_MIN_EMBED_TOKENS = 40      # smaller chunks are kept and searchable by word, but not embedded

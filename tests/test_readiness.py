@@ -143,8 +143,8 @@ def test_v2_is_refused_unless_the_selected_build_is_complete_and_present(name, d
 def test_v2_also_needs_the_structured_load_and_reports_both():
     both = _problems("v2", _Db(load=("running", {}), builds={BUILD: "failed"}))
     assert [p["component"] for p in both] == [STRUCTURED, CHUNKS]
-    every = rd.problems(_Db(load=("running", {}), builds={BUILD: "failed"}).connect, PROFILES["v2"], BUILD)
-    assert [p["component"] for p in every] == [STRUCTURED, CHUNKS, RETRIEVER]  # with today's retriever, all three are reported
+    every = rd.problems(_Db(load=("running", {}), builds={BUILD: "failed"}).connect, PROFILES["v2"], BUILD, ("note_chunks",))
+    assert [p["component"] for p in every] == [STRUCTURED, CHUNKS, RETRIEVER]  # a v1-only retriever: all three are reported
 
 
 def test_v2_profile_without_a_selected_build_refuses_to_start():
@@ -172,13 +172,15 @@ MISMATCH = "the profile reads note_chunks_v2, but the retriever queries note_chu
 def test_v2_is_refused_while_the_retriever_still_reads_note_chunks_even_with_a_perfect_build():
     perfect = _Db()                                                            # completed selected build, populated table
     assert rd.chunk_build_problem(perfect, BUILD) is None and rd.structured_problem(perfect) is None
-    assert RETRIEVER_CHUNK_TABLES == ("note_chunks",)                          # today's retriever
-    assert rd.problems(perfect.connect, PROFILES["v2"], BUILD) == [{"component": RETRIEVER, "reason": MISMATCH}]
+    only_v1 = ("note_chunks",)                                                 # a retriever that cannot query the v2 table
+    assert rd.problems(perfect.connect, PROFILES["v2"], BUILD, only_v1) == [{"component": RETRIEVER, "reason": MISMATCH}]
     with pytest.raises(DataSourceNotReady) as e:
-        rd.require(CHUNKS, perfect.connect, PROFILES["v2"], BUILD)
+        rd.require(CHUNKS, perfect.connect, PROFILES["v2"], BUILD, only_v1)
     assert (e.value.component, e.value.reason) == (RETRIEVER, MISMATCH)
-    # the same check passes by itself once the retriever can query the table: nothing to remove later
+    # the same check passes by itself once the retriever can query the table: nothing was removed to get here
     assert rd.problems(perfect.connect, PROFILES["v2"], BUILD, V2_CAPABLE) == []
+    assert RETRIEVER_CHUNK_TABLES == V2_CAPABLE                                # which is what the retriever is, since E14
+    assert rd.problems(perfect.connect, PROFILES["v2"], BUILD) == []
 
 
 @pytest.mark.parametrize("profile", ["control", "scoped", "structured"])

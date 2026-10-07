@@ -237,3 +237,186 @@ def _resolve_previous(query, admissions, known, previous, others, named) -> Admi
     if _tied(admissions, i) or (i >= 2 and admissions[i - 1][1] == admissions[i - 2][1]):
         return no("ambiguous", f"admissions around hadm_id {anchor} share an admit time")
     return AdmissionResolution("resolved", _strip(query, spans), int(admissions[i - 1][0]), source, phrase=named)
+
+
+# ===========================================================================
+# Model-assisted step for descriptive references (plan E10 / decisions R2, R2b)
+# ===========================================================================
+# "the stay when she had the stent" names an admission the rules above cannot
+# resolve. Here a local model may pick ONE admission, but only from a list of
+# the patient's own admissions and only by quoting evidence from that list. Its
+# choice is applied only when code can verify it: the id is a candidate, the
+# quoted evidence really is in that admission's evidence, that evidence is about
+# what the question describes, and the same evidence is in no other admission's.
+# The model's confidence is logged and decides nothing. Anything else is
+# unresolved or ambiguous, never a guess.
+
+MAX_CANDIDATES = 12           # more admissions than this are not compared: unresolved, not truncated
+LINES_SHOWN = 25              # evidence lines per admission shown to the model; the check uses all of them
+MIN_EVIDENCE_CHARS = 5
+_DESCRIPTIVE_RE = re.compile(
+    rf"{_PREP}(?:the\s+patient's|the|her|his|their|this|that)\s+{_NOUN}\s+"
+    r"(?:when|where|in\s+which|during\s+which|for\s+which|for|with)\b[^?.!;]*", re.I)
+
+
+def descriptive_reference(query: str) -> Optional[re.Match]:
+    """A phrase that describes an admission by what happened in it, or None."""
+    return _DESCRIPTIVE_RE.search(query or "")
+
+
+def _norm(value: str) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+# Words that say nothing about WHICH admission: function words, and the generic
+# clinical nouns and verbs every admission shares. Overlap on these never counts.
+_GENERIC = frozenset("""
+    the a an and or of in on at to for from with by as her his their she he they this that these those it its
+    when where which while during after before had has have having was were is are been being did does do done
+    admission admissions admitted hospital hospitalization hospitalisation hospitalized stay stays encounter visit
+    patient patients procedure procedures procedural surgery surgeries surgical operation operations operative
+    treatment treatments treated therapy diagnosis diagnoses diagnostic diagnosed note placed performed underwent
+    received given started got made taken removed new first last time other unspecified left right bilateral
+    not but nor yet all any can may one two who whom whose how why what out off per due see now too via non pre
+    you your our own could would should will shall might must cannot there then than also into onto over under
+    about above below between through within without upon some each every such only very more most much many
+    same just still again once here both either neither because since until
+    elsewhere classified specified mention mentioned site type part parts initial subsequent sequela
+""".split())
+
+
+def _singular(word: str) -> str:
+    """Plain plural to singular: "stents" -> "stent", "biopsies" -> "biopsy".
+    Words in -ss, -us and -is are left alone ("abscess", "thrombus", "dialysis")."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def content_terms(text: str) -> set[str]:
+    """The distinctive words of `text`, normalised for comparison: lower case,
+    punctuation dropped, generic and function words dropped, plain plurals made
+    singular ("stents" -> "stent", "biopsies" -> "biopsy"), then each word cut
+    to its first six letters so close inflections agree ("endoscopy" /
+    "endoscopic"). Three-letter words count only as whole words ("EEG", "MRI");
+    shorter ones are ignored. Nothing here bridges a prefix: "dialysis" and
+    "hemodialysis" stay different, which costs a match and never invents one."""
+    words = [_singular(w) for w in re.findall(r"[a-z0-9]+", str(text or "").lower()) if w not in _GENERIC]
+    words = [w for w in words if w not in _GENERIC]
+    return {w[:6] for w in words if len(w) >= 4} | {w for w in words if len(w) == 3 and w.isalpha()}
+
+
+def evidence_is_relevant(evidence: str, phrase: str) -> bool:
+    """Does the quoted evidence mention what the descriptive phrase describes?
+    A deterministic overlap of distinctive terms; no model, no confidence."""
+    return bool(content_terms(evidence) & content_terms(phrase))
+
+
+def load_candidates(subject_id: int) -> list[dict]:
+    """The patient's admissions, oldest first, each with its evidence lines:
+    coded diagnosis and procedure titles, and the chief complaint, procedure and
+    discharge-diagnosis lines of its discharge summary."""
+    from src.retrieval.section_labels import parse_sections
+    from src.storage import engine, readiness
+    readiness.require(readiness.STRUCTURED)
+    params = {"sid": subject_id}
+    with engine.connect() as c:
+        candidates = {int(r[0]): {"hadm_id": int(r[0]), "admitted": str(r[1])[:10], "discharged": str(r[2])[:10], "evidence": []}
+                      for r in c.execute(sa.text(
+                          "SELECT hadm_id, admittime, dischtime FROM admissions WHERE subject_id = :sid "
+                          "AND admittime IS NOT NULL ORDER BY admittime, hadm_id"), params)}
+        for kind, table, titles in (("diagnosis", "diagnoses_icd", "d_icd_diagnoses"),
+                                    ("procedure", "procedures_icd", "d_icd_procedures")):
+            for hadm_id, title in c.execute(sa.text(
+                    f"SELECT f.hadm_id, t.long_title FROM {table} f JOIN {titles} t "       # table names are the literals above
+                    "ON t.icd_code = trim(f.icd_code) AND t.icd_version = f.icd_version "
+                    "WHERE f.subject_id = :sid ORDER BY f.hadm_id, f.seq_num"), params):
+                if hadm_id in candidates and title:
+                    candidates[int(hadm_id)]["evidence"].append(f"{kind}: {title}")
+        for hadm_id, note in c.execute(sa.text(
+                "SELECT hadm_id, COALESCE(text_original, text_deid) FROM clinical_notes "
+                "WHERE subject_id = :sid AND note_type = 'discharge' ORDER BY hadm_id, note_id"), params):
+            if hadm_id not in candidates:
+                continue
+            for section in parse_sections(note, "discharge"):
+                if section.name in ("Chief Complaint", "Major Surgical or Invasive Procedure", "Discharge Diagnosis"):
+                    for line in section.text.split("\n")[1:]:
+                        if len(line.strip()) >= MIN_EVIDENCE_CHARS:
+                            candidates[int(hadm_id)]["evidence"].append(f"note: {line.strip()[:160]}")
+    for cand in candidates.values():
+        cand["evidence"] = list(dict.fromkeys(cand["evidence"]))
+    return list(candidates.values())
+
+
+def candidate_prompt(question: str, candidates: list[dict]) -> str:
+    blocks = []
+    for c in candidates:
+        lines = "\n".join(f"- {line}" for line in c["evidence"][:LINES_SHOWN]) or "- (no evidence on record)"
+        blocks.append(f"ADMISSION {c['hadm_id']} | admitted {c['admitted']} | discharged {c['discharged']}\n{lines}")
+    return f"QUESTION: {question}\n\n" + "\n\n".join(blocks)
+
+
+def accept_model_choice(output: dict, candidates: list[dict], phrase: Optional[str] = None
+                        ) -> tuple[Optional[int], str, Optional[str]]:
+    """(hadm_id, status, reason) for the model's structured output. Resolved only
+    when all four hold: the id is a candidate; the quoted evidence is in that
+    admission's evidence; the evidence shares a distinctive term with `phrase`,
+    the description that triggered this step; and the evidence is in no other
+    candidate's. Confidence is not consulted."""
+    by_id = {c["hadm_id"]: c for c in candidates}
+    try:
+        hadm_id = int(output.get("hadm_id")) if output.get("hadm_id") is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None, "unresolved", "the model did not return a usable admission id"
+    if hadm_id is None:
+        return None, "unresolved", "the model selected no admission"
+    if hadm_id not in by_id:
+        return None, "unresolved", f"the model returned hadm_id {hadm_id}, which is not one of this patient's admissions"
+    quote = _norm(output.get("evidence"))
+    if len(quote) < MIN_EVIDENCE_CHARS:
+        return None, "unresolved", "the model cited no evidence for its choice"
+
+    def has(candidate: dict) -> bool:
+        return any(quote in _norm(line) for line in candidate["evidence"])
+
+    if not has(by_id[hadm_id]):
+        return None, "unresolved", "the evidence the model cited is not in that admission's record"
+    if not evidence_is_relevant(quote, phrase or ""):
+        return None, "unresolved", "the evidence the model cited does not mention what the question describes"
+    others = sorted(c["hadm_id"] for c in candidates if c["hadm_id"] != hadm_id and has(c))
+    if others:
+        return None, "ambiguous", f"the cited evidence also appears in admission(s) {others}"
+    return hadm_id, "resolved", None
+
+
+def resolve_with_model(query: str, candidates: list[dict], ask) -> AdmissionResolution:
+    """Resolve a descriptive admission reference. `ask(prompt)` returns the
+    model's JSON text; any failure of it is unresolved, never a guess."""
+    import json
+    import logging
+    q = query.strip()
+    m = descriptive_reference(query)
+    phrase = m.group().strip() if m else None
+
+    def no(status: str, reason: str) -> AdmissionResolution:
+        return AdmissionResolution(status, q, source="model", reason=reason, phrase=phrase)
+
+    if not candidates:
+        return no("unresolved", "this patient has no admissions on record")
+    if len(candidates) > MAX_CANDIDATES:
+        return no("unresolved", f"this patient has {len(candidates)} admissions; more than {MAX_CANDIDATES} are not compared")
+    try:
+        output = json.loads(ask(candidate_prompt(query, candidates)))
+        if not isinstance(output, dict):
+            raise ValueError("not an object")
+    except Exception as exc:                     # model down, timeout, malformed JSON: all the same outcome
+        return no("unresolved", f"the admission model did not return a usable answer ({type(exc).__name__})")
+    hadm_id, status, reason = accept_model_choice(output, candidates, phrase)
+    logging.getLogger(__name__).info(
+        "[admission_model] status=%s hadm_id=%s model_status=%s model_confidence=%s reason=%s",
+        status, hadm_id, output.get("status"), output.get("confidence"), reason)
+    if status != "resolved":
+        return no(status, reason)
+    return AdmissionResolution("resolved", _strip(query, [(m.start(), m.end())]) if m else q, hadm_id, "model", phrase=phrase)

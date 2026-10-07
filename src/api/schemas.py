@@ -36,6 +36,26 @@ class AskRequest(_QueryModel):
     hadm_id: Optional[int] = Field(None, ge=1, le=2_147_483_647, description="Admission to scope the answer to")
 
 
+class SourceProvenance(BaseModel):
+    """Stable identity of a v2 chunk. `chunk_id` is a handle within one table
+    only; compare sources across profiles or builds by `source_id`, or by the
+    MIMIC note and offsets."""
+    source_id: str
+    data_profile: str
+    table: str
+    build_id: str
+    mimic_note_id: str
+    section_ord: int
+    chunk_ord: int
+    start_offset: int
+    end_offset: int
+    chunk_id: int
+
+
+# Present for v2 sources; left out of the response entirely for every other profile.
+_Provenance = Field(None, exclude_if=lambda v: v is None)
+
+
 class RetrievedChunk(BaseModel):
     rank: int
     chunk_id: int
@@ -48,6 +68,7 @@ class RetrievedChunk(BaseModel):
     score: float
     sources: list[str]
     text: str
+    provenance: Optional[SourceProvenance] = _Provenance
 
 
 class RetrieveResponse(BaseModel):
@@ -78,6 +99,7 @@ class Source(BaseModel):
     chunk_index: Optional[int] = None
     note_type: Optional[str]
     charttime: Optional[str]
+    provenance: Optional[SourceProvenance] = _Provenance
 
 
 class AdmissionScope(BaseModel):

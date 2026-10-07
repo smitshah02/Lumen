@@ -103,8 +103,8 @@ def search_patient_notes(query: str, subject_id: Optional[int] = None,
             "note_type": r.note_type,
             "charttime": r.charttime,
             "score": round(float(r.final_score), 4),
-            # context_text/chunk_text derive from note_chunks, which is built
-            # from text_deid. text_original is never read here.
+            # context_text/chunk_text come from the profile's chunk table. On the
+            # research plane that is MIMIC text: DUA-restricted, local-only (planes.py).
             "chunk_text": (r.context_text or r.chunk_text),
         } for r in results],
     }

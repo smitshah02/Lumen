@@ -127,3 +127,16 @@ current chunker configuration cannot be shown to have produced it. Readiness
 accepts that hash and reports `index_provenance: legacy_adopted`; the indexer
 treats adopted notes as indexed, so nothing is re-embedded unless `--reindex`
 is passed explicitly.
+
+## MIMIC text is local-only
+
+All MIMIC text is DUA-restricted and stays on this machine, in every column and
+every table: `clinical_notes.text_original` (the note as PhysioNet distributes it,
+already de-identified), `text_deid` (that text after Presidio), `note_chunks` and
+`note_chunks_v2`. No column is "safe to share". The research plane serves stdio
+and loopback clients only, backups stay in the Git-ignored `backups/` directory,
+and benchmark artifacts stay in the Git-ignored `reports/data_foundation/`.
+
+The earlier rule "never read `text_original`" is retired: the control index is
+built from `text_deid`, and the v2 index is built from the note as written. The
+demo plane is unaffected. It holds synthetic notes only and no `text_original`.

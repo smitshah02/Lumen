@@ -87,6 +87,9 @@ class AgentState(TypedDict, total=False):
     lab_evidence: list[Evidence]
     # Rows read from the admissions table by encounter_lookup, label "A#".
     encounter_evidence: list[Evidence]
+    # Rows read for one admission by structured_lookup (prescriptions, coded
+    # diagnoses or coded procedures), label "R#".
+    structured_evidence: list[Evidence]
     # Set by a structured lookup that FOUND rows for the question but declined
     # to answer it (a word it did not understand). Verification will not
     # auto-approve "the records do not contain enough information" while set.

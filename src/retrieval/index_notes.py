@@ -424,6 +424,222 @@ def run_indexing(
     return result
 
 
+# ===========================================================================
+# v2 build (data-foundation plan, E13)
+# ===========================================================================
+# Builds note_chunks_v2 for a set of patients from the note as written, using
+# parse_sections + chunk_note. Everything above is the control indexer and is
+# untouched; this never reads or writes note_chunks.
+#
+#     python -m src.retrieval.index_notes --v2-build --subjects 10000032,10000980
+#     python -m src.retrieval.index_notes --v2-build --subjects-file ids_a.txt --subjects-file ids_b.txt
+#
+# One build is one note_index_runs row (its run_id is the build_id that
+# LUMEN_CHUNK_BUILD selects) with the full configuration, and its status is
+# running until every chunk and embedding is stored and counted, then completed.
+# Any error leaves it failed. A build only ever writes rows carrying its own
+# build_id, so a failed or interrupted build cannot damage an earlier one.
+
+def v2_configuration(subject_ids, chunk_config: dict) -> dict:
+    """Everything that determines a v2 build's chunks: recorded, and hashed."""
+    from src.retrieval.chunker import V2_CHUNKER_VERSION
+    from src.retrieval.section_labels import PARSER_VERSION
+    embedding = index_configuration()["embedding"]
+    return {
+        "provenance": "v2",
+        "table": "note_chunks_v2",
+        "source_text": "note as written (text_original, else text_deid)",
+        "parser": {"version": PARSER_VERSION},
+        "chunker": {"version": V2_CHUNKER_VERSION, **chunk_config, "embedded_text": "chunk_text, verbatim"},
+        "tokenizer": {"repo": embedding["repo"], "revision": embedding["revision"]},
+        "embedding": embedding,
+        "scope": {"subject_ids": sorted(int(s) for s in subject_ids)},
+    }
+
+
+def recover_mimic_note_ids(notes: list[dict], note_dir=None) -> dict[int, str]:
+    """clinical_notes.note_id -> MIMIC-IV-Note note_id ("10000032-DS-21").
+
+    clinical_notes does not keep MIMIC's id, so it is recovered from the source
+    files by patient, chart time and the exact text. Every note must match
+    exactly one source row; anything else raises, because a guessed identity
+    would make chunk keys meaningless."""
+    import csv
+    import gzip
+    import hashlib
+    from src.config import MIMIC_NOTE_DIR
+
+    def key(subject_id, charttime, text) -> tuple:
+        return int(subject_id), str(charttime)[:19], hashlib.md5((text or "").encode("utf-8")).hexdigest()
+
+    wanted: dict[tuple, list[int]] = {}
+    for n in notes:
+        wanted.setdefault((n["note_type"],) + key(n["subject_id"], n["charttime"], n["text"]), []).append(n["note_id"])
+    subjects = {n["subject_id"] for n in notes}
+    note_dir = note_dir or MIMIC_NOTE_DIR / "note"
+    found: dict[int, str] = {}
+    for note_type in sorted({n["note_type"] for n in notes}):
+        path = next((p for p in (note_dir / f"{note_type}.csv.gz", note_dir / f"{note_type}.csv") if p.exists()), None)
+        if path is None:
+            raise FileNotFoundError(f"{note_type}.csv(.gz) not found in {note_dir}")
+        with (gzip.open(path, "rt", encoding="utf-8", newline="") if path.suffix == ".gz"
+              else open(path, "r", encoding="utf-8", newline="")) as f:
+            for row in csv.DictReader(f):
+                if int(row["subject_id"]) not in subjects:
+                    continue
+                ids = wanted.get((note_type,) + key(row["subject_id"], row["charttime"], row["text"]))
+                if ids:
+                    found[ids.pop(0)] = row["note_id"]          # identical duplicates pair off in file order
+    missing = sorted(n["note_id"] for n in notes if n["note_id"] not in found)
+    if missing:
+        raise RuntimeError(f"{len(missing)} note(s) have no matching MIMIC source row (first note_id {missing[0]})")
+    if len(set(found.values())) != len(found):
+        raise RuntimeError("two notes resolved to the same MIMIC note id")
+    return found
+
+
+def v2_rows(notes: list[dict], mimic_ids: dict[int, str], tokenizer, chunk_config: dict, build_id: str) -> list[dict]:
+    """The note_chunks_v2 rows for `notes`, without embeddings. Pure and
+    deterministic: same notes, tokenizer and configuration, same keys and text."""
+    from src.retrieval.chunker import chunk_note
+    rows = []
+    for note in sorted(notes, key=lambda n: mimic_ids[n["note_id"]]):
+        for c in chunk_note(note["text"], note["note_type"], tokenizer, **chunk_config):
+            rows.append({
+                "build_id": build_id, "mimic_note_id": mimic_ids[note["note_id"]],
+                "section_ord": c.section_ord, "chunk_ord": c.chunk_ord, "note_id": note["note_id"],
+                "subject_id": note["subject_id"], "hadm_id": note["hadm_id"], "note_type": note["note_type"],
+                "charttime": note["charttime"], "section_name": c.section_name, "char_start": c.start,
+                "char_end": c.end, "chunk_text": c.text, "token_count": c.token_count, "embed": c.embed,
+                "embedding": None,
+            })
+    return rows
+
+
+def ensure_v2_table(db=None) -> None:
+    """Create note_chunks_v2 and its indexes if missing. Additive and idempotent."""
+    from src.storage.schema import NOTE_CHUNKS_V2_SQL
+    with (db or engine).begin() as conn:
+        for statement in NOTE_CHUNKS_V2_SQL.split(";"):
+            conn.execute(sa_text(statement))
+
+
+def _fetch_v2_notes(conn, subject_ids) -> list[dict]:
+    return [dict(r) for r in conn.execute(sa_text("""
+        SELECT note_id, subject_id, hadm_id, note_type, charttime, COALESCE(text_original, text_deid) AS text
+        FROM clinical_notes
+        WHERE subject_id = ANY(:subjects) AND COALESCE(text_original, text_deid) IS NOT NULL
+          AND COALESCE(text_original, text_deid) != ''
+        ORDER BY note_id"""), {"subjects": sorted(int(s) for s in subject_ids)}).mappings()]
+
+
+_V2_INSERT = sa_text("""
+    INSERT INTO note_chunks_v2 (build_id, mimic_note_id, section_ord, chunk_ord, note_id, subject_id, hadm_id,
+                                note_type, charttime, section_name, char_start, char_end, chunk_text, token_count,
+                                embed, embedding)
+    VALUES (:build_id, :mimic_note_id, :section_ord, :chunk_ord, :note_id, :subject_id, :hadm_id,
+            :note_type, :charttime, :section_name, :char_start, :char_end, :chunk_text, :token_count,
+            :embed, CAST(:embedding AS vector))""")
+
+
+def read_subject_ids(listed: str = "", path: Optional[str] = None) -> list[int]:
+    """Patient ids for a build: a comma-separated list, a file, or both. The
+    file holds ids only, one per line; blank lines and # comments are skipped,
+    and anything else is refused, so a question or an answer can never ride in."""
+    lines = listed.split(",")
+    if path:
+        with open(path, encoding="utf-8") as f:
+            lines += [line.split("#", 1)[0] for line in f]
+    ids = set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if not line.isdigit():
+            raise ValueError("a patient id list may contain subject_ids only")     # never echo the line
+        ids.add(int(line))
+    return sorted(ids)
+
+
+def run_v2_build(subject_ids, chunk_config: Optional[dict] = None, *, db=None, tokenizer=None, embedder=None,
+                 mimic_ids: Optional[dict] = None, note_batch: int = 200) -> dict:
+    """Build note_chunks_v2 for the given patients as one new build. Returns its
+    id and statistics. `db`, `tokenizer`, `embedder` and `mimic_ids` default to
+    the real ones and exist so the lifecycle can be tested without them."""
+    from src.retrieval.chunker import V2_CHUNK_CONFIG, load_article_tokenizer
+    db = db or engine
+    chunk_config = dict(chunk_config or V2_CHUNK_CONFIG)
+    configuration = v2_configuration(subject_ids, chunk_config)
+    ensure_v2_table(db)
+    with db.connect() as conn:
+        notes = _fetch_v2_notes(conn, subject_ids)
+    if not notes:
+        raise RuntimeError("no notes found for the given patients")
+
+    build_id = str(uuid.uuid4())
+    with db.begin() as conn:
+        conn.execute(sa_text("""
+            INSERT INTO note_index_runs (run_id, status, configuration, config_hash, notes_expected)
+            VALUES (:run_id, 'running', CAST(:configuration AS jsonb), :config_hash, :expected)"""),
+            {"run_id": build_id, "configuration": json.dumps(configuration, sort_keys=True),
+             "config_hash": configuration_hash({k: v for k, v in configuration.items() if k != "scope"}),
+             "expected": len(notes)})
+
+    def finish(status: str, error: Optional[str] = None, **counts) -> None:
+        with db.begin() as conn:
+            conn.execute(sa_text("""
+                UPDATE note_index_runs SET status = :status, completed_at = NOW(), error_message = :error,
+                       notes_completed = :notes, chunks_created = :chunks WHERE run_id = :run_id"""),
+                {"run_id": build_id, "status": status, "error": error,
+                 "notes": counts.get("notes", 0), "chunks": counts.get("chunks", 0)})
+
+    t0, stats = time.time(), {"build_id": build_id, "patients": len({n["subject_id"] for n in notes}), "notes": len(notes),
+                              "chunks": 0, "embedded": 0, "lexical_only": 0, "max_embedded_tokens": 0,
+                              "chunk_seconds": 0.0, "embed_seconds": 0.0, "store_seconds": 0.0}
+    try:
+        mimic_ids = mimic_ids or recover_mimic_note_ids(notes)
+        tokenizer = tokenizer or load_article_tokenizer()
+        embedder = embedder or MedCPTEmbedder(batch_size=32)
+        done = 0
+        for i in range(0, len(notes), note_batch):
+            batch = notes[i:i + note_batch]
+            t = time.time()
+            rows = v2_rows(batch, mimic_ids, tokenizer, chunk_config, build_id)
+            stats["chunk_seconds"] += time.time() - t
+            to_embed = [r for r in rows if r["embed"]]
+            t = time.time()
+            vectors = embedder.embed_documents([r["chunk_text"] for r in to_embed], show_progress=False) if to_embed else []
+            stats["embed_seconds"] += time.time() - t
+            if len(vectors) != len(to_embed):
+                raise RuntimeError(f"embedder returned {len(vectors)} vectors for {len(to_embed)} chunks")
+            for row, vec in zip(to_embed, vectors):
+                row["embedding"] = f"[{','.join(str(float(x)) for x in vec)}]"
+            t = time.time()
+            with db.begin() as conn:                           # a batch of notes is stored whole or not at all
+                for j in range(0, len(rows), 200):
+                    conn.execute(_V2_INSERT, rows[j:j + 200])
+            stats["store_seconds"] += time.time() - t
+            done += len(batch)
+            stats["chunks"] += len(rows)
+            stats["embedded"] += len(to_embed)
+            stats["lexical_only"] += len(rows) - len(to_embed)
+            stats["max_embedded_tokens"] = max([stats["max_embedded_tokens"]] + [r["token_count"] for r in to_embed])
+        # Completed only when what is stored is what was built.
+        with db.connect() as conn:
+            stored, with_vector = conn.execute(sa_text(
+                "SELECT COUNT(*), COUNT(embedding) FROM note_chunks_v2 WHERE build_id = :b"), {"b": build_id}).first()
+        if (stored, with_vector) != (stats["chunks"], stats["embedded"]):
+            raise RuntimeError(f"stored {stored} chunks / {with_vector} embeddings, built {stats['chunks']} / {stats['embedded']}")
+    except BaseException as exc:
+        finish("failed", type(exc).__name__, notes=0, chunks=stats["chunks"])
+        raise
+    finish("completed", notes=done, chunks=stats["chunks"])
+    stats["seconds"] = round(time.time() - t0, 1)
+    for k in ("chunk_seconds", "embed_seconds", "store_seconds"):
+        stats[k] = round(stats[k], 1)
+    return stats
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -438,7 +654,19 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=32, help="Embedding batch size")
     parser.add_argument("--note-batch-size", type=int, default=1000, help="Notes per batch before cooldown")
     parser.add_argument("--cooldown", type=int, default=30, help="Seconds to sleep between batches")
+    parser.add_argument("--v2-build", action="store_true", help="Build note_chunks_v2 for --subjects as a new build")
+    parser.add_argument("--subjects", type=str, default="", help="Comma-separated subject_ids for --v2-build")
+    parser.add_argument("--subjects-file", action="append", default=[],
+                        help="File of subject_ids, one per line, for --v2-build; may be given more than once")
     args = parser.parse_args()
+    if args.v2_build:
+        subjects = sorted({s for path in (args.subjects_file or [None]) for s in read_subject_ids(args.subjects, path)})
+        if not subjects:
+            parser.error("--v2-build needs --subjects or --subjects-file")
+        built = run_v2_build(subjects)
+        for name, value in built.items():
+            print(f"  {name:<22} {value}")
+        raise SystemExit(0)
 
     run_indexing(
         limit=args.limit,

@@ -135,6 +135,42 @@ CREATE TABLE IF NOT EXISTS structured_load_runs (
     error_message   TEXT
 )
 """
+# The v2 note index (data-foundation plan, E13). Created by the v2 build in
+# src/retrieval/index_notes.py, outside the versioned migrations for the same
+# reason as the tables above. One row per chunk per build; several builds can
+# coexist and nothing here touches note_chunks. No HNSW index: runtime search is
+# an exact scan within one patient. chunk_id is a handle for citations at run
+# time, as in note_chunks; the stable identity of a chunk is its primary key.
+NOTE_CHUNKS_V2_SQL = """
+CREATE TABLE IF NOT EXISTS note_chunks_v2 (
+    build_id        VARCHAR(36) NOT NULL,       -- note_index_runs.run_id, the one LUMEN_CHUNK_BUILD selects
+    mimic_note_id   VARCHAR(40) NOT NULL,       -- the note's own id in MIMIC-IV-Note
+    section_ord     INTEGER NOT NULL,
+    chunk_ord       INTEGER NOT NULL,
+    note_id         INTEGER NOT NULL,           -- clinical_notes.note_id of the source row
+    subject_id      INTEGER NOT NULL,
+    hadm_id         INTEGER,
+    note_type       VARCHAR(30) NOT NULL,
+    charttime       TIMESTAMP,
+    section_name    TEXT NOT NULL,
+    char_start      INTEGER NOT NULL,           -- chunk_text == note text[char_start:char_end]
+    char_end        INTEGER NOT NULL,
+    chunk_text      TEXT NOT NULL,
+    token_count     INTEGER NOT NULL,           -- real tokenizer count, special tokens included
+    embed           BOOLEAN NOT NULL,
+    embedding       vector(768),                -- NULL exactly when embed is false
+    text_search     tsvector GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED,
+    section_search  tsvector GENERATED ALWAYS AS (to_tsvector('english', section_name)) STORED,
+    PRIMARY KEY (build_id, mimic_note_id, section_ord, chunk_ord),
+    CHECK (embed = (embedding IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_v2_patient ON note_chunks_v2 (build_id, subject_id, note_type);
+CREATE INDEX IF NOT EXISTS idx_chunks_v2_hadm ON note_chunks_v2 (build_id, hadm_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_v2_fts ON note_chunks_v2 USING GIN (text_search);
+ALTER TABLE note_chunks_v2 ADD COLUMN IF NOT EXISTS chunk_id BIGINT GENERATED ALWAYS AS IDENTITY;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_v2_chunk_id ON note_chunks_v2 (chunk_id)
+"""
+
 # The lab path filters by patient and item and orders by time.
 LAB_FULL_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS idx_labfull_subject_item_time "
                       "ON labevents_full (subject_id, itemid, charttime)")

@@ -21,7 +21,7 @@ from typing import Optional
 
 from sqlalchemy import text
 
-from src.config import CHUNK_BUILD, DATA_PROFILE, PROFILE_SETTINGS
+from src.config import CHUNK_BUILD, DATA_PROFILE, PROFILE_SETTINGS, QUERY_EXPANSION
 from src.retrieval.index_provenance import RETRIEVER_CHUNK_TABLES
 
 STRUCTURED_TABLES = ("labevents_full", "d_icd_diagnoses", "d_icd_procedures")
@@ -58,6 +58,15 @@ def retriever_problem(settings: Optional[dict] = None, supported: Optional[tuple
     if wanted in supported:
         return None
     return f"the profile reads {wanted}, but the retriever queries {', '.join(supported)} only"
+
+
+def expansion_problem(enabled: bool = QUERY_EXPANSION, settings: Optional[dict] = None) -> Optional[str]:
+    """Why query expansion cannot be honoured, or None. v2 retrieval does not
+    implement it, so the two together are refused, never quietly ignored."""
+    if enabled and needs(CHUNKS, settings):
+        return ("query expansion is enabled, but retrieval on note_chunks_v2 does not implement it: "
+                "turn LUMEN_QUERY_EXPANSION off for the v2 profile")
+    return None
 
 
 def structured_problem(conn) -> Optional[str]:
@@ -120,6 +129,9 @@ def problems(conn_factory=None, settings: Optional[dict] = None, build_id: Optio
     mismatch = retriever_problem(settings, supported)
     if mismatch:
         found.append({"component": RETRIEVER, "reason": mismatch})
+    unsupported = expansion_problem(settings=settings)
+    if unsupported:
+        found.append({"component": RETRIEVER, "reason": unsupported})
     return found
 
 
@@ -144,4 +156,4 @@ def require(component: str, conn_factory=None, settings: Optional[dict] = None,
 
 
 __all__ = ["CHUNKS", "DATA_PROFILE", "DataSourceNotReady", "RETRIEVER", "STRUCTURED", "chunk_build_problem",
-           "needs", "problems", "require", "retriever_problem", "structured_problem"]
+           "expansion_problem", "needs", "problems", "require", "retriever_problem", "structured_problem"]

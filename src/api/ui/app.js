@@ -31,11 +31,12 @@ const ERRORS = {
 };
 const NODE_NAMES = {
   triage: "Triage", lab_lookup: "Lab lookup (structured)", encounter_lookup: "Admissions lookup (structured)",
+  structured_lookup: "Orders / coded records lookup (structured)",
   patient_retrieval: "Patient retrieval", guideline_retrieval: "Guideline retrieval",
   literature_retrieval: "Literature retrieval", synthesis: "Synthesis", verification: "Verification",
   human_review: "Human review", finalize: "Finalize", refuse: "Refuse (out of scope)",
 };
-const SOURCE_KINDS = { S: "Patient note", L: "Structured lab result", A: "Admissions record", G: "Guideline", P: "Literature" };
+const SOURCE_KINDS = { S: "Patient note", L: "Structured lab result", A: "Admissions record", R: "Structured record", G: "Guideline", P: "Literature" };
 const REVIEW_STATUS = {
   auto_approved: "Verified automatically", pending: "Awaiting human review", reviewed: "Approved by reviewer",
   rejected: "Rejected by reviewer", escalated: "Escalated", failed: "Failed",
@@ -223,6 +224,7 @@ async function send(event) {
 
 function renderAnswer(container, text, msg) {
   container.textContent = "";
+  LumenReview.structuredLabels = ((msg && msg.resp && msg.resp.sources) || []).map((s) => s.label);
   for (const part of LumenReview.citationRuns(text)) {
     if (!part.labels) { container.append(part.text); continue; }
     // Several markers in a row become one chip; the answer text keeps them all.

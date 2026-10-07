@@ -73,7 +73,7 @@ temporarily sets it to `0` for an explicit download.
 |---|---|---|
 | `LUMEN_RRF_BM25_WEIGHT` | `1.5` | Full-text contribution to reciprocal-rank fusion. |
 | `LUMEN_RRF_VECTOR_WEIGHT` | `0.75` | MedCPT vector contribution to fusion. |
-| `LUMEN_QUERY_EXPANSION` | `0` | Enable deterministic clinical query expansion. |
+| `LUMEN_QUERY_EXPANSION` | `0` | Enable deterministic clinical query expansion. Not implemented for `LUMEN_DATA_PROFILE=v2`: with both set, `/ready` reports it and retrieval is refused (503) instead of searching without expansion. |
 | `LUMEN_HNSW_EF_SEARCH` | `1000` | pgvector HNSW search effort, clamped to 1–1000. |
 
 These are published tuned defaults. Changes alter index/query provenance and

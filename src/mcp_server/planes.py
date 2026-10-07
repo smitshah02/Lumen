@@ -11,9 +11,14 @@ Lumen's MCP server can serve two disjoint database planes:
             transport that could carry it off the machine. stdio + localhost
             only, no exceptions, enforced below rather than documented.
 
-Rule that applies to both planes: never read clinical_notes.text_original.
-That column holds raw MIMIC text. De-identified text lives in text_deid and
-note_chunks.chunk_text; those are the only readable sources.
+Rule that applies to both planes: all MIMIC text is DUA-restricted and stays on
+this machine, whichever column it is in (text_original is the note as PhysioNet
+distributes it, already de-identified; text_deid is that text after Presidio).
+The research plane therefore serves stdio and loopback only, enforced below.
+The control index (note_chunks) is built from text_deid; the v2 index
+(note_chunks_v2) is built from the note as written. Neither leaves the machine.
+The demo plane holds synthetic notes only and has no text_original at all
+(tests/test_demo_safety.py).
 """
 
 from __future__ import annotations

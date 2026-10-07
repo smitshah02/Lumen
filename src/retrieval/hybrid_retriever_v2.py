@@ -46,6 +46,7 @@ from sqlalchemy import text as sa_text
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from src.storage import engine
+from src.config import CHUNK_BUILD, DATA_PROFILE, PROFILE_SETTINGS, QUERY_EXPANSION
 from src.storage import readiness
 from src.retrieval.embeddings import MedCPTEmbedder, MODELS_DIR
 from src.obs.logging import obs_extra, add_timing
@@ -85,7 +86,6 @@ HNSW_EF_SEARCH = max(1, min(int(_os.environ.get("LUMEN_HNSW_EF_SEARCH", "1000"))
 # LUMEN_RRF_BM25_WEIGHT=1.0 LUMEN_RRF_VECTOR_WEIGHT=1.2 LUMEN_QUERY_EXPANSION=1.
 RRF_BM25_WEIGHT = float(_os.environ.get("LUMEN_RRF_BM25_WEIGHT", "1.5"))
 RRF_VECTOR_WEIGHT = float(_os.environ.get("LUMEN_RRF_VECTOR_WEIGHT", "0.75"))
-QUERY_EXPANSION = _os.environ.get("LUMEN_QUERY_EXPANSION", "0").strip().lower() in ("1", "true", "yes")
 # Patient-scoped fusion, selected on the development retrieval benchmark (42
 # questions). The patient-scoped lexical arm is a different ranker from the
 # corpus-wide one above (any-term, rarity-weighted, section-aware) and on that
@@ -214,6 +214,10 @@ class RetrievalResult:
 
     # Context: assembled text including adjacent chunks
     context_text: Optional[str] = None
+
+    # Where a v2 chunk comes from, stable across builds and profiles (see
+    # v2_provenance). None for note_chunks, whose results are unchanged.
+    provenance: Optional[dict] = None
 
 
 # ===========================================================================
@@ -536,6 +540,182 @@ def vector_search(
 
 
 # ===========================================================================
+# The v2 chunk table (data-foundation plan, E14)
+# ===========================================================================
+# The v2 profile searches note_chunks_v2, one selected build, one patient at a
+# time. Everything else in this module still reads note_chunks exactly as it
+# did. What differs for v2, and only this:
+#   * every query is pinned to the build and the patient;
+#   * the lexical arm reads the stored text and section search columns;
+#   * the dense arm is an exact scan of that patient's embedded chunks: no HNSW
+#     index and no ef_search; chunks that were not embedded take no part in it
+#     and stay findable by word;
+#   * a match is widened to its own section, in one query for all matches,
+#     where the control path widens to neighbouring chunks one query at a time.
+# Weights, fusion, reranking and temporal handling are shared and unchanged.
+
+CHUNK_TABLE = PROFILE_SETTINGS["chunk_table"]
+V2_TABLE = "note_chunks_v2"
+# chunk_index must order chunks within a note; a section never has 1000 chunks.
+_V2_COLUMNS = ("nc.chunk_id, nc.note_id, nc.subject_id, nc.hadm_id, nc.note_type, "
+               "(nc.section_ord * 1000 + nc.chunk_ord) AS chunk_index, nc.chunk_text, nc.token_count, nc.charttime")
+
+
+def v2_provenance(row: dict) -> dict:
+    """The identity of a v2 chunk that survives a rebuild and can be compared
+    with another profile's sources: which representation and build, which MIMIC
+    note, and which characters of it. chunk_id is a handle for this table only;
+    the same number in note_chunks, or in another build, is a different chunk."""
+    return {
+        "source_id": f"{V2_TABLE}:{row['build_id']}:{row['mimic_note_id']}:{row['section_ord']}:{row['chunk_ord']}",
+        "data_profile": DATA_PROFILE, "table": V2_TABLE, "build_id": row["build_id"],
+        "mimic_note_id": row["mimic_note_id"], "section_ord": row["section_ord"], "chunk_ord": row["chunk_ord"],
+        "start_offset": row["char_start"], "end_offset": row["char_end"], "chunk_id": row["chunk_id"],
+    }
+
+
+def _v2_rows(rows) -> list[dict]:
+    """Result rows as the shared pipeline expects them, each with its provenance."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["provenance"] = v2_provenance(r)
+        out.append(r)
+    return out
+
+
+def _refuse_unsupported_expansion(enabled: bool) -> None:
+    """v2 retrieval has no query expansion. Refuse the combination instead of
+    silently searching without it. A no-op for every other profile."""
+    problem = readiness.expansion_problem(enabled, {"chunk_table": CHUNK_TABLE})
+    if problem:
+        raise readiness.DataSourceNotReady(readiness.RETRIEVER, problem)
+
+
+def _v2_filters(build_id: str, subject_id: int, hadm_id, note_type, stay_window, params: dict) -> str:
+    """The WHERE every v2 query shares: this build, this patient, then the same
+    admission rule as the control path (the chart time is on the chunk row)."""
+    if not build_id or subject_id is None:
+        raise ValueError("the v2 index is searched for one build and one patient at a time")
+    params.update({"build_id": build_id, "subject_id": subject_id})
+    sql = " nc.build_id = :build_id AND nc.subject_id = :subject_id"
+    sql += _admission_clause(hadm_id, stay_window, params).replace("cn.charttime", "nc.charttime")
+    if note_type:
+        sql += " AND nc.note_type = :note_type"
+        params["note_type"] = note_type
+    return sql
+
+
+def lexical_search_v2(query: str, subject_id: int, build_id: str, hadm_id: Optional[int] = None,
+                      note_type: Optional[str] = None, top_n: int = 60, stay_window: Optional[tuple] = None) -> list[dict]:
+    """The patient lexical ranker (_patient_lexical_search) on note_chunks_v2:
+    any query term may match, terms are weighted by rarity among this patient's
+    chunks, and a term in the section name counts extra. Every chunk takes part,
+    embedded or not."""
+    with engine.connect() as conn:
+        parsed = conn.execute(
+            sa_text("SELECT plainto_tsquery('english', :query)::text"), {"query": query}
+        ).scalar() or ""
+        terms = list(dict.fromkeys(re.findall(r"'((?:[^']|'')+)'", parsed)))
+        if not terms:
+            return []
+        params = {"terms": terms, "top_n": top_n, "section_boost": SECTION_MATCH_BOOST}
+        where = _v2_filters(build_id, subject_id, hadm_id, note_type, stay_window, params)
+        sql = f"""
+            WITH base AS (
+                SELECT {_V2_COLUMNS}, nc.text_search, nc.section_search,
+                       nc.build_id, nc.mimic_note_id, nc.section_ord, nc.chunk_ord, nc.char_start, nc.char_end
+                FROM note_chunks_v2 nc
+                WHERE{where}
+            ),
+            terms AS (
+                SELECT quote_literal(term)::tsquery AS tq FROM unnest(CAST(:terms AS text[])) AS term
+            ),
+            weighted AS (
+                SELECT t.tq,
+                       ln(1 + (SELECT count(*) FROM base)::float
+                              / GREATEST((SELECT count(*) FROM base b
+                                          WHERE b.text_search @@ t.tq OR b.section_search @@ t.tq), 1)) AS idf
+                FROM terms t
+            )
+            SELECT b.chunk_id, b.note_id, b.subject_id, b.hadm_id, b.note_type,
+                   b.chunk_index, b.chunk_text, b.token_count, b.charttime,
+                   b.build_id, b.mimic_note_id, b.section_ord, b.chunk_ord, b.char_start, b.char_end,
+                   SUM(w.idf * (1 + ts_rank(b.text_search, w.tq, 1)
+                                + :section_boost * (b.section_search @@ w.tq)::int)) AS bm25_score
+            FROM base b JOIN weighted w ON b.text_search @@ w.tq OR b.section_search @@ w.tq
+            GROUP BY b.chunk_id, b.note_id, b.subject_id, b.hadm_id, b.note_type,
+                     b.chunk_index, b.chunk_text, b.token_count, b.charttime,
+                     b.build_id, b.mimic_note_id, b.section_ord, b.chunk_ord, b.char_start, b.char_end
+            ORDER BY bm25_score DESC, b.chunk_id ASC
+            LIMIT :top_n
+        """
+        rows = _v2_rows(conn.execute(sa_text(sql), params).mappings().all())
+    if rows:                                              # display only, as in bm25_search; fusion uses rank
+        scores = [r["bm25_score"] for r in rows]
+        low, span = min(scores), (max(scores) - min(scores)) or 1.0
+        for r in rows:
+            r["bm25_score"] = (r["bm25_score"] - low) / span
+    return rows
+
+
+def vector_search_v2(query_embedding: np.ndarray, subject_id: int, build_id: str, hadm_id: Optional[int] = None,
+                     note_type: Optional[str] = None, top_n: int = 60, stay_window: Optional[tuple] = None) -> list[dict]:
+    """Exact nearest chunks of one patient in one build. Only embedded chunks."""
+    if np.isnan(query_embedding).any() or np.all(query_embedding == 0):
+        logger.warning("Invalid query embedding (NaN or all-zero) — skipping vector search")
+        return []
+    params = {"query_vec": f"[{','.join(str(float(x)) for x in query_embedding)}]", "top_n": top_n}
+    where = _v2_filters(build_id, subject_id, hadm_id, note_type, stay_window, params)
+    sql = f"""
+        SELECT {_V2_COLUMNS}, nc.build_id, nc.mimic_note_id, nc.section_ord, nc.chunk_ord, nc.char_start, nc.char_end,
+               1 - (nc.embedding <=> CAST(:query_vec AS vector)) AS vector_score
+        FROM note_chunks_v2 nc
+        WHERE{where} AND nc.embed AND nc.embedding IS NOT NULL
+        ORDER BY nc.embedding <=> CAST(:query_vec AS vector), nc.chunk_id
+        LIMIT :top_n
+    """
+    with engine.connect() as conn:
+        return _v2_rows(conn.execute(sa_text(sql), params).mappings().all())
+
+
+def expand_context_v2(results: list[RetrievalResult], build_id: str, max_context_tokens: int = 600) -> list[RetrievalResult]:
+    """Widen each match to its own section: the matched chunk always, then the
+    section's other chunks nearest first while the budget allows. One query for
+    all results; never a chunk from another section, note or build."""
+    if not results:
+        return results
+    sql = """
+        SELECT m.chunk_id AS match_id, s.chunk_id, s.chunk_ord, s.chunk_text, s.token_count
+        FROM note_chunks_v2 m
+        JOIN note_chunks_v2 s ON s.build_id = m.build_id AND s.mimic_note_id = m.mimic_note_id
+                              AND s.section_ord = m.section_ord
+        WHERE m.build_id = :build_id AND m.chunk_id = ANY(:ids)
+        ORDER BY m.chunk_id, s.chunk_ord
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(sa_text(sql), {"build_id": build_id, "ids": [r.chunk_id for r in results]}).mappings().all()
+    sections: dict[int, list[dict]] = {}
+    for row in rows:
+        sections.setdefault(row["match_id"], []).append(dict(row))
+    for r in results:
+        siblings = sections.get(r.chunk_id, [])
+        matched = next((c for c in siblings if c["chunk_id"] == r.chunk_id), None)
+        if matched is None:                               # never substitute another chunk for the match
+            r.context_text = r.chunk_text
+            continue
+        kept, total = [matched], matched["token_count"] or 0
+        for c in sorted(siblings, key=lambda c: abs(c["chunk_ord"] - matched["chunk_ord"])):
+            tokens = c["token_count"] or 0
+            if c is not matched and total + tokens <= max_context_tokens:
+                kept.append(c)
+                total += tokens
+        r.context_text = "".join(c["chunk_text"] for c in sorted(kept, key=lambda c: c["chunk_ord"]))
+        r.token_count = total
+    return results
+
+
+# ===========================================================================
 # Context Window Expansion
 # ===========================================================================
 
@@ -646,6 +826,7 @@ def reciprocal_rank_fusion(
                 chunk_text=row["chunk_text"],
                 token_count=row["token_count"],
                 charttime=str(row["charttime"]) if row.get("charttime") else None,
+                provenance=row.get("provenance"),
             )
         merged[cid].bm25_score = float(row.get("bm25_score", 0))
         merged[cid].rrf_score += bm25_weight / (k + rank + 1)
@@ -666,6 +847,7 @@ def reciprocal_rank_fusion(
                 chunk_text=row["chunk_text"],
                 token_count=row["token_count"],
                 charttime=str(row["charttime"]) if row.get("charttime") else None,
+                provenance=row.get("provenance"),
             )
         merged[cid].vector_score = float(row.get("vector_score", 0))
         merged[cid].rrf_score += vector_weight / (k + rank + 1)
@@ -1094,6 +1276,7 @@ class HybridRetriever:
         max_per_note: int = 2,
     ):
         self.use_reranker = use_reranker
+        _refuse_unsupported_expansion(use_query_expansion)
         self.use_query_expansion = use_query_expansion
         self.use_context_window = use_context_window
         self.bm25_top_n = bm25_top_n
@@ -1136,6 +1319,7 @@ class HybridRetriever:
         # Never search a note index that is missing, still building or failed
         # (no-op unless the profile selects the v2 index). Raises; no fallback.
         readiness.require(readiness.CHUNKS)
+        _refuse_unsupported_expansion(self.use_query_expansion)
         t0 = time.perf_counter()   # monotonic: wall clock can jump (e.g. VM time sync)
         stages: dict = {}          # per-stage wall time (ms) of this call; kept as self.last_stages
 
@@ -1167,9 +1351,14 @@ class HybridRetriever:
             if expansions:
                 logger.debug(f"  Expanded: +{len(expansions)} terms")
 
+        v2 = CHUNK_TABLE == V2_TABLE                    # the v2 profile; every other profile takes the calls below unchanged
+
         # Stage 2: BM25 search (with expansions)
         with _stage(stages, "lexical_search"):
-            bm25_results = bm25_search(
+            bm25_results = lexical_search_v2(
+                retrieval_query, subject_id, CHUNK_BUILD, hadm_id=hadm_id, note_type=note_type,
+                top_n=bm25_top_n, stay_window=stay_window,
+            ) if v2 else bm25_search(
                 query=retrieval_query,
                 expansions=expansions,
                 subject_id=subject_id,
@@ -1184,7 +1373,10 @@ class HybridRetriever:
         with _stage(stages, "query_embedding"):
             query_vec = self.embedder.embed_query(retrieval_query)
         with _stage(stages, "vector_search"):
-            vec_results = vector_search(
+            vec_results = vector_search_v2(
+                query_vec, subject_id, CHUNK_BUILD, hadm_id=hadm_id, note_type=note_type,
+                top_n=vector_top_n, stay_window=stay_window,
+            ) if v2 else vector_search(
                 query_embedding=query_vec,
                 subject_id=subject_id,
                 hadm_id=hadm_id,
@@ -1216,7 +1408,7 @@ class HybridRetriever:
         candidates = merged[:self.rerank_candidates]
         if self.use_context_window:
             with _stage(stages, "context_expansion"):
-                candidates = expand_context(
+                candidates = expand_context_v2(candidates, CHUNK_BUILD, max_context_tokens=600) if v2 else expand_context(
                     candidates,
                     window=self.context_window,
                     max_context_tokens=600,

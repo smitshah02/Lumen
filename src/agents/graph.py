@@ -38,10 +38,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
-from src.agents.admission_scope import (AdmissionResolution, load_admissions, load_stay_window,
-                                        resolve_admission)
+from src.agents.admission_scope import (AdmissionResolution, descriptive_reference, load_admissions,
+                                        load_candidates, load_stay_window, resolve_admission,
+                                        resolve_with_model)
 from src.config import PROFILE_SETTINGS
 from src.storage.readiness import DataSourceNotReady
+from src.generation import structured_lookup as structured
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
                                  wants_deterministic_lab, wants_encounter_lookup)
@@ -123,6 +125,8 @@ def _to_evidence(results, prefix: str, source_type: str) -> list[dict]:
             "score": round(float(r.final_score), 4),
             "label": f"{prefix}{i}",
         })
+        if getattr(r, "provenance", None):          # v2 chunks only; other evidence is unchanged
+            out[-1]["provenance"] = r.provenance
     return out
 
 def _gate_for(state: AgentState) -> EgressGate:
@@ -137,6 +141,7 @@ def _gate_for(state: AgentState) -> EgressGate:
     gate.load_evidence(state.get("guideline_evidence", []) or [])
     gate.load_evidence(state.get("lab_evidence", []) or [])
     gate.load_evidence(state.get("encounter_evidence", []) or [])
+    gate.load_evidence(state.get("structured_evidence", []) or [])
     return gate
 
 
@@ -245,8 +250,18 @@ def _admission_scope(query: str, subject_id: int, request_hadm_id: Optional[int]
         logger.warning(f"[triage] admissions lookup failed ({type(e).__name__}); admission scope unresolved")
         return AdmissionResolution("unresolved", query.strip(), reason="admissions lookup failed")
     res = resolve_admission(query, admissions, request_hadm_id)
+    # Model step: only for the structured and v2 profiles, only when the rules found
+    # no admission reference at all, and only when the question describes one.
+    if res.status == "none" and PROFILE_SETTINGS["sql_paths"] and descriptive_reference(query):
+        res = resolve_with_model(query, load_candidates(subject_id), _ask_admission_model)
     logger.info(f"[triage] admission_scope status={res.status} hadm_id={res.hadm_id} source={res.source}")
     return res
+
+
+def _ask_admission_model(prompt: str) -> str:
+    # The verify role is the fast tier in JSON mode with room for a quoted line; one attempt, no retries.
+    return chat_for("verify", [{"role": "system", "content": prompts.ADMISSION_SYSTEM},
+                               {"role": "user", "content": prompt}], max_retries=0)
 
 
 def lab_lookup(state: AgentState) -> dict:
@@ -446,6 +461,53 @@ def encounter_lookup(state: AgentState) -> dict:
                          "deterministic": len(claims), "llm_checked": 0},
         "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
         "node_trail": _trail(state, "encounter_lookup"),
+    }
+
+
+def _structured_request(state: AgentState) -> Optional[tuple[str, int]]:
+    """(kind, hadm_id) when this question goes to a structured table: the
+    profile enables SQL paths, one admission was resolved, and the wording
+    clearly asks for that table. Otherwise None, and nothing is queried."""
+    scope = state.get("admission_scope") or {}
+    if not PROFILE_SETTINGS["sql_paths"] or scope.get("status") != "resolved" or state.get("subject_id") is None:
+        return None
+    kind = structured.structured_kind(scope.get("retrieval_query") or state.get("query") or "")
+    return (kind, scope["hadm_id"]) if kind else None
+
+
+def structured_lookup(state: AgentState) -> dict:
+    """Answer an inpatient-orders, coded-diagnoses or coded-procedures question
+    for the resolved admission straight from its table. No rows is a miss and
+    the question goes to note retrieval. Unusable structured data is an error
+    and is raised, never retrieved around."""
+    kind, hadm_id = _structured_request(state)
+    sid = state["subject_id"]
+    try:
+        rows = structured.fetch(kind, sid, hadm_id)
+    except DataSourceNotReady:
+        raise
+    except SQLAlchemyError as e:
+        logger.warning(f"[structured_lookup] {kind} lookup failed ({type(e).__name__}); falling back to retrieval")
+        return {"node_trail": _trail(state, "structured_lookup")}
+    if not rows:
+        logger.info(f"[structured_lookup] no {kind} rows for hadm_id={hadm_id} — using retrieval")
+        return {"node_trail": _trail(state, "structured_lookup")}
+    sentences, evidence = structured.render(kind, rows, sid, hadm_id)
+    label, table = evidence["label"], evidence["source_type"]
+    claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
+               "verification_note": f"deterministic: read directly from the {table} table"}
+              for sentence in sentences]
+    answer = "\n".join(c["claim"] for c in claims)
+    bump("deterministic_answer")
+    bump("deterministic_verified", len(claims))
+    logger.info(f"[structured_lookup] answered {kind} for hadm_id={hadm_id} from {len(rows)} row(s), 0 LLM calls")
+    return {
+        "structured_evidence": [evidence], "draft_answer": answer, "final_answer": answer, "citations": claims,
+        "verification": {"checked": 0, "unsupported": 0, "synthesis_failed": False,
+                         "deterministic": len(claims), "llm_checked": 0},
+        "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
+        "admission_scope_applied": True,             # the rows are that admission's and no other's
+        "node_trail": _trail(state, "structured_lookup"),
     }
 
 
@@ -756,7 +818,8 @@ def verification(state: AgentState) -> dict:
                                   (state.get("guideline_evidence", []) or []) +
                                   _citable_literature(state) +
                                   (state.get("lab_evidence", []) or []) +
-                                  (state.get("encounter_evidence", []) or [])}
+                                  (state.get("encounter_evidence", []) or []) +
+                                  (state.get("structured_evidence", []) or [])}
     cites = state.get("citations", []) or []
     out: list[dict] = [dict(c) for c in cites]
     unsupported = 0
@@ -936,7 +999,8 @@ def human_review(state: AgentState) -> dict:
                                   (state.get("guideline_evidence", []) or []) +
                                   (state.get("literature_evidence", []) or []) +
                                   (state.get("lab_evidence", []) or []) +
-                                  (state.get("encounter_evidence", []) or [])}
+                                  (state.get("encounter_evidence", []) or []) +
+                                  (state.get("structured_evidence", []) or [])}
 
     payload = {
         "query": state.get("query", ""),
@@ -1036,6 +1100,8 @@ def route_from_triage(state: AgentState) -> str:
         return "refuse"
     if qt in ("guideline_check", "literature"):
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
+    if _structured_request(state):
+        return "structured_lookup"
     if DETERMINISTIC_LABS and wants_encounter_lookup(
             _decision_of(state), state.get("query") or "", state.get("subject_id")):
         return "encounter_lookup"
@@ -1060,6 +1126,10 @@ def route_after_lab_lookup(state: AgentState) -> str:
     """A structured hit is already a finished, cited, verified answer. A miss
     falls through to the normal retrieval path with nothing lost."""
     return "finalize" if state.get("lab_evidence") else "patient_retrieval"
+
+
+def route_after_structured_lookup(state: AgentState) -> str:
+    return "finalize" if state.get("structured_evidence") else "patient_retrieval"
 
 
 def route_after_encounter_lookup(state: AgentState) -> str:
@@ -1094,11 +1164,14 @@ def _builder() -> StateGraph:
     b.add_node("literature_retrieval", literature_retrieval)
     b.add_node("lab_lookup", lab_lookup)
     b.add_node("encounter_lookup", encounter_lookup)
+    b.add_node("structured_lookup", structured_lookup)
 
     b.add_edge(START, "triage")
     b.add_conditional_edges("triage", route_from_triage,
                             ["patient_retrieval", "guideline_retrieval", "lab_lookup",
-                             "encounter_lookup", "refuse"])
+                             "encounter_lookup", "structured_lookup", "refuse"])
+    b.add_conditional_edges("structured_lookup", route_after_structured_lookup,
+                            ["finalize", "patient_retrieval"])
     b.add_conditional_edges("encounter_lookup", route_after_encounter_lookup,
                             ["finalize", "patient_retrieval"])
     b.add_conditional_edges("lab_lookup", route_after_lab_lookup,

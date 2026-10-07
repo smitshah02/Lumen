@@ -167,3 +167,8 @@ def validate_model_endpoint(
             "LUMEN_RESEARCH_ALLOW_REMOTE_MODELS=1"
         )
     return value
+
+
+# Corpus-wide query expansion (off in every evaluated configuration). Read here
+# so readiness can refuse it for a profile whose retrieval does not implement it.
+QUERY_EXPANSION = os.environ.get("LUMEN_QUERY_EXPANSION", "0").strip().lower() in ("1", "true", "yes")

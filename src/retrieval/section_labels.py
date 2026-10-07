@@ -58,6 +58,8 @@ _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _WINDOW = 6          # consecutive words used to find a chunk inside its note
 
 
+PARSER_VERSION = "section-parser-v1"      # recorded with every v2 build; bump when parse_sections changes its output
+
 # The radiology report template. A report with none of these is one section.
 RADIOLOGY_HEADERS = ("Examination", "Indication", "Technique", "Comparison", "Findings", "Impression")
 _RADIOLOGY_RE = re.compile(r"(?im)^[ \t]*(?P<name>" + "|".join(RADIOLOGY_HEADERS) + r")[ \t]*:")
