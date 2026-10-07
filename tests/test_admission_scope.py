@@ -34,6 +34,25 @@ RESOLVED = [
      "During her last admission", "what happened to her kidney function?"),
     ("What antibiotics were given in the most recent hospitalization?", 2000400, "rule:last",
      "in the most recent hospitalization", "What antibiotics were given?"),
+    # admitted on / discharged on <date>: the verb stays in the question
+    ("What was the plan when she was admitted on 2180-06-26?", 2000200, "rule:date",
+     "admitted on 2180-06-26", "What was the plan when she was admitted?"),
+    ("What medications was she taking when discharged on 2180-05-07?", 2000100, "rule:date",
+     "discharged on 2180-05-07", "What medications was she taking when discharged?"),
+    # nth admission, by admit time
+    ("During the second admission, what was the chief complaint?", 2000200, "rule:ordinal",
+     "During the second admission", "what was the chief complaint?"),
+    ("What imaging was done in her 3rd hospitalization?", 2000300, "rule:ordinal",
+     "in her 3rd hospitalization", "What imaging was done?"),
+    ("What happened in the fourth admission to her sodium?", 2000400, "rule:ordinal",
+     "in the fourth admission", "What happened to her sodium?"),
+    # previous admission, anchored by one other explicit reference
+    ("What was the creatinine in the admission before her last admission?", 2000300, "rule:previous",
+     "in the admission before; her last admission", "What was the creatinine?"),
+    ("In the hospitalization prior to hadm_id 2000300, what was the discharge diagnosis?", 2000200, "rule:previous",
+     "In the hospitalization prior to; hadm_id 2000300", "what was the discharge diagnosis?"),
+    ("What was done in the admission before the admission that ended on 2180-06-27?", 2000100, "rule:previous",
+     "in the admission before; the admission that ended on 2180-06-27", "What was done?"),
 ]
 
 
@@ -51,6 +70,17 @@ NOT_APPLIED = [
     # 2180-08-07 is inside two stays: never pick one
     ("What happened during the admission on 2180-08-07?", "ambiguous", "rule:date", "2 admissions match: [2000300, 2000400]"),
     ("Compare her first admission with her last admission.", "ambiguous", None, "more than one admission"),
+    # admitted on / discharged on a date that matches nothing, or the wrong end of a stay
+    ("What was the plan when she was admitted on 2180-05-07?", "unresolved", "rule:date", "no admission matches 2180-05-07"),
+    ("What was she taking when discharged on 2180-05-06?", "unresolved", "rule:date", "no admission matches 2180-05-06"),
+    # nth beyond the record
+    ("What happened in the seventh admission?", "unresolved", "rule:ordinal", "has 4 admissions on record, not 7"),
+    # previous admission is never guessed
+    ("What happened in the previous admission?", "unresolved", "rule:previous", "no anchor admission"),
+    ("What happened in the admission before her first admission?", "unresolved", "rule:previous", "no admission precedes hadm_id 2000100"),
+    ("What happened in the admission before the admission on 2180-08-07?", "ambiguous", "rule:previous", "anchor admission is not unique"),
+    ("What happened in the admission before the admission that ended on 2181-01-01?", "unresolved", "rule:previous", "anchor admission is unknown"),
+    ("In the previous admission, before the second admission and the last admission, what happened?", "ambiguous", "rule:previous", "more than one admission"),
 ]
 
 
@@ -69,6 +99,11 @@ NO_REFERENCE = [
     "What were the admission labs?",                            # "admission" with no date or ordinal
     "What was her last creatinine?",                            # "last" without an admission word
     "Was she taking aspirin for the first 3 days after the stent?",
+    "What was she discharged on?",                              # "discharged on" with no date
+    "Was the second dose of vancomycin given?",                 # an ordinal with no admission word
+    "What did the previous chest x-ray show?",                  # "previous" with no admission word
+    "Was she admitted on aspirin?",
+    "What was she taking on admission before the stent was placed?",
 ]
 
 
@@ -114,3 +149,26 @@ def test_triage_records_scope_only_for_profiles_that_enable_it(monkeypatch):
     assert calls == [7] and (scope["status"], scope["hadm_id"], scope["source"]) == ("resolved", 2000400, "rule:last")
     assert scope["retrieval_query"] == "what happened to her kidney function?"
     assert "admission_scope" not in g.triage({"query": state["query"], "subject_id": None})   # no patient, no scope
+
+
+def test_request_hadm_id_wins_even_when_the_question_says_previous_admission():
+    q = "What was the creatinine in the previous admission?"
+    r = resolve_admission(q, ADMISSIONS, request_hadm_id=2000300)
+    assert (r.status, r.hadm_id, r.source, r.phrase, r.retrieval_query) == ("resolved", 2000300, "request", None, q)
+    # also when the question carries its own anchor: the request still wins
+    anchored = "What was the creatinine in the admission before her last admission?"
+    r = resolve_admission(anchored, ADMISSIONS, request_hadm_id=2000100)
+    assert (r.status, r.hadm_id, r.source, r.retrieval_query) == ("resolved", 2000100, "request", anchored)
+    bad = resolve_admission(q, ADMISSIONS, request_hadm_id=555)
+    assert (bad.status, bad.hadm_id, bad.source) == ("unresolved", None, "request")
+
+
+def test_nth_and_previous_do_not_guess_across_tied_admit_times():
+    tied = [(1, datetime(2180, 1, 1, 8), None), (2, datetime(2180, 2, 1, 8), None), (3, datetime(2180, 2, 1, 8), None),
+            (4, datetime(2180, 3, 1, 8), None)]
+    second = resolve_admission("What happened in the second admission?", tied)
+    assert (second.status, second.hadm_id) == ("ambiguous", None) and "[2, 3]" in second.reason
+    assert resolve_admission("What happened in the first admission?", tied).hadm_id == 1
+    prev = resolve_admission("What happened in the admission before hadm_id 4000004?",
+                             [(i + 4000000, t, d) for i, t, d in tied])
+    assert (prev.status, prev.hadm_id, prev.source) == ("ambiguous", None, "rule:previous")
