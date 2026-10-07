@@ -13,8 +13,7 @@ the grounding chain.
 from __future__ import annotations
 
 import operator
-from typing import Optional, Literal, Annotated
-from typing_extensions import TypedDict
+from typing import Optional, Literal, Annotated, TypedDict
 
 
 QueryType = Literal[
