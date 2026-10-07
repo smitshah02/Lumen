@@ -64,6 +64,9 @@ class AgentState(TypedDict, total=False):
     temporal_mode: str        # from detect_temporal_mode()
     query_complexity: str     # "simple" | "complex" — picks the synthesis tier
     classified_by: str        # "rules" | "fast_model" — was a model call needed
+    # Which admission the question names (src/agents/admission_scope.py). Set
+    # only by profiles with admission scoping; absent under `control`.
+    admission_scope: dict
 
     # --- evidence ---
     patient_evidence: list[Evidence]

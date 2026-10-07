@@ -33,10 +33,13 @@ from psycopg.rows import dict_row
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
+from src.agents.admission_scope import AdmissionResolution, load_admissions, resolve_admission
+from src.config import PROFILE_SETTINGS
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
                                  wants_deterministic_lab, wants_encounter_lookup)
@@ -223,9 +226,25 @@ def triage(state: AgentState) -> dict:
 
     logger.info(f"[triage] type={qtype} complexity={complexity} temporal={temporal} "
                 f"rule={d.reason} llm={not d.confident} target={target!r}")
-    return {"query_type": qtype, "temporal_mode": temporal, "query_complexity": complexity,
-            "classified_by": "rules" if d.confident else "fast_model",
-            "node_trail": _trail(state, "triage")}
+    out = {"query_type": qtype, "temporal_mode": temporal, "query_complexity": complexity,
+           "classified_by": "rules" if d.confident else "fast_model",
+           "node_trail": _trail(state, "triage")}
+    if PROFILE_SETTINGS["admission_scope"] and state.get("subject_id") is not None:
+        out["admission_scope"] = _admission_scope(query, state["subject_id"]).as_state()
+    return out
+
+
+def _admission_scope(query: str, subject_id: int) -> AdmissionResolution:
+    """Which admission the question names. Recorded for later stages; retrieval
+    does not use it yet (E4)."""
+    try:
+        admissions = load_admissions(subject_id)
+    except SQLAlchemyError as e:
+        logger.warning(f"[triage] admissions lookup failed ({type(e).__name__}); admission scope unresolved")
+        return AdmissionResolution("unresolved", query.strip(), reason="admissions lookup failed")
+    res = resolve_admission(query, admissions)
+    logger.info(f"[triage] admission_scope status={res.status} hadm_id={res.hadm_id} source={res.source}")
+    return res
 
 
 def lab_lookup(state: AgentState) -> dict:
