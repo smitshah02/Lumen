@@ -38,7 +38,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.storage import engine
 from src.storage.checkpoints import checkpoint_schema_status
 from src.agents.state import AgentState
-from src.agents.admission_scope import AdmissionResolution, load_admissions, resolve_admission
+from src.agents.admission_scope import (AdmissionResolution, load_admissions, load_stay_window,
+                                        resolve_admission)
 from src.config import PROFILE_SETTINGS
 from src.agents import prompts, citations, verify as verify_util
 from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
@@ -230,19 +231,19 @@ def triage(state: AgentState) -> dict:
            "classified_by": "rules" if d.confident else "fast_model",
            "node_trail": _trail(state, "triage")}
     if PROFILE_SETTINGS["admission_scope"] and state.get("subject_id") is not None:
-        out["admission_scope"] = _admission_scope(query, state["subject_id"]).as_state()
+        out["admission_scope"] = _admission_scope(query, state["subject_id"],
+                                                  state.get("request_hadm_id")).as_state()
     return out
 
 
-def _admission_scope(query: str, subject_id: int) -> AdmissionResolution:
-    """Which admission the question names. Recorded for later stages; retrieval
-    does not use it yet (E4)."""
+def _admission_scope(query: str, subject_id: int, request_hadm_id: Optional[int] = None) -> AdmissionResolution:
+    """Which admission the question names; patient_retrieval scopes to it."""
     try:
         admissions = load_admissions(subject_id)
     except SQLAlchemyError as e:
         logger.warning(f"[triage] admissions lookup failed ({type(e).__name__}); admission scope unresolved")
         return AdmissionResolution("unresolved", query.strip(), reason="admissions lookup failed")
-    res = resolve_admission(query, admissions)
+    res = resolve_admission(query, admissions, request_hadm_id)
     logger.info(f"[triage] admission_scope status={res.status} hadm_id={res.hadm_id} source={res.source}")
     return res
 
@@ -552,11 +553,19 @@ def patient_retrieval(state: AgentState) -> dict:
     add_timing("retriever_load_ms", (time.perf_counter() - t0) * 1000)   # ~0 once loaded
     with tracing.span("patient_retrieval", subject_id=state.get("subject_id"),
                       query=state["query"]) as s:
+        # Admission scope: only for profiles that enable it, and only when the
+        # question resolved to exactly one admission. Otherwise the call below
+        # is the patient-wide search it has always been.
+        scope = state.get("admission_scope") or {}
+        scoped = PROFILE_SETTINGS["admission_scope"] and scope.get("status") == "resolved"
+        admission = ({"hadm_id": scope["hadm_id"], "stay_window": load_stay_window(scope["hadm_id"])}
+                     if scoped else {})
         results = retriever.search(
-            query=state["query"],
+            query=scope["retrieval_query"] if scoped else state["query"],
             subject_id=state.get("subject_id"),
             temporal_filter=state.get("temporal_mode") or "auto",
             top_k=PATIENT_TOP_K,
+            **admission,
         )
         # The retriever chooses evidence by relevance plus a preference for the
         # newest (or oldest) date. The chosen few are then shown in time order,
@@ -571,7 +580,10 @@ def patient_retrieval(state: AgentState) -> dict:
             s.update(output={"n": len(ev), "chunk_ids": [e["chunk_id"] for e in ev],
                              "top_score": ev[0]["score"] if ev else None})
     logger.info(f"[patient_retrieval] {len(ev)} chunks")
-    return {"patient_evidence": ev, "node_trail": _trail(state, "patient_retrieval")}
+    out = {"patient_evidence": ev, "node_trail": _trail(state, "patient_retrieval")}
+    if scoped:
+        out["admission_scope_applied"] = True
+    return out
 
 
 def guideline_retrieval(state: AgentState) -> dict:

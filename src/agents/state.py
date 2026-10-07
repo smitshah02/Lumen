@@ -58,6 +58,9 @@ class AgentState(TypedDict, total=False):
     query: str
     subject_id: Optional[int]
     thread_id: str
+    # The admission the caller stated on the request, already checked to be
+    # this subject's. Absent when none was given.
+    request_hadm_id: int
 
     # --- triage ---
     query_type: QueryType
@@ -67,6 +70,8 @@ class AgentState(TypedDict, total=False):
     # Which admission the question names (src/agents/admission_scope.py). Set
     # only by profiles with admission scoping; absent under `control`.
     admission_scope: dict
+    # True only when patient_retrieval actually searched within that admission.
+    admission_scope_applied: bool
 
     # --- evidence ---
     patient_evidence: list[Evidence]

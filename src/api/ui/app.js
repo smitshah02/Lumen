@@ -266,6 +266,13 @@ function renderBubble(msg) {
                    (msg.overridden ? " — " + LumenReview.plural(msg.overridden, "verifier flag", "verifier flags") + " overridden" : "")));
   }
   else if (r.status === "refused") node.append(el("div", "banner neutral", "Out of scope — not answered"));
+  // An admission was asked for but the answer was not limited to it: say so.
+  const scope = r.admission_scope;
+  if (scope && scope.requested && !scope.applied) {
+    const warning = el("div", "banner scope", "Admission scope was not applied to this answer.");
+    if (scope.reason) warning.append(el("div", "scope-reason", scope.reason));
+    node.append(warning);
+  }
 
   const body = el("div", "body");
   renderAnswer(body, r.answer || "(no answer text)", msg);

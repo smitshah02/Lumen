@@ -18,14 +18,19 @@ fixed list of template headers, so no note content is copied into them.
     python -m src.retrieval.section_labels            # label chunks that have none
     python -m src.retrieval.section_labels --all      # relabel everything
 
-ponytail: discharge summaries only. Radiology notes have no stable exam-title
-line (45% carry "EXAMINATION:"); add when a reliable source for it exists.
+`parse_sections` (data-foundation plan, E11) is the note-type-aware parser: it
+cuts a note as written into its sections, in order, with character offsets.
+It uses the same header list, so there is one definition of a discharge header.
+
+ponytail: label_chunks covers discharge summaries only; parse_sections covers
+radiology through its six template headers and nothing else.
 """
 from __future__ import annotations
 
 import argparse
 import bisect
 import re
+from dataclasses import dataclass
 
 # header pattern -> label. The MIMIC-IV discharge summary template, in note order.
 STANDARD_HEADERS = (
@@ -51,6 +56,48 @@ _HEADER_RE = re.compile(
     r"(?im)^[ \t]*(?:" + "|".join(f"(?P<h{i}>{p})" for i, (p, _) in enumerate(STANDARD_HEADERS)) + r")[ \t]*:")
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _WINDOW = 6          # consecutive words used to find a chunk inside its note
+
+
+# The radiology report template. A report with none of these is one section.
+RADIOLOGY_HEADERS = ("Examination", "Indication", "Technique", "Comparison", "Findings", "Impression")
+_RADIOLOGY_RE = re.compile(r"(?im)^[ \t]*(?P<name>" + "|".join(RADIOLOGY_HEADERS) + r")[ \t]*:")
+PREAMBLE = "Header"           # text before the first header (name, dates, service ...)
+WHOLE_REPORT = "Report"       # a radiology report with no template header
+
+
+@dataclass(frozen=True)
+class Section:
+    name: str       # canonical header label, PREAMBLE or WHOLE_REPORT
+    order: int      # position in the note, from 0; a repeated header is a new section
+    start: int      # offset of the section's first character (the start of its header line)
+    end: int        # offset one past its last character
+    text: str       # note[start:end], verbatim: header line, newlines and all
+
+
+def parse_sections(text: str, note_type: str) -> list[Section]:
+    """Cut a note as written into ordered sections with source offsets.
+
+    A header is a template header at the start of a line followed by a colon,
+    so "Appointment with Dr. X" or "Planned discharge tomorrow" opens nothing.
+    Sections run from one header to the next and never overlap; a header that
+    appears twice makes two sections, in note order. Nothing is rewritten:
+    `text[s.start:s.end] == s.text` for every section."""
+    text = text or ""
+    if not text.strip():
+        return []
+    if note_type == "radiology":
+        found = [(m.start(), m.group("name").title()) for m in _RADIOLOGY_RE.finditer(text)]
+    else:
+        found = [(m.start(), STANDARD_HEADERS[int(m.lastgroup[1:])][1]) for m in _HEADER_RE.finditer(text)]
+    if not found:
+        return [Section(WHOLE_REPORT if note_type == "radiology" else PREAMBLE, 0, 0, len(text), text)]
+    spans = []
+    if text[:found[0][0]].strip():                       # real text before the first header
+        spans.append((0, PREAMBLE))
+    spans += found
+    ends = [start for start, _ in spans[1:]] + [len(text)]
+    return [Section(name, i, start, end, text[start:end])
+            for i, ((start, name), end) in enumerate(zip(spans, ends))]
 
 
 def label_chunks(note_text: str, chunk_texts: list[str]) -> list[str | None]:

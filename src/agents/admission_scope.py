@@ -19,8 +19,7 @@ patient-wide. Only a resolved reference is removed from the retrieval text.
 
 A date counts as an admission reference only when it is attached to an
 admission word; "the creatinine on 2180-05-06" is a clinical date and is left
-alone. The model-assisted step for descriptive references is E10, and applying
-the scope to retrieval is E4.
+alone. The model-assisted step for descriptive references is E10.
 
 ponytail: "the admission before the one that ended on <date>" (a pronoun
 anchor) and "next admission" are not recognised; add when a question set needs them.
@@ -81,6 +80,20 @@ def load_admissions(subject_id: int) -> list[tuple]:
         return [tuple(r) for r in c.execute(sa.text(
             "SELECT hadm_id, admittime, dischtime FROM admissions "
             "WHERE subject_id = :sid AND admittime IS NOT NULL ORDER BY admittime, hadm_id"), {"sid": subject_id})]
+
+
+# The stay window used to scope unlinked notes (decision R1): ED registration
+# when there is one, else the admit time, through the discharge time.
+STAY_WINDOW_SQL = ("SELECT COALESCE(edregtime, admittime) AS stay_start, dischtime AS stay_end "
+                   "FROM admissions WHERE hadm_id = :hadm_id")
+
+
+def load_stay_window(hadm_id: int) -> Optional[tuple]:
+    """(start, end) of one admission, or None when either bound is unknown."""
+    from src.storage import engine
+    with engine.connect() as c:
+        row = c.execute(sa.text(STAY_WINDOW_SQL), {"hadm_id": hadm_id}).first()
+    return (row[0], row[1]) if row and row[0] is not None and row[1] is not None else None
 
 
 def _day(value) -> Optional[date]:

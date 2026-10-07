@@ -29,7 +29,7 @@ def build_config(thread_id: str, tags=("lumen", "agent-graph"), metadata: dict |
 
 
 def run_once(graph, query: str, subject_id, thread_id: str, tags=("lumen", "agent-graph"),
-             metadata: dict | None = None) -> tuple[dict, dict]:
+             metadata: dict | None = None, hadm_id: int | None = None) -> tuple[dict, dict]:
     """One end-to-end graph run. Returns (invoke output, config). An output
     containing "__interrupt__" means the run is checkpointed at human_review.
 
@@ -43,7 +43,10 @@ def run_once(graph, query: str, subject_id, thread_id: str, tags=("lumen", "agen
     trace_md = {"thread_id": thread_id, "data_plane": DATA_PLANE,
                 "model": MAIN_MODEL, "model_fast": FAST_MODEL, **(metadata or {})}
     with tracing.root_trace("lumen.graph", session_id=thread_id, metadata=trace_md, tags=list(tags)):
-        out = graph.invoke({"query": query, "subject_id": subject_id, "thread_id": thread_id}, config=config)
+        state = {"query": query, "subject_id": subject_id, "thread_id": thread_id}
+        if hadm_id is not None:                      # absent unless the caller stated an admission
+            state["request_hadm_id"] = hadm_id
+        out = graph.invoke(state, config=config)
         tracing.annotate(query_type=out.get("query_type"), review_status=out.get("review_status"),
                          query_complexity=out.get("query_complexity"),
                          classified_by=out.get("classified_by"),

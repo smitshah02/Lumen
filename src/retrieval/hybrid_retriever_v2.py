@@ -224,6 +224,27 @@ class RetrievalResult:
 SECTION_MATCH_BOOST = 2.0
 
 
+# Admission scope (data-foundation plan, decision R1). A chunk belongs to the
+# admission when its note carries that hadm_id, or carries none and was charted
+# inside the stay. A note with another admission's id never matches, whatever
+# its time. Needs the `nc` and `cn` aliases every search here already uses.
+ADMISSION_SCOPE_SQL = (" AND (nc.hadm_id = :hadm_id OR (nc.hadm_id IS NULL"
+                       " AND cn.charttime BETWEEN :stay_start AND :stay_end))")
+
+
+def _admission_clause(hadm_id: Optional[int], stay_window: Optional[tuple], params: dict) -> str:
+    """The admission filter for a search, adding its parameters to `params`.
+    No hadm_id: no filter. hadm_id alone: the id must match, as before. With a
+    (start, end) stay window: unlinked notes inside the stay are kept too."""
+    if not hadm_id:
+        return ""
+    params["hadm_id"] = hadm_id
+    if not stay_window:
+        return " AND nc.hadm_id = :hadm_id"
+    params["stay_start"], params["stay_end"] = stay_window
+    return ADMISSION_SCOPE_SQL
+
+
 def _patient_lexical_search(
     query: str,
     subject_id: int,
@@ -231,6 +252,7 @@ def _patient_lexical_search(
     note_type: Optional[str],
     top_n: int,
     min_tokens: int,
+    stay_window: Optional[tuple] = None,
 ) -> list[dict]:
     """Rank one patient's chunks by the query terms they contain.
 
@@ -255,9 +277,7 @@ def _patient_lexical_search(
         filters = ""
         params = {"terms": terms, "subject_id": subject_id, "min_tokens": min_tokens,
                   "top_n": top_n, "section_boost": SECTION_MATCH_BOOST}
-        if hadm_id:
-            filters += " AND nc.hadm_id = :hadm_id"
-            params["hadm_id"] = hadm_id
+        filters += _admission_clause(hadm_id, stay_window, params)
         if note_type:
             filters += " AND nc.note_type = :note_type"
             params["note_type"] = note_type
@@ -302,6 +322,7 @@ def _strict_lexical_search(
     note_type: Optional[str],
     top_n: int,
     min_tokens: int,
+    stay_window: Optional[tuple] = None,
 ) -> list[dict]:
     """Corpus-wide search: every query term must be in the chunk.
 
@@ -321,9 +342,7 @@ def _strict_lexical_search(
           AND nc.chunk_text NOT LIKE '%Unit No:%'
     """
     params_and = {"query": query, "min_tokens": min_tokens}
-    if hadm_id:
-        sql_and += " AND nc.hadm_id = :hadm_id"
-        params_and["hadm_id"] = hadm_id
+    sql_and += _admission_clause(hadm_id, stay_window, params_and)
     if note_type:
         sql_and += " AND nc.note_type = :note_type"
         params_and["note_type"] = note_type
@@ -346,6 +365,7 @@ def bm25_search(
     note_type: Optional[str] = None,
     top_n: int = 60,
     min_tokens: int = 40,
+    stay_window: Optional[tuple] = None,
 ) -> list[dict]:
     """
     Chunk-level full-text search with query expansion.
@@ -363,9 +383,9 @@ def bm25_search(
     """
     # ---- Pass 1: original query, per-chunk rank ----
     if subject_id:
-        and_results = _patient_lexical_search(query, subject_id, hadm_id, note_type, top_n, min_tokens)
+        and_results = _patient_lexical_search(query, subject_id, hadm_id, note_type, top_n, min_tokens, stay_window)
     else:
-        and_results = _strict_lexical_search(query, hadm_id, note_type, top_n, min_tokens)
+        and_results = _strict_lexical_search(query, hadm_id, note_type, top_n, min_tokens, stay_window)
 
     # ---- Pass 2: OR match on expansion terms, per-chunk ----
     or_results = []
@@ -398,9 +418,7 @@ def bm25_search(
             if subject_id:
                 sql_or += " AND nc.subject_id = :subject_id"
                 params_or["subject_id"] = subject_id
-            if hadm_id:
-                sql_or += " AND nc.hadm_id = :hadm_id"
-                params_or["hadm_id"] = hadm_id
+            sql_or += _admission_clause(hadm_id, stay_window, params_or)
             if note_type:
                 sql_or += " AND nc.note_type = :note_type"
                 params_or["note_type"] = note_type
@@ -454,6 +472,7 @@ def vector_search(
     note_type: Optional[str] = None,
     top_n: int = 60,
     min_tokens: int = 40,
+    stay_window: Optional[tuple] = None,
 ) -> list[dict]:
     """
     Vector similarity search with minimum chunk size filter.
@@ -483,9 +502,7 @@ def vector_search(
     if subject_id:
         sql += " AND nc.subject_id = :subject_id"
         params["subject_id"] = subject_id
-    if hadm_id:
-        sql += " AND nc.hadm_id = :hadm_id"
-        params["hadm_id"] = hadm_id
+    sql += _admission_clause(hadm_id, stay_window, params)
     if note_type:
         sql += " AND nc.note_type = :note_type"
         params["note_type"] = note_type
@@ -1107,9 +1124,13 @@ class HybridRetriever:
         note_type: Optional[str] = None,
         temporal_filter: str = "auto",
         top_k: int = 10,
+        stay_window: Optional[tuple] = None,
     ) -> list[RetrievalResult]:
         """
         Run the full hybrid retrieval pipeline.
+
+        `hadm_id` with `stay_window` (start, end) scopes the search to one
+        admission: its own notes plus unlinked notes charted inside the stay.
         """
         t0 = time.perf_counter()   # monotonic: wall clock can jump (e.g. VM time sync)
         stages: dict = {}          # per-stage wall time (ms) of this call; kept as self.last_stages
@@ -1152,6 +1173,7 @@ class HybridRetriever:
                 note_type=note_type,
                 top_n=bm25_top_n,
                 min_tokens=self.min_chunk_tokens,
+                stay_window=stay_window,
             )
 
         # Stage 3: Vector search
@@ -1165,6 +1187,7 @@ class HybridRetriever:
                 note_type=note_type,
                 top_n=vector_top_n,
                 min_tokens=self.min_chunk_tokens,
+                stay_window=stay_window,
             )
 
         with _stage(stages, "fusion"):

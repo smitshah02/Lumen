@@ -30,7 +30,10 @@ class RetrieveRequest(_QueryModel):
 
 
 class AskRequest(_QueryModel):
-    pass
+    # Optional admission scope stated by the caller. It must be one of this
+    # subject's admissions (checked in the handler) and wins over anything the
+    # question text says.
+    hadm_id: Optional[int] = Field(None, ge=1, le=2_147_483_647, description="Admission to scope the answer to")
 
 
 class RetrievedChunk(BaseModel):
@@ -77,6 +80,16 @@ class Source(BaseModel):
     charttime: Optional[str]
 
 
+class AdmissionScope(BaseModel):
+    """Whether the answer was scoped to one admission, and why or why not."""
+    applied: bool                 # retrieval searched within one admission
+    requested: bool               # an admission was stated on the request or named in the question
+    status: Literal["resolved", "unresolved", "ambiguous", "none", "not_enabled"]
+    hadm_id: Optional[int]        # the resolved admission, when there is one
+    source: Optional[str]         # "request" or the rule that resolved it
+    reason: Optional[str]         # why scope was not applied
+
+
 class AskResponse(BaseModel):
     request_id: str
     thread_id: str
@@ -93,6 +106,7 @@ class AskResponse(BaseModel):
     query_type: Optional[str]
     temporal_mode: Optional[str]
     node_trail: list[str]
+    admission_scope: AdmissionScope
     models: dict
     latency_ms: float
     timings: dict

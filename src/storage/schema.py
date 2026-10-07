@@ -91,6 +91,55 @@ CHUNK_SEARCH_LABELS_SQL = """CREATE TABLE IF NOT EXISTS chunk_search_labels (
 )"""
 
 
+# Structured tables for the data-foundation plan (E8). Created by
+# src/storage/load_structured.py, not by the versioned migrations: nothing in
+# the control path reads them, so an unloaded database is still a complete
+# control database and SCHEMA_VERSION does not move.
+STRUCTURED_SQL = """
+CREATE TABLE IF NOT EXISTS labevents_full (
+    labevent_id     BIGINT PRIMARY KEY,
+    subject_id      INTEGER NOT NULL,
+    hadm_id         INTEGER,
+    specimen_id     BIGINT,
+    itemid          INTEGER,
+    order_provider_id VARCHAR(10),
+    charttime       TIMESTAMP,
+    storetime       TIMESTAMP,
+    value           TEXT,
+    valuenum        DOUBLE PRECISION,
+    valueuom        VARCHAR(20),
+    ref_range_lower DOUBLE PRECISION,
+    ref_range_upper DOUBLE PRECISION,
+    flag            VARCHAR(10),
+    priority        VARCHAR(10),
+    comments        TEXT
+);
+CREATE TABLE IF NOT EXISTS d_icd_diagnoses (
+    icd_code        VARCHAR(10) NOT NULL,
+    icd_version     INTEGER NOT NULL,
+    long_title      TEXT,
+    PRIMARY KEY (icd_code, icd_version)
+);
+CREATE TABLE IF NOT EXISTS d_icd_procedures (
+    icd_code        VARCHAR(10) NOT NULL,
+    icd_version     INTEGER NOT NULL,
+    long_title      TEXT,
+    PRIMARY KEY (icd_code, icd_version)
+);
+CREATE TABLE IF NOT EXISTS structured_load_runs (
+    run_id          VARCHAR(36) PRIMARY KEY,
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    row_counts      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    error_message   TEXT
+)
+"""
+# The lab path filters by patient and item and orders by time.
+LAB_FULL_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS idx_labfull_subject_item_time "
+                      "ON labevents_full (subject_id, itemid, charttime)")
+
+
 SCHEMA_SQL = f"""
 -- ============================================================
 -- Enable extensions

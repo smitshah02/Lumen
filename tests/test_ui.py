@@ -59,7 +59,8 @@ def test_ui_reads_only_fields_the_api_returns():
 
 
 def test_ui_requests_match_the_request_schemas():
-    assert set(AskRequest.model_fields) == {"subject_id", "query"}
+    assert {n for n, f in AskRequest.model_fields.items() if f.is_required()} == {"subject_id", "query"}
+    assert set(AskRequest.model_fields) == {"subject_id", "query", "hadm_id"}    # hadm_id is optional; the page does not send it
     assert "{ subject_id: msg.subject, query }" in JS
     assert set(ReviewDecision.model_fields) == {"decision", "reviewer_note"}
     assert "{ decision, reviewer_note:" in JS and '"approve"' in ALL_JS and '"reject"' in ALL_JS

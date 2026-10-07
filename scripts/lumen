@@ -25,6 +25,8 @@ research commands:
   db          start the explicitly selected external Postgres volume
   schema      apply additive schema upgrades
   ingest      ingest MIMIC only with --confirm-research-ingest
+  load-structured  load labevents_full and the ICD title dictionaries; adds
+              its own tables only and never touches the ingested ones
   parity      compare structured API answers with direct SQL (PASS/FAIL only)
   adjudicate  blinded human claim-support labelling: sample | label | report
   holdout     unseen-patient cohort in its own database: select | create-db |
@@ -93,6 +95,7 @@ case "$plane:$command" in
     shift
     LUMEN_DATA_PLANE=research "$PY" -m src.storage.ingest "$@"
     ;;
+  research:load-structured) LUMEN_DATA_PLANE=research "$PY" -m src.storage.load_structured "$@" ;;
   research:index) LUMEN_DATA_PLANE=research "$PY" -m src.retrieval.index_notes "$@" ;;
   research:adopt) "$PY" -m src.storage.adopt_legacy_index "$@" ;;
   research:start)

@@ -72,6 +72,8 @@ button, input, textarea { font: inherit; color: inherit; }
 .banner.draft { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
 .banner.rejected { background: var(--bad-soft); color: var(--bad); }
 .banner.approved { background: var(--ok-soft); color: var(--ok); }
+.banner.scope { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); letter-spacing: 0; }
+.banner.scope .scope-reason { font-weight: 400; margin-top: 2px; }
 .banner.neutral { background: var(--accent-soft); color: var(--accent); }
 .meta { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 

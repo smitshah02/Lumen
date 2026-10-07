@@ -45,8 +45,8 @@ from src.llm import local_client
 from src.obs import tracing
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
                              current_timings, Timer)
-from src.api.schemas import (AskRequest, AskResponse, RetrieveRequest, RetrieveResponse, RetrievedChunk,
-                             Citation, Source, ReviewDecision)
+from src.api.schemas import (AdmissionScope, AskRequest, AskResponse, RetrieveRequest, RetrieveResponse,
+                             RetrievedChunk, Citation, Source, ReviewDecision)
 
 logger = logging.getLogger("lumen.api")
 
@@ -72,6 +72,10 @@ _graph_lock = threading.Lock()
 
 
 class SubjectNotFound(Exception):
+    pass
+
+
+class AdmissionNotFound(Exception):
     pass
 
 
@@ -170,6 +174,14 @@ async def _on_validation(request: Request, exc: RequestValidationError):
 @app.exception_handler(SubjectNotFound)
 async def _on_subject(request: Request, exc: SubjectNotFound):
     return _err(request, 404, "subject_not_found")
+
+
+@app.exception_handler(AdmissionNotFound)
+async def _on_admission(request: Request, exc: AdmissionNotFound):
+    # One answer whether the admission is another patient's or does not exist,
+    # so the response says nothing about other patients. The value is not echoed.
+    return _err(request, 422, "validation_error", [{
+        "loc": ["body", "hadm_id"], "msg": "hadm_id is not an admission of this subject", "type": "value_error"}])
 
 
 @app.exception_handler(DependencyUnavailable)
@@ -340,6 +352,29 @@ def _ensure_subject(subject_id: int) -> None:
             raise SubjectNotFound(subject_id)
 
 
+def _ensure_admission(subject_id: int, hadm_id: int) -> None:
+    with storage.engine.connect() as c:
+        if not c.execute(text("SELECT EXISTS (SELECT 1 FROM admissions WHERE hadm_id = :h AND subject_id = :s)"),
+                         {"h": hadm_id, "s": subject_id}).scalar():
+            raise AdmissionNotFound(hadm_id)
+
+
+def _scope_report(st: dict, request_hadm_id: int | None) -> AdmissionScope:
+    """What happened to admission scope on this run, read from graph state.
+    `applied` is true only when note retrieval really searched one admission."""
+    scope = st.get("admission_scope")
+    if scope is None:                                    # the active profile does not scope
+        return AdmissionScope(applied=False, requested=request_hadm_id is not None, status="not_enabled",
+                              hadm_id=None, source=None,
+                              reason=f"admission scoping is not enabled in the {DATA_PROFILE} data profile")
+    status, applied = scope["status"], bool(st.get("admission_scope_applied"))
+    reason = scope.get("reason")
+    if status == "resolved" and not applied:
+        reason = "the answer did not come from note retrieval, so the admission scope was not applied"
+    return AdmissionScope(applied=applied, requested=status != "none", status=status,
+                          hadm_id=scope.get("hadm_id"), source=scope.get("source"), reason=reason)
+
+
 def _get_graph():
     global _graph
     with _graph_lock:
@@ -359,12 +394,13 @@ def _run_retrieve(query: str, subject_id: int, temporal_filter: str, top_k: int)
     return mode, results
 
 
-def _run_ask(query: str, subject_id: int, thread_id: str, request_id: str) -> tuple[dict, dict]:
+def _run_ask(query: str, subject_id: int, thread_id: str, request_id: str,
+             hadm_id: int | None = None) -> tuple[dict, dict]:
     from src.agents.run_graph import run_once
     graph = _get_graph()
     with _infer_lock:
         out, config = run_once(graph, query, subject_id, thread_id, tags=("lumen", "api", DATA_PLANE),
-                               metadata={"request_id": request_id})
+                               metadata={"request_id": request_id}, hadm_id=hadm_id)
     return out, graph.get_state(config).values
 
 
@@ -457,7 +493,10 @@ async def ask(req: AskRequest, request: Request):
 
     def work():
         _ensure_subject(req.subject_id)
-        return _run_ask(req.query, req.subject_id, thread_id, rid)
+        if req.hadm_id is None:
+            return _run_ask(req.query, req.subject_id, thread_id, rid)
+        _ensure_admission(req.subject_id, req.hadm_id)
+        return _run_ask(req.query, req.subject_id, thread_id, rid, hadm_id=req.hadm_id)
 
     with Timer() as t:
         out, st = await asyncio.to_thread(work)
@@ -486,7 +525,10 @@ async def ask(req: AskRequest, request: Request):
                **current_timings(), "total_ms": t.ms,
                "query_complexity": st.get("query_complexity"), "classified_by": st.get("classified_by")}
     request.state.outcome = status
+    scope = _scope_report(st, req.hadm_id)
     log_event(logger, "ask_completed", subject_id=req.subject_id, thread_id=thread_id, status=status,
+              scope_applied=scope.applied, scope_requested=scope.requested, scope_status=scope.status,
+              scope_hadm_id=scope.hadm_id, scope_source=scope.source, scope_reason=scope.reason,
               review_status=st.get("review_status"), query_type=st.get("query_type"),
               n_citations=sum(1 for c in cites if c.get("label")), needs_human_review=interrupted or bool(st.get("needs_human_review")),
               llm_calls=timings.get("llm_calls", 0), llm_ms=timings.get("llm_ms"),
@@ -507,7 +549,7 @@ async def ask(req: AskRequest, request: Request):
                         note_type=e.get("note_type"), charttime=e.get("charttime")) for e in evidence],
         flagged_claims=flagged, needs_human_review=interrupted or bool(st.get("needs_human_review")),
         query_type=st.get("query_type"), temporal_mode=st.get("temporal_mode"),
-        node_trail=st.get("node_trail") or [],
+        node_trail=st.get("node_trail") or [], admission_scope=scope,
         models={"main": local_client.MAIN_MODEL, "fast": local_client.FAST_MODEL},
         latency_ms=t.ms, timings=timings,
     )
