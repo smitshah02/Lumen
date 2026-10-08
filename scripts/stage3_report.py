@@ -156,8 +156,9 @@ def _scope(path: Path) -> dict:
 def _questions(name: str) -> dict | None:
     if name == "dev15":
         return {q["qid"]: q for q in json.loads((REPORTS / "before_benchmark.json").read_text())["items"]}
-    path = REPORTS / "heldout_questions.json"
-    if not path.exists() or not (OUT / "ask_heldout_research_control.json").exists():
+    import stage3_compare as s3
+    path = s3.HELDOUT_QUESTIONS
+    if path is None or not path.exists() or not (OUT / "ask_heldout_research_control.json").exists():
         return None                                  # never opened before the held-out run exists
     data = json.loads(path.read_text())
     return {q["qid"]: q for q in (data["items"] if isinstance(data, dict) else data)}
@@ -310,7 +311,7 @@ def _row(label, control, candidate, fmt=str):
 
 
 def render(report: dict) -> str:
-    lines = ["# Stage 3 comparison: control against the v2 candidate", "",
+    lines = [f"# Stage 3 comparison ({report.get('run_id', 'stage3')}): control against the v2 candidate", "",
              f"Created {report['created']}. Local only; counts, ids and timings, no note text.", "",
              f"## Result: {report['gate']['final']}", "",
              "| Group | Condition | Result | Detail |", "|---|---|---|---|"]
@@ -375,15 +376,17 @@ def render(report: dict) -> str:
 
 
 def main() -> int:
+    global OUT
     import sys
     sys.path.insert(0, str(ROOT / "scripts"))
     import stage3_compare as s3
+    OUT = s3.OUT                                     # this run's outputs
     sets = {**(retrieval_sets() or {}), "holdout_75": holdout_set(), "targeted_dev15": targeted_set("dev15"),
             "targeted_heldout": targeted_set("heldout")}
-    freeze_path = REPORTS / "stage3_freeze.json"
+    freeze_path = s3.FREEZE
     import hashlib
     report = {
-        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "run_id": s3.RUN_ID, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
         "commit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
         "systems": s3.systems(), "holdout_state": s3.holdout_state(),
         "freeze": {"path": str(freeze_path.relative_to(ROOT)), "sha256": hashlib.sha256(freeze_path.read_bytes()).hexdigest()}
@@ -391,11 +394,16 @@ def main() -> int:
         "sets": {k: v for k, v in sets.items() if v}, "sets_not_run": [k for k, v in sets.items() if not v],
     }
     report["gate"] = gate(report["sets"])
-    (REPORTS / "stage3_comparison.json").write_text(json.dumps(report, indent=1, default=str))
-    (REPORTS / "stage3_comparison.md").write_text(render(report))
     for c in report["gate"]["conditions"]:
         print(f"{c['result']:8s} {c['group']:10s} {c['condition']}  ({c['detail']})")
     print(f"\nFINAL: {report['gate']['final']}   not run: {report['sets_not_run'] or 'none'}")
+    if report["gate"]["final"] == "INCOMPLETE":      # a report is written once, when every set has been run
+        print(f"not written: run {s3.RUN_ID!r} is incomplete")
+        return 0
+    s3.refuse_existing(s3.COMPARISON_JSON, s3.COMPARISON_MD)
+    s3.COMPARISON_JSON.write_text(json.dumps(report, indent=1, default=str))
+    s3.COMPARISON_MD.write_text(render(report))
+    print(f"written: {s3.COMPARISON_JSON.name}, {s3.COMPARISON_MD.name}")
     return 0
 
 
