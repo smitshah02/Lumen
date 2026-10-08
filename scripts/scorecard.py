@@ -34,6 +34,7 @@ from sqlalchemy import text  # noqa: E402
 import structured_parity as parity  # noqa: E402
 from src import storage  # noqa: E402
 from src.agents.verify import SOURCE_CHARS  # noqa: E402
+from src.config import CHUNK_BUILD, PROFILE_SETTINGS  # noqa: E402
 from src.evals import adjudication, scorecard  # noqa: E402
 
 
@@ -71,8 +72,14 @@ def database_rows(conn, sources: list[dict]) -> dict:
     notes = [s["chunk_id"] for s in sources if str(s.get("label", "")).startswith("S")]
     guides = [s["chunk_id"] for s in sources if str(s.get("label", "")).startswith("G")]
     if notes:
+        # The profile's own chunk table: a v2 chunk_id is a handle inside note_chunks_v2
+        # and one build, and means nothing in note_chunks. Table names are fixed in src/config.py.
+        table, params = PROFILE_SETTINGS["chunk_table"], {"ids": notes}
+        build = ""
+        if table == "note_chunks_v2":
+            build, params["b"] = " AND build_id = :b", CHUNK_BUILD
         for cid, nid, sid in conn.execute(text(
-                "SELECT chunk_id, note_id, subject_id FROM note_chunks WHERE chunk_id = ANY(:ids)"), {"ids": notes}):
+                f"SELECT chunk_id, note_id, subject_id FROM {table} WHERE chunk_id = ANY(:ids){build}"), params):
             rows[("note", cid)] = {"note_id": nid, "subject_id": sid}
     if guides:
         for (cid,) in conn.execute(text(
@@ -122,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="repeat only the model-sensitive cases N times and report variability (3 is typical)")
     p.add_argument("--with-literature", action="store_true",
                    help="allow a run while the API's PubMed backend is enabled (makes outbound searches)")
+    p.add_argument("--lab-truth-table", choices=parity.LAB_TRUTH_TABLES, default="labevents",
+                   help="table the lab truth is read from; labevents_full also records the legacy capped score per lab case")
+    p.add_argument("--lab-truth-database", metavar="NAME",
+                   help="read the lab truth from this database on the same server (read-only) instead of the API's")
     p.add_argument("--compare", nargs=2, metavar=("EXISTING", "HOLDOUT"), help="print a two-cohort table and exit")
     p.add_argument("--adjudication", nargs="+", help="with --compare: labelled sample files, existing then holdout")
     args = p.parse_args(argv)
@@ -166,6 +177,21 @@ def main(argv: list[str] | None = None) -> int:
             close_pools()
             return 2
         truths = [parity.truth(conn, sid, ["creatinine"]) for sid in sids]
+        legacy = {}                              # (subject, case id) -> the capped-table predicate, for history only
+        if args.lab_truth_table != "labevents":
+            for sid, capped in zip(sids, truths):
+                for cls, _, _, ok in parity.checks(capped):
+                    if cls.startswith("creatinine") and cls in scorecard.STRUCTURED_CLASSES:
+                        legacy[(sid, scorecard.STRUCTURED_CLASSES[cls][0])] = ok
+            from sqlalchemy import create_engine
+            from sqlalchemy.engine import make_url
+            truth_db = args.lab_truth_database or database
+            truth_engine = create_engine(make_url(storage.DATABASE_URL).set(database=truth_db),
+                                         connect_args={"options": "-c default_transaction_read_only=on"})
+            with truth_engine.connect() as truth_conn:
+                full = [parity.truth(truth_conn, sid, ["creatinine"], args.lab_truth_table) for sid in sids]
+            truth_engine.dispose()
+            truths = [{**capped, "labs": complete["labs"]} for capped, complete in zip(truths, full)]
         if args.ask:
             cases = [(sids[(args.patient or 1) - 1], scorecard.BY_ID[args.ask])]
         else:
@@ -191,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
                 result = scorecard.evaluate(case, sid, response, state,
                                             database_rows(conn, response.get("sources") or []), backend)
                 result["run"] = run
+                if (sid, case["id"]) in legacy:
+                    result["legacy_capped_lab_ok"] = bool(legacy[(sid, case["id"])](response.get("answer") or "")) and any(
+                        str(s.get("label", ""))[:1] in "LA" for s in response.get("sources") or [])
                 results.append(result)
                 claims += claim_rows(result, state)
                 hard = [k[:-3] for k in ("routing_ok", "temporal_ok", "structured_ok", "evidence_ok") if result[k] is False]
@@ -205,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     kind = "stability" if args.stability_runs else "scorecard"
     agg = scorecard.aggregate(results)
     payload = {"created": stamp, "database": database, "profile": args.profile, "literature_backend": backend,
+               "lab_truth": {"table": args.lab_truth_table, "database": args.lab_truth_database or database},
                "aggregate": agg, "cases": results}
     if args.stability_runs:
         payload["stability"] = scorecard.stability(results)

@@ -66,11 +66,16 @@ def sample(conn, n: int, seed: float | None) -> list[int]:
     """), {"n": n}).scalars())
 
 
-def truth(conn, sid: int, analytes) -> dict:
+LAB_TRUTH_TABLES = ("labevents", "labevents_full")     # the ingested table (capped per patient) and the complete one
+
+
+def truth(conn, sid: int, analytes, lab_table: str = "labevents") -> dict:
+    if lab_table not in LAB_TRUTH_TABLES:
+        raise ValueError(f"unknown lab truth table {lab_table!r}")
     labs = {}
     for a in analytes:
-        rows = conn.execute(text("""
-            SELECT l.charttime, l.valuenum FROM labevents l JOIN d_labitems d ON d.itemid = l.itemid
+        rows = conn.execute(text(f"""
+            SELECT l.charttime, l.valuenum FROM {lab_table} l JOIN d_labitems d ON d.itemid = l.itemid
             WHERE l.subject_id = :s AND lower(d.label) = :a AND lower(d.fluid) = 'blood'
               AND l.valuenum IS NOT NULL ORDER BY l.charttime
         """), {"s": sid, "a": a}).fetchall()
