@@ -14,8 +14,13 @@ question ("what was the diagnosis?"), is left to note retrieval, because
 `prescriptions` is orders placed during the stay, not the discharge list, and
 the coded tables are billing codes, not the clinician's wording.
 
-ponytail: a question about one named drug ("was she given heparin?") is not
-routed here; it needs drug-name matching. Add when a question set needs it.
+One named drug is a second, narrower door (`drug_order_question`): the dose,
+route, doses per 24 hours or whole inpatient order of ONE drug in the resolved
+admission. The drug is whatever single run of words the path does not
+otherwise understand, and it must match exactly one drug in that admission's
+orders (`match_drug`); a similar name is never substituted. A yes/no question
+("was she given heparin?") is still not routed here: an order is not proof the
+drug was given.
 """
 from __future__ import annotations
 
@@ -46,6 +51,77 @@ _INPATIENT = frozenset("give given receive received administer administered orde
 _CODED = frozenset("icd icd9 icd10 coded code codes".split())
 _DIAGNOSIS = frozenset("diagnosis diagnoses diagnostic".split())
 _PROCEDURE = frozenset("procedure procedures".split())
+
+
+# --- one named drug ---------------------------------------------------------------------------------
+# Every word of a single-drug order question is one of these or part of the drug's name.
+_ORDER_WORDS = _COMMON | _INPATIENT | _MEDICATION | frozenset("""
+    dose doses dosage dosing route routes by how many often per times time day daily hours hour 24
+    frequency each every full complete entire
+""".split())
+# Anything about what the patient went home on, takes now or was prescribed is the discharge
+# list or the home list, which this table is not. Such a question is never routed here.
+_NOT_INPATIENT = frozenset("""
+    discharge discharged home current currently outpatient sent taking takes take prescribed
+    prescription prescriptions
+""".split())
+_ORDER_DOSE = frozenset("dose doses dosage dosing".split())
+_ORDER_ROUTE = frozenset("route routes".split())
+_ORDER_NOUN = frozenset("order orders".split())
+_ORDER_RATE_RE = re.compile(r"\b(?:per|a|each|every) (?:24 hours?|day)\b|\bhow often\b|\bfrequency\b")
+MAX_DRUG_WORDS = 5
+
+
+def drug_order_question(question: str) -> Optional[str]:
+    """The drug a question asks about, when it asks for the dose, route, doses
+    per 24 hours (or times a day) or whole inpatient order of ONE named drug;
+    else None.
+
+    As strict as structured_kind: every word must be understood. The one thing
+    allowed beyond the known words is a single unbroken run of up to five words,
+    which is taken to be the drug's name. A second unknown word anywhere else
+    ("why", "discharged", a second drug) sends the question to retrieval. Whether
+    that name is a drug in this admission is decided against the table rows, by
+    match_drug, never here."""
+    tokens = re.findall(r"[a-z0-9]+", (question or "").lower())
+    words = set(tokens)
+    if words & _NOT_INPATIENT:
+        return None
+    asks = (words & _ORDER_DOSE or words & _ORDER_ROUTE or words & _ORDER_NOUN
+            or _ORDER_RATE_RE.search(" ".join(tokens)))
+    unknown = [i for i, t in enumerate(tokens) if t not in _ORDER_WORDS]
+    if not asks or not unknown or len(unknown) > MAX_DRUG_WORDS or unknown[-1] - unknown[0] + 1 != len(unknown):
+        return None
+    name = [tokens[i] for i in unknown]
+    if not any(len(t) >= 3 and t.isalpha() for t in name):
+        return None
+    return " ".join(name)
+
+
+def _drug_words(name) -> frozenset:
+    return frozenset(re.findall(r"[a-z0-9]+", str(name or "").lower()))
+
+
+def match_drug(drug: str, rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """(the rows of the one drug `drug` names, []) or ([], the drug names it
+    could mean). Whole words only, no stemming and no spelling tolerance:
+
+      a drug whose name is exactly those words wins ("heparin" is Heparin, not
+      Heparin Flush);
+      otherwise the name must contain every word, and exactly one drug in the
+      admission may do so ("ampicillin" is Ampicillin Sodium when that is the
+      only one). Two or more is ambiguous and matches nothing."""
+    want = _drug_words(drug)
+    by_name: dict[str, list[dict]] = {}
+    for row in rows:
+        by_name.setdefault(" ".join(str(row["drug"] or "").split()), []).append(row)
+    exact = [n for n in by_name if _drug_words(n) == want]
+    if exact:
+        return [r for n in exact for r in by_name[n]], []
+    containing = sorted(n for n in by_name if want and want <= _drug_words(n))
+    if len({_drug_words(n) for n in containing}) == 1:
+        return [r for n in containing for r in by_name[n]], []
+    return [], containing
 
 
 def structured_kind(question: str) -> Optional[str]:
@@ -112,25 +188,34 @@ def _code(row: dict) -> str:
     return f"ICD-{row['icd_version']} {row['icd_code']}"
 
 
-def _order(row: dict) -> str:
+def _order(row: dict, name_missing: bool = False) -> str:
     """One prescription row as the table has it: drug, dose, unit, route, and
     doses_per_24_hrs stated as a number. The table has no frequency text, so
-    none is written or inferred (no "BID", no "daily")."""
+    none is written or inferred (no "BID", no "daily"). `name_missing` says
+    which of dose, route and rate the row does not have, for a question that
+    asked about one drug's order."""
     dose = " ".join(str(v).strip() for v in (row["dose_val_rx"], row["dose_unit_rx"]) if v not in (None, ""))
     rate = row["doses_per_24_hrs"]
-    parts = [str(row["drug"]).strip(), dose, str(row["route"] or "").strip(),
+    route = str(row["route"] or "").strip()
+    parts = [str(row["drug"]).strip(), dose, route,
              f"{rate:g} dose(s) per 24 hours" if rate is not None else ""]
-    return " ".join(p for p in parts if p)
+    missing = [label for label, value in (("dose", dose), ("route", route), ("doses per 24 hours", "" if rate is None else "x"))
+               if not value] if name_missing else []
+    return " ".join(p for p in parts if p) + (f" ({', '.join(missing)} not recorded)" if missing else "")
 
 
-def render(kind: str, rows: list[dict], subject_id: int, hadm_id: int) -> tuple[list[str], dict]:
-    """(answer sentences, one evidence object) for a non-empty result."""
+def render(kind: str, rows: list[dict], subject_id: int, hadm_id: int, drug: Optional[str] = None) -> tuple[list[str], dict]:
+    """(answer sentences, one evidence object) for a non-empty result. `drug`
+    is set when `rows` are the orders of one requested drug (match_drug)."""
     table, title = SOURCE[kind]
     where = f"admission {hadm_id}"
     if kind == "prescriptions":
+        if drug:
+            names = sorted({" ".join(str(r["drug"] or "").split()) for r in rows})
+            where, title = f"{' / '.join(names)} in admission {hadm_id}", f"{title} for {' / '.join(names)}"
         distinct: dict[str, list] = {}
         for row in rows:                                   # same order repeated: one entry, earliest start to latest stop
-            entry = distinct.setdefault(_order(row), [row["starttime"], row["stoptime"]])
+            entry = distinct.setdefault(_order(row, name_missing=bool(drug)), [row["starttime"], row["stoptime"]])
             if row["stoptime"] is not None and (entry[1] is None or row["stoptime"] > entry[1]):
                 entry[1] = row["stoptime"]
         lines = [f"{order} (ordered {_day(start)} to {_day(stop)})" for order, (start, stop) in distinct.items()]

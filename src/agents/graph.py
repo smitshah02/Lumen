@@ -536,12 +536,31 @@ def _structured_request(state: AgentState) -> Optional[tuple[str, int]]:
     return (kind, scope["hadm_id"]) if kind else None
 
 
+def _drug_order_request(state: AgentState) -> Optional[tuple[str, int]]:
+    """(drug as the question names it, hadm_id) when the question asks for one
+    named drug's inpatient order, dose, route or doses per 24 hours in a resolved
+    admission, under a profile with SQL paths. Otherwise None; nothing is queried."""
+    scope = state.get("admission_scope") or {}
+    if not PROFILE_SETTINGS["sql_paths"] or scope.get("status") != "resolved" or state.get("subject_id") is None:
+        return None
+    drug = structured.drug_order_question(scope.get("retrieval_query") or state.get("query") or "")
+    return (drug, scope["hadm_id"]) if drug else None
+
+
 def structured_lookup(state: AgentState) -> dict:
     """Answer an inpatient-orders, coded-diagnoses or coded-procedures question
     for the resolved admission straight from its table. No rows is a miss and
     the question goes to note retrieval. Unusable structured data is an error
-    and is raised, never retrieved around."""
-    kind, hadm_id = _structured_request(state)
+    and is raised, never retrieved around.
+
+    A question about one named drug reads the same admission's orders and keeps
+    only that drug's. A name that matches no drug there, or more than one, is a
+    miss: no other drug is offered in its place."""
+    request, drug = _structured_request(state), None
+    if request:
+        kind, hadm_id = request
+    else:
+        (drug, hadm_id), kind = _drug_order_request(state), "prescriptions"
     sid = state["subject_id"]
     try:
         rows = structured.fetch(kind, sid, hadm_id)
@@ -553,7 +572,13 @@ def structured_lookup(state: AgentState) -> dict:
     if not rows:
         logger.info(f"[structured_lookup] no {kind} rows for hadm_id={hadm_id} — using retrieval")
         return {"node_trail": _trail(state, "structured_lookup")}
-    sentences, evidence = structured.render(kind, rows, sid, hadm_id)
+    if drug:
+        rows, candidates = structured.match_drug(drug, rows)
+        if not rows:
+            # Several drugs fit the name: their orders exist, so a "no information" answer from the notes must not be auto-approved.
+            logger.info(f"[structured_lookup] named drug matched {len(candidates)} drug(s) for hadm_id={hadm_id} — using retrieval")
+            return {"node_trail": _trail(state, "structured_lookup"), **({"structured_rows": len(candidates)} if candidates else {})}
+    sentences, evidence = structured.render(kind, rows, sid, hadm_id, **({"drug": drug} if drug else {}))
     label, table = evidence["label"], evidence["source_type"]
     claims = [{"claim": f"{sentence} [{label}].", "label": label, "chunk_id": -1, "verified": True,
                "verification_note": f"deterministic: read directly from the {table} table"}
@@ -1161,7 +1186,7 @@ def route_from_triage(state: AgentState) -> str:
         return "refuse"
     if qt in ("guideline_check", "literature"):
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
-    if _structured_request(state):
+    if _structured_request(state) or _drug_order_request(state):     # before the admissions path: "how many doses" is not a count of admissions
         return "structured_lookup"
     if _scoped_lab_request(state):               # a lab question about one resolved admission, before the admissions path
         return "lab_lookup"
