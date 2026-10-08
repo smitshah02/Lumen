@@ -45,7 +45,7 @@ from src.config import PROFILE_SETTINGS
 from src.storage.readiness import DataSourceNotReady
 from src.generation import structured_lookup as structured
 from src.agents import prompts, citations, verify as verify_util
-from src.agents.classify import (classify, encounter_intents, lab_mode, structured_admission_clause,
+from src.agents.classify import (classify, encounter_intents, lab_mode, scoped_lab_mode, structured_admission_clause,
                                  wants_deterministic_lab, wants_encounter_lookup)
 from src.generation.lab_query import SYNONYMS, label_tokens
 from src.llm.local_client import chat_for   # every node call goes through a ROLE
@@ -264,6 +264,43 @@ def _ask_admission_model(prompt: str) -> str:
                                {"role": "user", "content": prompt}], max_retries=0)
 
 
+# What an admission-scoped lab question may say on top of _QUESTION_FILLER, by
+# scoped_lab_mode(). Separate from _MODE_FILLER so whole-patient questions are
+# understood exactly as before.
+_SCOPED_MODE_FILLER = {
+    "latest": frozenset({"final"}),
+    "earliest": frozenset("earliest oldest first initial known".split()),
+    "trend": frozenset("""
+        how did does has have been change changed changes changing over time trend trends trending trended
+        course whole entire increase increased increasing decrease decreased decreasing or
+        from to first earliest initial final
+    """.split()),
+    "min": frozenset("lowest minimum min least".split()),
+    "max": frozenset("highest maximum max peak".split()),
+}
+
+
+def _scoped_lab_request(state: AgentState) -> Optional[tuple[str, int, str]]:
+    """(question without its admission phrase, hadm_id, mode) when this is a lab
+    question about one resolved admission: the rules classified it as a lab
+    question and it asks for a latest, earliest, lowest or highest value or a
+    trend. Otherwise None. No query is made here.
+
+    Such a question goes to lab_lookup ahead of the admissions path, whose word
+    list ("latest", "last", "first", "how many" next to "admission") would
+    otherwise claim it and, on its own miss, send it to note retrieval. A
+    question the admissions table fully answers is never taken from it."""
+    scope = state.get("admission_scope") or {}
+    if (not DETERMINISTIC_LABS or scope.get("status") != "resolved" or state.get("subject_id") is None
+            or state.get("query_type") != "lab_trend" or state.get("classified_by") != "rules"):
+        return None
+    question = scope.get("retrieval_query") or state.get("query") or ""
+    if encounter_intents(question)[1]:
+        return None
+    mode = scoped_lab_mode(question, detect_temporal_mode(question))
+    return (question, scope["hadm_id"], mode) if mode else None
+
+
 def lab_lookup(state: AgentState) -> dict:
     """Answer a latest / earliest / trend lab question straight from `labevents`.
 
@@ -283,13 +320,21 @@ def lab_lookup(state: AgentState) -> dict:
     verification will not auto-approve an "insufficient information" answer.
     """
     query, sid = state["query"], state.get("subject_id")
-    mode = lab_mode(query, state.get("temporal_mode") or detect_temporal_mode(query))
-    if mode not in _MODE_FILLER:
-        mode = "latest"
+    # One resolved admission: read the question without its admission phrase and
+    # ask the table for that admission's rows only. Otherwise exactly as before.
+    scoped = _scoped_lab_request(state)
+    if scoped:
+        query, hadm_id, mode = scoped
+        mode_filler, scope_args = _SCOPED_MODE_FILLER[mode], {"hadm_id": hadm_id}
+    else:
+        mode = lab_mode(query, state.get("temporal_mode") or detect_temporal_mode(query))
+        if mode not in _MODE_FILLER:
+            mode = "latest"
+        mode_filler, scope_args = _MODE_FILLER[mode], {}
     try:
         resolver = get_lab_resolver()
         itemids, matched = resolver.match(query)
-        series = resolver.fetch(sid, itemids, per_lab_cap=LAB_SERIES_CAP) if itemids else []
+        series = resolver.fetch(sid, itemids, per_lab_cap=LAB_SERIES_CAP, **scope_args) if itemids else []
     except DataSourceNotReady:
         raise                # the configured lab source is unusable: an error, not a miss to retrieve around
     except Exception as e:
@@ -300,7 +345,7 @@ def lab_lookup(state: AgentState) -> dict:
     miss = {"structured_rows": sum(len(g["values"]) for g in series),
             "node_trail": _trail(state, "lab_lookup")}
     series = _disambiguate(series, query, resolver.labels, matched, resolver.labels_for(itemids),
-                           filler=_QUESTION_FILLER | _MODE_FILLER[mode])
+                           filler=_QUESTION_FILLER | mode_filler)
     if any(_endpoint_unclear(g, mode) for g in series):
         logger.info(f"[lab_lookup] no single {mode} numeric result — using retrieval")
         return miss
@@ -319,16 +364,29 @@ def lab_lookup(state: AgentState) -> dict:
                          for v in points)
 
     source = f"Source: labevents table, subject {sid}."
+    where = ""                                   # scoped answers say which admission the rows are from
+    if scoped:
+        where = f" during admission {hadm_id}"
+        source = f"Source: {PROFILE_SETTINGS['lab_table']} table, subject {sid}, admission {hadm_id}."
     if mode == "latest":
         anchor = vals[-1]
-        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), most recent first shown last: "
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s){where}, most recent first shown last: "
                 f"{history(vals[-LAB_RECENT_POINTS:])}. {source}")
-        sentences = [f"The most recent {name} was {point(anchor)}"]
+        sentences = [f"The most recent {name}{where} was {point(anchor)}"]
     elif mode == "earliest":
         anchor = vals[0]
-        text = (f"{grp['label']} — {grp['n_total']} recorded value(s), earliest shown first: "
+        text = (f"{grp['label']} — {grp['n_total']} recorded value(s){where}, earliest shown first: "
                 f"{history(vals[:LAB_RECENT_POINTS])}. {source}")
-        sentences = [f"The earliest {name} was {point(anchor)}"]
+        sentences = [f"The earliest {name}{where} was {point(anchor)}"]
+    elif mode in ("min", "max"):
+        word = "lowest" if mode == "min" else "highest"
+        anchor = (min if mode == "min" else max)(vals, key=lambda v: v["valuenum"])    # the first time it was reached
+        times = sum(1 for v in vals if v["valuenum"] == anchor["valuenum"])
+        text = (f"{grp['label']} — {len(vals)} numeric value(s){where}, {vals[0]['date']} to {vals[-1]['date']}. "
+                f"{word.capitalize()}: {point(anchor)}. Last {min(len(vals), LAB_RECENT_POINTS)} value(s): "
+                f"{history(vals[-LAB_RECENT_POINTS:])}. {source}")
+        sentences = [f"The {word} {name}{where} was {point(anchor)}"
+                     + (f", the first of {times} measurements at that value" if times > 1 else "")]
     else:
         anchor = vals[-1]
         low, high = min(vals, key=lambda v: v["valuenum"]), max(vals, key=lambda v: v["valuenum"])
@@ -339,10 +397,10 @@ def lab_lookup(state: AgentState) -> dict:
                 f"Last {min(len(vals), LAB_RECENT_POINTS)} value(s): {history(vals[-LAB_RECENT_POINTS:])}. "
                 f"{source}")
         if len(vals) == 1:
-            sentences = [f"Only one {name} value is recorded ({point(anchor)}), so no trend can be described"]
+            sentences = [f"Only one {name} value is recorded{where} ({point(anchor)}), so no trend can be described"]
         else:
             sentences = [
-                f"{grp['label']} was measured {len(vals)} times between {vals[0]['date']} and {anchor['date']}"
+                f"{grp['label']} was measured {len(vals)} times{where} between {vals[0]['date']} and {anchor['date']}"
                 + (f" ({skipped} non-numeric result(s) are not included)" if skipped else ""),
                 f"The first value was {point(vals[0])} and the most recent was {point(anchor)}",
                 f"The lowest value was {point(low)} and the highest was {point(high)}",
@@ -365,6 +423,7 @@ def lab_lookup(state: AgentState) -> dict:
                          "deterministic": len(claims), "llm_checked": 0},
         "needs_human_review": False, "review_status": "auto_approved", "structured_rows": 0,
         "node_trail": _trail(state, "lab_lookup"),
+        **({"admission_scope_applied": True} if scoped else {}),      # the rows are that admission's and no other's
     }
 
 
@@ -375,7 +434,9 @@ def _endpoint_unclear(g: dict, mode: str) -> bool:
     return bool(len(g.get("fluids") or ()) > 1
                 or len(g["values"]) < g.get("n_total", 0)          # capped: not the whole series
                 or (mode != "earliest" and last) or (mode != "latest" and first)
-                or (mode == "trend" and len({v.get("uom") for v in g["values"] if v.get("uom")}) > 1))
+                # a lowest or highest value is only as sure as every result: one "<0.1" could be the real minimum
+                or (mode in ("min", "max") and g.get("n_non_numeric"))
+                or (mode in ("trend", "min", "max") and len({v.get("uom") for v in g["values"] if v.get("uom")}) > 1))
 
 
 def _direction(nums: list) -> str:
@@ -1102,6 +1163,8 @@ def route_from_triage(state: AgentState) -> str:
         return "guideline_retrieval" if state.get("subject_id") is None else "patient_retrieval"
     if _structured_request(state):
         return "structured_lookup"
+    if _scoped_lab_request(state):               # a lab question about one resolved admission, before the admissions path
+        return "lab_lookup"
     if DETERMINISTIC_LABS and wants_encounter_lookup(
             _decision_of(state), state.get("query") or "", state.get("subject_id")):
         return "encounter_lookup"

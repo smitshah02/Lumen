@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, asdict
+from typing import Optional
 
 # --- category signals ------------------------------------------------------
 # Order matters: the first rule that fires wins, mirroring the precedence the
@@ -212,6 +213,35 @@ def lab_mode(query: str, temporal_mode: str) -> str:
     if temporal_mode in ("all", "", None) and _LAB_TREND_RE.search(query or ""):
         return "trend"
     return temporal_mode
+
+
+_LAB_MIN_RE = re.compile(r"\b(?:lowest|minimum|min|least)\b", re.I)
+_LAB_MAX_RE = re.compile(r"\b(?:highest|maximum|max|peak)\b", re.I)
+_LAB_LATEST_RE = re.compile(r"\b(?:latest|last|most recent|newest|final)\b", re.I)
+_LAB_EARLIEST_RE = re.compile(r"\b(?:earliest|first|oldest|initial)\b", re.I)
+
+
+def scoped_lab_mode(question: str, temporal_mode: str) -> Optional[str]:
+    """What a lab question about ONE resolved admission asks for: "trend",
+    "min", "max", "latest" or "earliest"; None when it names none of them.
+    `question` is the question with the admission phrase already removed, so
+    "last" and "first" here describe the measurement, not the admission.
+
+    Used only for an admission-scoped lab question. Whole-patient questions keep
+    lab_mode(), which knows latest, earliest and trend and nothing else."""
+    q = question or ""
+    first, last = bool(_LAB_EARLIEST_RE.search(q)), bool(_LAB_LATEST_RE.search(q))
+    if temporal_mode == "trend" or _LAB_TREND_RE.search(q) or (first and last):      # "from the first to the last"
+        return "trend"
+    if _LAB_MIN_RE.search(q):
+        return "min"
+    if _LAB_MAX_RE.search(q):
+        return "max"
+    if temporal_mode == "latest" or last:
+        return "latest"
+    if temporal_mode == "earliest" or first:
+        return "earliest"
+    return None
 
 
 def structured_admission_clause(query: str) -> bool:
