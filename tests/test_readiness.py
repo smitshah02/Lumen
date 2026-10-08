@@ -4,6 +4,10 @@ from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.pool import NullPool
 
 import src.api.app as api
 from src.config import PROFILES
@@ -15,6 +19,13 @@ BUILD = "build-0001"
 ALL_TABLES = {"labevents_full", "d_icd_diagnoses", "d_icd_procedures", "structured_load_runs",
               "note_chunks_v2", "note_index_runs", "idx_labfull_subject_item_time"}
 COUNTS = {"labevents_full": 9803443, "d_icd_diagnoses": 112107, "d_icd_procedures": 86423}
+
+
+class _PgError(Exception):
+    """What the driver raises, as far as the check looks: an error with a Postgres code."""
+    def __init__(self, pgcode):
+        super().__init__(pgcode)
+        self.pgcode = pgcode
 
 
 class _Result:
@@ -33,28 +44,33 @@ class _Db:
     def __init__(self, tables=ALL_TABLES, load=("completed", COUNTS), empty=(), builds=None, build_chunks=(BUILD,)):
         self.tables, self.load, self.empty = set(tables), load, set(empty)
         self.builds = {BUILD: "completed"} if builds is None else builds
-        self.build_chunks, self.queries = set(build_chunks), 0
+        self.build_chunks, self.queries, self.rollbacks = set(build_chunks), 0, 0
 
     @contextmanager
     def connect(self):
         yield self
 
+    def rollback(self):
+        self.rollbacks += 1
+
     def execute(self, stmt, params=None):
         self.queries += 1
         sql, params = str(stmt), params or {}
+        named = (*rd.STRUCTURED_TABLES, "structured_load_runs")
+        if "LEFT JOIN LATERAL" in sql:                    # the one-query structured state; Postgres refuses it when a table is missing
+            if any(t not in self.tables for t in named):
+                raise ProgrammingError(sql, {}, _PgError("42P01"))
+            status, counts = self.load or (None, None)
+            return _Result((status, counts, *(t not in self.empty for t in rd.STRUCTURED_TABLES),
+                            "idx_labfull_subject_item_time" in self.tables))
+        if sql.count("to_regclass") == len(named):        # which of the tables are there
+            return _Result(tuple(t in self.tables for t in named))
         if "to_regclass(:name)" in sql:
             return _Result(params["name"] if params["name"] in self.tables else None)
-        if "to_regclass('idx_labfull_subject_item_time')" in sql:
-            return _Result("idx" if "idx_labfull_subject_item_time" in self.tables else None)
-        if "FROM structured_load_runs" in sql:
-            return _Result(self.load)
         if "FROM note_index_runs" in sql:
             return _Result(self.builds.get(params["b"]))
         if "FROM note_chunks_v2" in sql:
             return _Result(params["b"] in self.build_chunks)
-        for table in rd.STRUCTURED_TABLES:
-            if f"FROM {table})" in sql:
-                return _Result(table not in self.empty)
         raise AssertionError(f"unexpected query: {sql}")
 
 
@@ -104,6 +120,103 @@ def test_structured_is_refused_unless_the_load_is_complete_and_present(name, db,
     with pytest.raises(DataSourceNotReady) as e:
         rd.require(STRUCTURED, db.connect, PROFILES["structured"])
     assert (e.value.component, e.value.reason) == (STRUCTURED, reason)
+
+
+# --- one query, the same answers ---------------------------------------------------------------
+def test_a_usable_structured_load_is_confirmed_in_one_statement():
+    db = _Db()
+    assert rd.structured_problem(db) is None and (db.queries, db.rollbacks) == (1, 0)
+    db = _Db()
+    rd.require(STRUCTURED, db.connect, PROFILES["structured"])
+    assert db.queries == 1
+    for name, refused, reason in STRUCTURED_REFUSED:       # every refusal that is not a missing table: still one statement
+        if not reason.startswith("missing table"):
+            refused.queries = 0
+            assert rd.structured_problem(refused) == reason and refused.queries == 1, name
+
+
+def test_a_missing_table_takes_one_more_statement_to_name_every_missing_table():
+    db = _Db(tables=ALL_TABLES - {"d_icd_procedures", "labevents_full", "structured_load_runs"})
+    assert rd.structured_problem(db) == "missing table(s): labevents_full, d_icd_procedures, structured_load_runs"
+    assert (db.queries, db.rollbacks) == (2, 1)            # the refused statement is rolled back before the second one
+    v2 = _Db(tables=ALL_TABLES - {"labevents_full"})       # the same connection then checks the build, as before
+    assert [p["component"] for p in _problems("v2", v2)] == [STRUCTURED]
+
+
+@pytest.mark.parametrize("pgcode", ["42501", "57014", None])       # permission denied, cancelled, no code at all
+def test_any_other_database_error_is_raised_and_never_read_as_ready(pgcode):
+    class _Broken(_Db):
+        def execute(self, stmt, params=None):
+            raise ProgrammingError(str(stmt), {}, _PgError(pgcode))
+    db = _Broken()
+    with pytest.raises(ProgrammingError):
+        rd.structured_problem(db)
+    with pytest.raises(ProgrammingError):
+        rd.require(STRUCTURED, db.connect, PROFILES["structured"])
+    assert db.rollbacks == 0
+
+
+def test_a_table_that_appears_between_the_two_statements_is_an_error_not_a_pass():
+    class _Racing(_Db):
+        def execute(self, stmt, params=None):
+            if "LEFT JOIN LATERAL" in str(stmt):
+                raise ProgrammingError(str(stmt), {}, _PgError("42P01"))
+            return super().execute(stmt, params)
+    with pytest.raises(ProgrammingError):
+        rd.structured_problem(_Racing())
+
+
+# The same cases against real Postgres: session-temporary tables in the server's
+# maintenance database, seen through a search path that hides everything else.
+PG_CASES = [("ready", dict(), None)] + [
+    (name, spec, reason) for (name, _, reason), spec in zip(STRUCTURED_REFUSED, [
+        dict(load=None), dict(load=("running", {})), dict(load=("failed", {})),
+        dict(tables=ALL_TABLES - {"labevents_full"}), dict(tables=ALL_TABLES - {"structured_load_runs"}),
+        dict(empty={"d_icd_diagnoses"}), dict(load=("completed", {**COUNTS, "labevents_full": 0})),
+        dict(tables=ALL_TABLES - {"idx_labfull_subject_item_time"})])] + [
+    ("several tables missing", dict(tables=ALL_TABLES - {"labevents_full", "d_icd_procedures"}),
+     "missing table(s): labevents_full, d_icd_procedures"),
+    ("an older completed load does not excuse a newer failed one", dict(load=("failed", {}), older=("completed", COUNTS)),
+     "the latest structured load is failed"),
+]
+
+
+@pytest.fixture
+def pg():
+    from src import storage
+    engine = create_engine(make_url(storage.DATABASE_URL).set(database="postgres"), poolclass=NullPool,
+                           connect_args={"connect_timeout": 3})
+    try:
+        conn = engine.connect()
+    except OperationalError:
+        pytest.skip("Postgres not reachable")
+    try:
+        yield conn
+    finally:
+        conn.close()                                       # ends the session: its temporary tables go with it
+        engine.dispose()
+
+
+@pytest.mark.parametrize("name,spec,reason", PG_CASES, ids=[c[0] for c in PG_CASES])
+def test_the_real_query_gives_the_same_answer_on_postgres(pg, name, spec, reason):
+    tables, load, empty = spec.get("tables", ALL_TABLES), spec.get("load", ("completed", COUNTS)), spec.get("empty", set())
+    pg.execute(text("SET search_path TO pg_temp"))
+    for table in rd.STRUCTURED_TABLES:
+        if table in tables:
+            pg.execute(text(f"CREATE TEMP TABLE {table} (subject_id int, itemid int, charttime timestamp)"))
+            if table not in empty:
+                pg.execute(text(f"INSERT INTO {table} VALUES (1, 1, now())"))
+    if "labevents_full" in tables and "idx_labfull_subject_item_time" in tables:
+        pg.execute(text("CREATE INDEX idx_labfull_subject_item_time ON labevents_full (subject_id, itemid, charttime)"))
+    if "structured_load_runs" in tables:
+        pg.execute(text("CREATE TEMP TABLE structured_load_runs (status text, row_counts jsonb, started_at timestamptz)"))
+        runs = [(spec["older"], "2026-01-01")] if "older" in spec else []
+        for (status, counts), started in runs + ([(load, "2026-02-01")] if load else []):
+            pg.execute(text("INSERT INTO structured_load_runs VALUES (:s, CAST(:c AS jsonb), CAST(:t AS timestamptz))"),
+                       {"s": status, "c": __import__("json").dumps(counts), "t": started})
+    pg.commit()
+    assert rd.structured_problem(pg) == reason
+    assert rd.structured_problem(pg) == reason             # and the connection is still usable afterwards
 
 
 def test_structured_does_not_need_a_v2_build():

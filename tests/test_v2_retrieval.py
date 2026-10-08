@@ -198,10 +198,11 @@ class _Ready:
 
     def execute(self, stmt, params=None):
         sql = str(stmt)
+        if "LEFT JOIN LATERAL" in sql:                    # the one-query structured state: completed, filled, indexed
+            return SimpleNamespace(first=lambda: ("completed", {"labevents_full": 1, "d_icd_diagnoses": 1, "d_icd_procedures": 1},
+                                                  True, True, True, True))
         if "to_regclass" in sql:
             return SimpleNamespace(scalar=lambda: "x")
-        if "FROM structured_load_runs" in sql:
-            return SimpleNamespace(first=lambda: ("completed", {"labevents_full": 1, "d_icd_diagnoses": 1, "d_icd_procedures": 1}))
         if "FROM note_index_runs" in sql:
             return SimpleNamespace(scalar=lambda: self.build_status)
         if "FROM note_chunks_v2" in sql:

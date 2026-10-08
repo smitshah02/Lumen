@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from src.config import CHUNK_BUILD, DATA_PROFILE, PROFILE_SETTINGS, QUERY_EXPANSION
 from src.retrieval.index_provenance import RETRIEVER_CHUNK_TABLES
@@ -69,27 +70,52 @@ def expansion_problem(enabled: bool = QUERY_EXPANSION, settings: Optional[dict] 
     return None
 
 
+# Everything structured_problem needs, in one round trip: the latest load, whether
+# each table holds a row, and whether the lab index is there. It names the tables,
+# so when one is missing Postgres refuses it; that case is handled below.
+_STRUCTURED_STATE_SQL = text(f"""
+    SELECT run.status, run.row_counts,
+           {", ".join(f"EXISTS (SELECT 1 FROM {t})" for t in STRUCTURED_TABLES)},
+           to_regclass('idx_labfull_subject_item_time') IS NOT NULL
+    FROM (SELECT 1) AS always
+    LEFT JOIN LATERAL (SELECT status, row_counts FROM structured_load_runs
+                       ORDER BY started_at DESC LIMIT 1) AS run ON true""")       # table names are the constants above
+_STRUCTURED_TABLES_SQL = text("SELECT " + ", ".join(
+    f"to_regclass('{t}') IS NOT NULL" for t in (*STRUCTURED_TABLES, "structured_load_runs")))
+_UNDEFINED_TABLE = "42P01"
+
+
 def structured_problem(conn) -> Optional[str]:
     """Why the structured tables cannot be served, or None when they can.
     Cheap by design: it checks that tables exist, are non-empty and match a
     completed run that recorded rows. It does not recount rows; exact counts are
-    the loader's and the audit's job."""
-    missing = [t for t in (*STRUCTURED_TABLES, "structured_load_runs") if not _exists(conn, t)]
-    if missing:
+    the loader's and the audit's job.
+
+    One query when the tables are there. A missing table makes that query fail
+    with "undefined table"; only then is a second query run, to say which."""
+    try:
+        state = conn.execute(_STRUCTURED_STATE_SQL).first()
+    except DBAPIError as exc:
+        if getattr(exc.orig, "pgcode", None) != _UNDEFINED_TABLE:
+            raise
+        conn.rollback()                                    # the failed statement aborted the transaction
+        present = conn.execute(_STRUCTURED_TABLES_SQL).first()
+        missing = [t for t, there in zip((*STRUCTURED_TABLES, "structured_load_runs"), present) if not there]
+        if not missing:                                    # created in between: not something to explain away
+            raise
         return f"missing table(s): {', '.join(missing)}"
-    run = conn.execute(text(
-        "SELECT status, row_counts FROM structured_load_runs ORDER BY started_at DESC LIMIT 1")).first()
-    if run is None:
+    status, counts, *has_rows, has_index = state
+    counts = counts or {}
+    if status is None:
         return "no structured load has been run"
-    status, counts = run[0], run[1] or {}
     if status != "completed":
         return f"the latest structured load is {status}"
-    for table in STRUCTURED_TABLES:
+    for table, filled in zip(STRUCTURED_TABLES, has_rows):
         if not counts.get(table):
             return f"the completed load recorded no rows for {table}"
-        if not conn.execute(text(f"SELECT EXISTS (SELECT 1 FROM {table})")).scalar():    # table names are the constants above
+        if not filled:
             return f"{table} is empty although the load recorded {counts[table]} rows"
-    if not conn.execute(text("SELECT to_regclass('idx_labfull_subject_item_time')")).scalar():
+    if not has_index:
         return "index idx_labfull_subject_item_time is missing"
     return None
 
