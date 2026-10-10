@@ -102,3 +102,28 @@ def test_patient_retrieval_marks_scope_applied_only_when_it_scoped(monkeypatch):
     assert "admission_scope_applied" not in g.patient_retrieval({**resolved, "admission_scope": _scope("unresolved")})
     monkeypatch.setattr(g, "PROFILE_SETTINGS", {"admission_scope": False})
     assert "admission_scope_applied" not in g.patient_retrieval(resolved)
+
+
+# --- the same facts on the log line as it is written --------------------------------------------
+# The fields above are what the handler passes to the logger; only whitelisted names are written.
+# Admission ids and the free-text reason are deliberately not logged: the reason can quote a date
+# or an admission id from the question, and can list the patient's admission ids.
+LOGGED = ("applied", "requested", "status", "source")
+
+
+@pytest.mark.parametrize("name,extra,hadm_id,expected,warns", CASES, ids=[c[0] for c in CASES])
+def test_scope_status_reaches_the_written_log_line(monkeypatch, caplog, name, extra, hadm_id, expected, warns):
+    import json
+    from src.obs.logging import JsonFormatter
+    with caplog.at_level(logging.INFO, logger="lumen.api"):
+        _ask(monkeypatch, extra, hadm_id)
+    (record,) = [rec for rec in caplog.records if getattr(rec, "lumen_event", "") == "ask_completed"]
+    raw = JsonFormatter().format(record)
+    line = json.loads(raw)
+    for field in LOGGED:
+        if expected[field] is None:
+            assert f"scope_{field}" not in line                        # no value: left out, like every other field
+        else:
+            assert line[f"scope_{field}"] == expected[field]
+    assert "scope_hadm_id" not in line and "scope_reason" not in line
+    assert str(HADM) not in raw and STATE["final_answer"] not in raw and "what happened?" not in raw

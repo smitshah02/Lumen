@@ -140,3 +140,7 @@ and benchmark artifacts stay in the Git-ignored `reports/data_foundation/`.
 The earlier rule "never read `text_original`" is retired: the control index is
 built from `text_deid`, and the v2 index is built from the note as written. The
 demo plane is unaffected. It holds synthetic notes only and no `text_original`.
+
+## Clinical_notes readiness index
+
+The research `lumen` database includes an additive partial index, `idx_notes_eligible`, on `clinical_notes(note_id)` using the same eligibility predicate as the readiness probe. It was added during Stage 4 pre-switch hardening to avoid a full-table scan of `clinical_notes` during `/ready`; it does not change note contents, retrieval semantics, chunking, embeddings, or the control retrieval path. This index is present in the research `lumen` database but is not required in the demo or holdout databases. The definition is included in `SCHEMA_SQL` for newly initialized databases, but the existing `--upgrade` path does not create it automatically for an already-populated database; on an existing large database it should be created manually with `CREATE INDEX CONCURRENTLY` using the definition in `src/storage/schema.py`. To roll back this additive schema change without affecting data or the v2 build, run `DROP INDEX CONCURRENTLY IF EXISTS idx_notes_eligible;`.

@@ -171,6 +171,15 @@ ALTER TABLE note_chunks_v2 ADD COLUMN IF NOT EXISTS chunk_id BIGINT GENERATED AL
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_v2_chunk_id ON note_chunks_v2 (chunk_id)
 """
 
+# /ready counts the notes that have text (src/api/app.py, the index check). No
+# other index can answer that, and scanning clinical_notes on every probe overran
+# the readiness budget. Partial, with exactly the count's predicate, so the count
+# is an index-only scan. Not a versioned migration: /ready does not require it.
+# On a live database apply it with CREATE INDEX CONCURRENTLY IF NOT EXISTS.
+ELIGIBLE_NOTES_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS idx_notes_eligible ON clinical_notes (note_id) "
+                            "WHERE COALESCE(text_deid, text_original) IS NOT NULL "
+                            "AND COALESCE(text_deid, text_original) <> ''")
+
 # The lab path filters by patient and item and orders by time.
 LAB_FULL_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS idx_labfull_subject_item_time "
                       "ON labevents_full (subject_id, itemid, charttime)")
@@ -304,6 +313,7 @@ CREATE TABLE IF NOT EXISTS clinical_notes (
 CREATE INDEX IF NOT EXISTS idx_notes_subject ON clinical_notes(subject_id);
 CREATE INDEX IF NOT EXISTS idx_notes_hadm ON clinical_notes(hadm_id);
 CREATE INDEX IF NOT EXISTS idx_notes_type ON clinical_notes(note_type);
+{ELIGIBLE_NOTES_INDEX_SQL};
 
 -- Full-text search index for BM25-style retrieval
 ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS text_search tsvector;

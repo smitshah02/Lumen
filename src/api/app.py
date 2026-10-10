@@ -45,7 +45,7 @@ from src.safety import pubmed
 from src.llm import local_client
 from src.obs import tracing
 from src.obs.logging import (configure_logging, log_event, obs_extra, start_request, end_request,
-                             current_timings, Timer)
+                             current_timings, note_build, current_build, Timer)
 from src.api.schemas import (AdmissionScope, AskRequest, AskResponse, RetrieveRequest, RetrieveResponse,
                              RetrievedChunk, Citation, Source, ReviewDecision)
 
@@ -157,6 +157,7 @@ async def request_context(request: Request, call_next):
     log_event(logger, "http_request", method=request.method, path=request.url.path,
               status_code=response.status_code, status=getattr(request.state, "outcome", None),
               subject_id=getattr(request.state, "subject_id", None),
+              build_id=current_build(),
               duration_ms=round((time.perf_counter() - t0) * 1000, 1))
     end_request(tokens)
     return response
@@ -266,7 +267,8 @@ def _check_database() -> dict:
             indexes = set(c.execute(text(
                 "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
             )).scalars())
-            chunks = c.execute(text("SELECT COUNT(*) FROM note_chunks")).scalar()
+            # Whether there is a corpus, not how big: counting it read every chunk on every probe.
+            chunks = c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks)")).scalar()
             eligible_notes = c.execute(text("""
                 SELECT COUNT(*) FROM clinical_notes
                 WHERE COALESCE(text_deid, text_original) IS NOT NULL
@@ -311,7 +313,7 @@ def _check_database() -> dict:
         "database": "ok" if plane_ok else "wrong_database",
         "schema": "ok" if schema_ok else "missing_or_outdated",
         "extension": _extension_status(extension)[0],
-        "corpus": "ok" if chunks else "empty" if chunks == 0 else "unknown",
+        "corpus": "ok" if chunks else "empty" if chunks is False else "unknown",
         "ingestion": ("ok" if DATA_PLANE == "demo" else
                       "ok" if ingestion_status in ("completed", "legacy_completed") else
                       ingestion_status or "untracked"),
@@ -368,6 +370,7 @@ def _check_data_profile() -> dict:
 def _ensure_subject(subject_id: int) -> None:
     with storage.engine.connect() as c:
         if PROFILE_SETTINGS["chunk_table"] == "note_chunks_v2":        # a patient outside the selected build is not searchable
+            note_build(CHUNK_BUILD)                                    # the build this request is gated on, for its log lines
             found = c.execute(text("SELECT EXISTS (SELECT 1 FROM note_chunks_v2 WHERE build_id = :b AND subject_id = :s)"),
                               {"b": CHUNK_BUILD, "s": subject_id}).scalar()
             if not found:
@@ -498,7 +501,7 @@ async def retrieve(req: RetrieveRequest, request: Request):
         mode, results = await asyncio.to_thread(work)
     request.state.outcome = "ok"
     log_event(logger, "retrieve_completed", subject_id=req.subject_id, result_count=len(results),
-              top_k=req.top_k, temporal_mode=mode, duration_ms=t.ms)
+              top_k=req.top_k, temporal_mode=mode, build_id=current_build(), duration_ms=t.ms)
     return RetrieveResponse(
         request_id=request.state.request_id, data_plane=DATA_PLANE, data_profile=DATA_PROFILE,
         subject_id=req.subject_id, query=req.query,
@@ -567,7 +570,7 @@ async def ask(req: AskRequest, request: Request):
               deterministic_answer=timings.get("deterministic_answer", 0),
               deterministic_verified=timings.get("deterministic_verified", 0),
               llm_verified=timings.get("llm_verified", 0),
-              retrieval_ms=timings.get("retrieval_ms"), duration_ms=t.ms)
+              retrieval_ms=timings.get("retrieval_ms"), build_id=current_build(), duration_ms=t.ms)
     return AskResponse(
         request_id=rid, thread_id=thread_id, data_plane=DATA_PLANE, data_profile=DATA_PROFILE, status=status,
         review_status=st.get("review_status"), answer=answer, answer_is_draft=interrupted,

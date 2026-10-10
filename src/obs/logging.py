@@ -34,22 +34,33 @@ ALLOWED_FIELDS = frozenset({
     # the work the deterministic paths absorbed. Names and counts only.
     "llm_role", "llm_main_calls", "llm_fast_calls", "llm_main_ms", "llm_fast_ms",
     "query_class", "deterministic_answer", "deterministic_verified", "llm_verified",
+    # which note-index build a request read (a build's run id, never patient data)
+    "build_id",
+    # admission scope of an /ask (decision G1): whether it was requested and applied,
+    # how it resolved and by which rule. The resolved admission id and the free-text
+    # reason are not logged: the reason can quote a date or an id from the question.
+    "scope_applied", "scope_requested", "scope_status", "scope_source",
 })
+# Written as null when the caller passes None: "this request read no build" is
+# information. Every other field is left out when it has no value, as before.
+NULLABLE_FIELDS = frozenset({"build_id"})
 
 _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("lumen_request_id", default=None)
 _timings: contextvars.ContextVar[dict | None] = contextvars.ContextVar("lumen_timings", default=None)
+_notes: contextvars.ContextVar[dict | None] = contextvars.ContextVar("lumen_request_notes", default=None)
 
 
 # --- request context -----------------------------------------------------------
 def start_request(request_id: str) -> tuple:
     """Bind a request id and a fresh timings accumulator to the current context."""
-    return _request_id.set(request_id), _timings.set({})
+    return _request_id.set(request_id), _timings.set({}), _notes.set({})
 
 
 def end_request(tokens: tuple) -> None:
-    rid_token, t_token = tokens
+    rid_token, t_token, n_token = tokens
     _request_id.reset(rid_token)
     _timings.reset(t_token)
+    _notes.reset(n_token)
 
 
 def current_request_id() -> str | None:
@@ -79,6 +90,21 @@ def current_timings() -> dict:
     return dict(_timings.get() or {})
 
 
+def note_build(build_id: str | None) -> None:
+    """Record the note-index build the current request is reading (no-op outside
+    a request). Called where the build id is put into a query, so the log names
+    the build that was used rather than one that was merely configured. Shared
+    by reference like the timings, so a worker thread's note reaches the request."""
+    n = _notes.get()
+    if n is not None:
+        n["build_id"] = build_id
+
+
+def current_build() -> str | None:
+    """The build noted for the current request; None when it read none."""
+    return (_notes.get() or {}).get("build_id")
+
+
 # --- emitting ---------------------------------------------------------------------
 def obs_extra(event: str, **fields) -> dict:
     return {"lumen_event": event, "lumen_fields": fields}
@@ -106,7 +132,7 @@ class JsonFormatter(logging.Formatter):
         if rid:
             out["request_id"] = rid
         for k, v in (getattr(record, "lumen_fields", None) or {}).items():
-            if k in ALLOWED_FIELDS and v is not None:
+            if k in ALLOWED_FIELDS and (v is not None or k in NULLABLE_FIELDS):
                 out[k] = v
         if record.exc_info:
             out["exc_type"] = record.exc_info[0].__name__ if record.exc_info[0] else None
